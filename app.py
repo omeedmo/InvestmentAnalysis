@@ -2022,20 +2022,42 @@ def analyze():
                     existing[qk] = v
 
         # ── Cover-page shares override for quarterly periods ─────────────────
-        # EntityCommonStockSharesOutstanding filed with 10-Q is more authoritative
-        # than the balance-sheet CommonStockSharesOutstanding picked up by
-        # extract_post_annual_quarters.  Match by end-date → Q-key.
+        # EntityCommonStockSharesOutstanding filed with 10-Q uses the *filing*
+        # date as its end-date, not the quarter-end date, so we can't do an
+        # exact match.  Instead, parse each candidate's end-date and assign it
+        # to the nearest quarter-end within 90 days (filing dates are typically
+        # 30-45 days after quarter-end).
         if _entity_shares_tag:
-            _qdate_to_qkey = {v: k for k, v in quarter_end_dates.items()}
+            _qdate_parsed = {
+                qk: datetime.strptime(qd, "%Y-%m-%d")
+                for qk, qd in quarter_end_dates.items()
+            }
             _so_series = financials.setdefault("shares_outstanding_end", {})
+            # Collect best (most recent end-date) cover-page value per Q-key
+            _qk_best: dict[str, tuple[datetime, float]] = {}
             for _e in _entity_shares_tag.get("units", {}).get("shares", []):
                 if _e.get("form") not in {"10-Q", "10-Q/A"}:
                     continue
                 _end = _e.get("end", "")
                 _val = _e.get("val")
-                _qk  = _qdate_to_qkey.get(_end)
-                if _qk and _val:
-                    _so_series[_qk] = _val   # cover-page quarterly wins
+                if not _end or not _val:
+                    continue
+                try:
+                    _end_dt = datetime.strptime(_end, "%Y-%m-%d")
+                except Exception:
+                    continue
+                # Find nearest quarter-end within 90 days (filing always after quarter-end)
+                _best_qk, _best_diff = None, 999
+                for _qk, _qdt in _qdate_parsed.items():
+                    _diff = (_end_dt - _qdt).days
+                    if 0 <= _diff <= 90 and _diff < _best_diff:
+                        _best_qk, _best_diff = _qk, _diff
+                if _best_qk:
+                    prev = _qk_best.get(_best_qk)
+                    if prev is None or _end_dt > prev[0]:
+                        _qk_best[_best_qk] = (_end_dt, _val)
+            for _qk, (_, _val) in _qk_best.items():
+                _so_series[_qk] = _val   # cover-page quarterly wins
 
         # ── BRK-specific quarterly overrides ────────────────────────────────
         if normalized_ticker in {"BRK.A", "BRK.B"}:
