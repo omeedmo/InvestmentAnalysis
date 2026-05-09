@@ -1210,6 +1210,20 @@ def build_financials(facts: dict) -> dict[str, dict[str, float]]:
     inv_gls = raw.get("investment_gains", {})
     rev   = raw.get("revenue", {})
     gp    = raw.get("gross_profit", {})
+
+    # For banks: derive revenue = Net Interest Income + Non-interest Income
+    # when no standard revenue tag is filed (WFC, JPM, BAC, etc.)
+    if not rev:
+        _nii_b = raw.get("net_interest_income", {})
+        _noni  = raw.get("noninterest_income",  {})
+        if _nii_b or _noni:
+            _all_dates = set(_nii_b) | set(_noni)
+            _bank_rev  = {}
+            for d in _all_dates:
+                _bank_rev[d] = (_nii_b.get(d) or 0) + (_noni.get(d) or 0)
+            if _bank_rev:
+                raw["revenue"] = _bank_rev
+                rev = raw["revenue"]
     eq    = raw.get("equity", {})
     ta    = raw.get("total_assets", {})
     ltd   = raw.get("long_term_debt", {})
@@ -2196,6 +2210,17 @@ def analyze():
 
         # Quarterly margins
         rev_q  = {k: v for k, v in financials.get("revenue", {}).items() if k.startswith("Q")}
+        # For banks: derive quarterly revenue from NII + non-interest income if absent
+        if not rev_q:
+            _q_nii_r = {k: v for k, v in financials.get("net_interest_income", {}).items() if k.startswith("Q")}
+            _q_noni_r = {k: v for k, v in financials.get("noninterest_income", {}).items() if k.startswith("Q")}
+            if _q_nii_r or _q_noni_r:
+                _rev_bank_q = {}
+                for qk in set(_q_nii_r) | set(_q_noni_r):
+                    _rev_bank_q[qk] = (_q_nii_r.get(qk) or 0) + (_q_noni_r.get(qk) or 0)
+                if _rev_bank_q:
+                    financials.setdefault("revenue", {}).update(_rev_bank_q)
+                    rev_q = _rev_bank_q
         for num_key, out_key in [
             ("gross_profit",    "gross_margin"),
             ("operating_income","operating_margin"),
