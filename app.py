@@ -788,6 +788,9 @@ METRIC_TAGS: dict[str, list[str]] = {
         "PaymentsToAcquirePropertyPlantAndEquipment",
         "PaymentsToAcquireProductiveAssets",
         "PaymentsToAcquireOtherPropertyPlantAndEquipment",
+        "PaymentsToAcquireMachineryAndEquipment",       # Seadrill (SDRL) and similar
+        "PaymentsToAcquireOilAndGasPropertyAndEquipment",
+        "PaymentsToAcquirePropertyPlantEquipmentAndIntangibleAssets",
         "SegmentExpenditureAdditionToLongLivedAssets",
     ],
     "depreciation": ["DepreciationDepletionAndAmortization", "DepreciationAndAmortization", "Depreciation"],
