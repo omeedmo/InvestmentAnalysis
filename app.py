@@ -406,6 +406,36 @@ def extract_berkshire_cash_components(text: str, filing_date: str = "") -> dict[
     return empty
 
 
+def extract_brk_quarterly_debt(text: str, q_key: str) -> dict[str, float]:
+    """
+    Extract BRK total notes payable from a 10-Q fair-value disclosure table.
+
+    Same layout as the 10-K: the FIRST occurrence of the two-segment pattern
+    corresponds to the current quarter-end (the second, if present, is prior year-end).
+
+    Returns {q_key: total_debt_dollars} or {} on failure.
+    """
+    txt = re.sub(r"<[^>]+>", " ", text)
+    txt = re.sub(r"\s+", " ", txt).lower()
+    txt = txt.replace("&#160;", " ").replace("&nbsp;", " ")
+
+    pat = re.compile(
+        r"notes payable and other borrowings:\s*insurance and other\s+([\d,]+)"
+        r".{1,200}?"
+        r"railroad,\s*utilities and energy\s+([\d,]+)",
+        re.IGNORECASE | re.DOTALL,
+    )
+    m = pat.search(txt)
+    if not m:
+        return {}
+    try:
+        io_val  = float(m.group(1).replace(",", ""))
+        rue_val = float(m.group(2).replace(",", ""))
+        return {q_key: (io_val + rue_val) * 1e6}
+    except (ValueError, AttributeError):
+        return {}
+
+
 def extract_brk_quarterly_cash(text: str, q_key: str, quarter_end_date: str) -> dict[str, dict[str, float]]:
     """
     Extract BRK cash components from a 10-Q balance sheet for one quarter.
@@ -2007,6 +2037,10 @@ def analyze():
                     for _subkey in ("cash", "short_term_investments", "total_cash"):
                         if _q_cash_parts.get(_subkey):
                             financials.setdefault(_subkey, {}).update(_q_cash_parts[_subkey])
+                    _q_debt = extract_brk_quarterly_debt(_q_text, qk)
+                    if _q_debt:
+                        for _dk in ("total_debt", "long_term_debt"):
+                            financials.setdefault(_dk, {}).update(_q_debt)
                 except Exception:
                     pass
 
