@@ -405,14 +405,16 @@ function render(data){
   const latY = years[years.length-1];
   const allCols = [...years, ...qtrs];   // annual + quarterly columns
 
-  // Build quarter column label: "Q1'26 (Dec)"
-  // Year = last annual FY + 1 (the fiscal year the quarter belongs to),
-  // regardless of whether the end date falls in that calendar year or not.
-  const nextFY = ((parseInt(latY) + 1) % 100).toString().padStart(2,'0');
+  // Build quarter column label: "Q1'26 (Mar)"
+  // Derive year from the actual quarter-end date so it's always correct
+  // even when the annual table's last year differs from the quarter's year.
+  const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   function qtrLabel(q){
     const d = qd[q];
-    const mon = d ? ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][parseInt(d.slice(5,7))-1] : '';
-    return mon ? `${q}'${nextFY} (${mon})` : `${q}'${nextFY}`;
+    if(!d) return q;
+    const yr  = (parseInt(d.slice(0,4)) % 100).toString().padStart(2,'0');
+    const mon = MONTHS[parseInt(d.slice(5,7))-1] || '';
+    return mon ? `${q}'${yr} (${mon})` : `${q}'${yr}`;
   }
   let h='';
 

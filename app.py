@@ -1933,14 +1933,20 @@ def analyze():
     years = get_display_years(financials)
 
     # ── Post-annual quarterly data ────────────────────────────────────────────
-    # Find the last annual fiscal-year end date to use as the cutoff.
-    # We use the revenue series (most reliable); fallback to net income.
+    # Anchor quarter discovery on the last display year (latY) so labels and
+    # data are always consistent.  We look for an annual date whose year matches
+    # latY in any series; fall back to latY-12-31 if none is found.
     _last_annual_date = ""
-    for _ref_series in (financials.get("revenue", {}), financials.get("net_income", {})):
-        _annual_dates = [d for d in _ref_series if "-Q" not in d]
+    _lat_y = years[-1] if years else ""
+    for _ref_series in (financials.get("revenue", {}), financials.get("net_income", {}),
+                        financials.get("equity", {}), financials.get("total_assets", {})):
+        _annual_dates = [d for d in _ref_series if not d.startswith("Q") and d[:4] == _lat_y]
         if _annual_dates:
             _last_annual_date = max(_annual_dates)
             break
+    if not _last_annual_date and _lat_y:
+        # Fall back: construct a Dec-31 anchor from the display year
+        _last_annual_date = f"{_lat_y}-12-31"
 
     # Metrics to extract for quarterly view
     _quarterly_flow_keys = {
