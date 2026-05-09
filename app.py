@@ -406,7 +406,58 @@ def extract_berkshire_cash_components(text: str, filing_date: str = "") -> dict[
     return empty
 
 
-# ── AI-powered extraction functions ──────────────────────────────────────────
+def extract_brk_quarterly_cash(text: str, q_key: str, quarter_end_date: str) -> dict[str, dict[str, float]]:
+    """
+    Extract BRK cash components from a 10-Q balance sheet for one quarter.
+
+    BRK's 10-Q consolidated balance sheet has the same two-column layout as the 10-K
+    (current quarter-end | prior fiscal year-end).  We only need the current column.
+
+    Returns {"cash": {q_key: val}, "short_term_investments": {q_key: val}, "total_cash": {q_key: val}}
+    or empty dicts on failure.
+    """
+    empty = {"cash": {}, "short_term_investments": {}, "total_cash": {}}
+    if not quarter_end_date:
+        return empty
+    txt = re.sub(r"<[^>]+>", " ", text)
+    txt = re.sub(r"\s+", " ", txt).lower()
+    txt = txt.replace("&#160;", " ").replace("&nbsp;", " ")
+
+    # Pattern: same two rows as annual — grab first (current-period) number from each
+    ins_pat = re.compile(
+        r"insurance and other:\s+cash and cash equivalents\*?\s+\$?\s*([\d,]+)",
+        re.IGNORECASE,
+    )
+    tb_pat = re.compile(
+        r"short-term investments in u\.?s\.? treasury bills\*{0,3}\s+\$?\s*([\d,]+)",
+        re.IGNORECASE,
+    )
+    rr_pat = re.compile(
+        r"railroad,\s*utilities and energy:?\s+cash and cash equivalents\*?\s+\$?\s*([\d,]+)",
+        re.IGNORECASE,
+    )
+    ins_m = ins_pat.search(txt)
+    tb_m  = tb_pat.search(txt)
+    if not ins_m or not tb_m:
+        return empty
+
+    ins_val = float(ins_m.group(1).replace(",", "")) * 1e6
+    tb_val  = float(tb_m.group(1).replace(",", "")) * 1e6
+
+    tail = txt[ins_m.end():]
+    rr_m = rr_pat.search(tail[:3000])
+    rr_val = float(rr_m.group(1).replace(",", "")) * 1e6 if rr_m else 0.0
+
+    cash_val  = ins_val + rr_val
+    total_val = cash_val + tb_val
+    return {
+        "cash":                 {q_key: cash_val},
+        "short_term_investments": {q_key: tb_val},
+        "total_cash":           {q_key: total_val},
+    }
+
+
+
 
 
 
@@ -1941,6 +1992,36 @@ def analyze():
                 existing = financials.setdefault(key, {})
                 for qk, v in q_vals.items():
                     existing[qk] = v
+
+        # ── BRK-specific quarterly overrides ────────────────────────────────
+        if normalized_ticker in {"BRK.A", "BRK.B"}:
+            # 1. Cash: XBRL double-counts (combined tag + T-bill tag). Replace with
+            #    text extraction from the 10-Q HTML, same as we do for 10-Ks.
+            for qk, qdate in quarter_end_dates.items():
+                qurl = quarter_filing_links.get(qk)
+                if not qurl:
+                    continue
+                try:
+                    _q_text = quick_filing_text(sec_get_text(qurl))
+                    _q_cash_parts = extract_brk_quarterly_cash(_q_text, qk, qdate)
+                    for _subkey in ("cash", "short_term_investments", "total_cash"):
+                        if _q_cash_parts.get(_subkey):
+                            financials.setdefault(_subkey, {}).update(_q_cash_parts[_subkey])
+                except Exception:
+                    pass
+
+            # 2. Shares: XBRL 10-Q files class-A counts only (~1.4M) — useless for
+            #    per-B-share math. Forward-fill the last annual B-equivalent share count
+            #    into every Q-key that doesn't already have a valid value.
+            _brk_so = financials.get("shares_outstanding_end", {})
+            _annual_so_dates = sorted(d for d in _brk_so if not d.startswith("Q"))
+            if _annual_so_dates:
+                _last_annual_so = _brk_so[_annual_so_dates[-1]]
+                for qk in quarter_end_dates:
+                    existing_v = _brk_so.get(qk)
+                    # Replace if missing or clearly class-A scale (< 100M shares)
+                    if not existing_v or abs(existing_v) < 1e8:
+                        _brk_so[qk] = _last_annual_so
 
         # Quarterly derived balance sheet metrics
         _q_cash = {k: v for k, v in financials.get("cash", {}).items() if k.startswith("Q")}
