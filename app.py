@@ -1859,22 +1859,12 @@ def analyze():
         or facts.get("facts", {}).get("dei", {}).get("EntityCommonStockSharesOutstanding")
     )
     if _entity_shares_tag:
-        # Build reverse map: quarter end-date → Q-key (e.g. "2026-03-31" → "Q1")
-        _qdate_to_qkey = {v: k for k, v in quarter_end_dates.items()}
         for _e in _entity_shares_tag.get("units", {}).get("shares", []):
-            _form = _e.get("form", "")
-            _val  = _e.get("val")
-            if not _val:
+            if _e.get("form") not in {"10-K", "10-K/A", "20-F", "20-F/A"}:
                 continue
-            if _form in {"10-K", "10-K/A", "20-F", "20-F/A"}:
-                _fy = _e.get("fy")
-                if _fy:
-                    shares_end_series[f"{_fy}-12-31"] = _val   # cover-page wins
-            elif _form in {"10-Q", "10-Q/A"}:
-                _end = _e.get("end", "")
-                _qk  = _qdate_to_qkey.get(_end)
-                if _qk:
-                    shares_end_series[_qk] = _val   # cover-page quarterly wins
+            _fy = _e.get("fy"); _val = _e.get("val")
+            if _fy and _val:
+                shares_end_series[f"{_fy}-12-31"] = _val   # cover-page value wins
 
     financials["shares_outstanding_end"] = shares_end_series
 
@@ -2030,6 +2020,22 @@ def analyze():
                 existing = financials.setdefault(key, {})
                 for qk, v in q_vals.items():
                     existing[qk] = v
+
+        # ── Cover-page shares override for quarterly periods ─────────────────
+        # EntityCommonStockSharesOutstanding filed with 10-Q is more authoritative
+        # than the balance-sheet CommonStockSharesOutstanding picked up by
+        # extract_post_annual_quarters.  Match by end-date → Q-key.
+        if _entity_shares_tag:
+            _qdate_to_qkey = {v: k for k, v in quarter_end_dates.items()}
+            _so_series = financials.setdefault("shares_outstanding_end", {})
+            for _e in _entity_shares_tag.get("units", {}).get("shares", []):
+                if _e.get("form") not in {"10-Q", "10-Q/A"}:
+                    continue
+                _end = _e.get("end", "")
+                _val = _e.get("val")
+                _qk  = _qdate_to_qkey.get(_end)
+                if _qk and _val:
+                    _so_series[_qk] = _val   # cover-page quarterly wins
 
         # ── BRK-specific quarterly overrides ────────────────────────────────
         if normalized_ticker in {"BRK.A", "BRK.B"}:
