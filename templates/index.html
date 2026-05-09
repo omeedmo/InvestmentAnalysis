@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<title>Investment Analysis</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --navy:#0f2044;--blue:#1d4ed8;--blue2:#3b82f6;
+  --green:#15803d;--red:#b91c1c;--amber:#b45309;
+  --bg:#f1f5f9;--card:#ffffff;--border:#cbd5e1;
+  --text:#0f172a;--muted:#64748b;
+  --section-bg:#e2e8f0;--row-alt:#f8fafc;--row-hover:#eff6ff;
+  --qtr-bg:#fefce8;--qtr-fg:#713f12;   /* warm amber tint for quarterly columns */
+}
+body{font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);font-size:13px}
+.topbar{background:var(--navy);color:#fff;padding:10px 20px;display:flex;align-items:center;gap:14px;position:sticky;top:0;z-index:100;box-shadow:0 2px 8px rgba(0,0,0,.3);flex-wrap:wrap}
+.topbar h1{font-size:15px;font-weight:700;letter-spacing:.5px;white-space:nowrap}
+.topbar h1 span{color:#60a5fa}
+.form-row{display:flex;gap:8px;flex-wrap:wrap;flex:1;align-items:center}
+.form-row input,.form-row select{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);color:#fff;padding:6px 10px;border-radius:5px;font-size:13px;outline:none}
+.form-row input::placeholder{color:rgba(255,255,255,.5)}
+.form-row input:focus{border-color:#60a5fa;background:rgba(255,255,255,.2)}
+.btn{background:#2563eb;color:#fff;border:none;padding:7px 20px;border-radius:5px;font-weight:600;cursor:pointer;font-size:13px;white-space:nowrap;transition:background .15s}
+.btn:hover{background:#1d4ed8}
+.btn:disabled{background:#475569;cursor:not-allowed}
+.container{max-width:1700px;margin:0 auto;padding:14px}
+.landing{text-align:center;padding:80px 20px;color:var(--muted)}
+.landing h2{font-size:22px;color:var(--navy);margin-bottom:8px}
+.landing p{max-width:520px;margin:0 auto;line-height:1.7}
+.error-box{background:#fee2e2;border:1px solid #fca5a5;border-radius:8px;padding:14px 18px;color:#991b1b;margin:16px 0}
+.spinner-wrap{text-align:center;padding:60px;color:var(--muted)}
+.spinner{width:38px;height:38px;border:3px solid #e2e8f0;border-top-color:var(--blue);border-radius:50%;animation:spin .7s linear infinite;margin:0 auto 12px}
+@keyframes spin{to{transform:rotate(360deg)}}
+/* ── Value Line header ────────────────────────────────────────────────── */
+.vl-card{background:var(--navy);color:#fff;border-radius:10px;margin-bottom:12px;overflow:hidden}
+.vl-top{display:flex;align-items:stretch;flex-wrap:wrap}
+.vl-title-block{flex:1;min-width:0;padding:14px 18px 10px}
+.vl-name{font-size:20px;font-weight:800;letter-spacing:-.3px;line-height:1.2}
+.vl-name span{font-weight:400;font-size:13px;color:#94a3b8;margin-left:6px}
+.vl-meta{font-size:10px;color:#94a3b8;margin-top:3px}
+.vl-price-block{background:rgba(0,0,0,.25);min-width:110px;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:12px 18px;gap:2px}
+.vl-price{font-size:30px;font-weight:900;font-variant-numeric:tabular-nums;letter-spacing:-1px}
+.vl-price-sub{font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px}
+/* Key stats grid — 4 columns */
+.vl-stats{display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid rgba(255,255,255,.1)}
+@media(max-width:680px){.vl-stats{grid-template-columns:repeat(2,1fr)}}
+.vl-stat{padding:8px 14px;border-right:1px solid rgba(255,255,255,.08)}
+.vl-stat:last-child{border-right:none}
+.vl-sl{font-size:9px;text-transform:uppercase;letter-spacing:.6px;color:#94a3b8}
+.vl-sv{font-size:14px;font-weight:700;font-variant-numeric:tabular-nums}
+.vl-sv.g{color:#4ade80}.vl-sv.r{color:#f87171}.vl-sv.a{color:#fbbf24}
+/* 52-week range bar */
+.vl-range-row{padding:8px 18px 10px;border-top:1px solid rgba(255,255,255,.08)}
+.vl-range-label{font-size:9px;text-transform:uppercase;letter-spacing:.6px;color:#94a3b8;margin-bottom:4px}
+.vl-range-track{position:relative;height:6px;background:rgba(255,255,255,.15);border-radius:3px}
+.vl-range-fill{position:absolute;top:0;left:0;height:100%;background:rgba(255,255,255,.35);border-radius:3px}
+.vl-range-dot{position:absolute;top:-4px;width:14px;height:14px;background:#60a5fa;border:2px solid #fff;border-radius:50%;transform:translateX(-50%)}
+.vl-range-ends{display:flex;justify-content:space-between;font-size:10px;color:#94a3b8;margin-top:3px}
+/* Description strip */
+.vl-desc{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px 18px;margin-bottom:12px;font-size:12px;line-height:1.7;color:var(--text)}
+.vl-desc-hd{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);margin-bottom:5px}
+/* Badges / links row */
+.vl-links{display:flex;gap:6px;flex-wrap:wrap;padding:8px 18px 12px;border-top:1px solid rgba(255,255,255,.08)}
+.badge{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);border-radius:4px;padding:3px 8px;font-size:11px;font-weight:600;color:#e2e8f0}
+.badge.bl{background:rgba(37,99,235,.3);border-color:#3b82f6;color:#93c5fd}
+.badge.gr{background:rgba(22,163,74,.25);border-color:#4ade80;color:#86efac}
+.badge.lk{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.25);color:#e2e8f0;text-decoration:none}
+.badge.lk:hover{background:rgba(255,255,255,.15)}
+/* Section title */
+.sec-title{font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--muted);padding:8px 0 4px;border-bottom:2px solid var(--navy);margin-bottom:12px}
+/* Table */
+.tbl-wrap{overflow-x:auto;border-radius:8px;border:1px solid var(--border);margin-bottom:22px;background:var(--card)}
+table{border-collapse:collapse;width:100%;min-width:800px}
+thead tr.yr-row th{background:var(--navy);color:#e2e8f0;font-size:11px;font-weight:700;padding:7px 9px;text-align:right;white-space:nowrap;position:sticky;top:0;z-index:5}
+thead tr.yr-row th:first-child{text-align:left;position:sticky;left:0;z-index:10;background:var(--navy);min-width:195px}
+thead tr.yr-row th.lat{background:#1e3a6e;color:#93c5fd}
+thead tr.yr-row th.qtr-col{background:#78350f;color:#fef3c7;font-style:italic;border-left:2px solid #d97706}
+tr.sh td{background:var(--section-bg);color:var(--navy);font-size:10px;font-weight:800;letter-spacing:1px;text-transform:uppercase;padding:5px 9px;border-top:2px solid var(--navy)}
+tr.sh td:first-child{position:sticky;left:0;background:var(--section-bg)}
+tr.dr td{padding:4px 9px;border-bottom:1px solid #f1f5f9;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;font-size:12px}
+tr.dr td[style*="qtr-bg"]:first-of-type{border-left:2px solid #d97706}
+tr.dr td:first-child{text-align:left;position:sticky;left:0;background:var(--card);z-index:2;font-size:12px;font-weight:500;border-right:1px solid var(--border);padding-left:12px}
+tr.dr:nth-child(even) td{background:var(--row-alt)}
+tr.dr:nth-child(even) td:first-child{background:var(--row-alt)}
+tr.dr:hover td{background:var(--row-hover)!important}
+td.lat2{background:#fffbeb!important;font-weight:700}
+td.pos{color:var(--green)}
+td.neg{color:var(--red)}
+td.hpos{color:var(--green);font-weight:700}
+td.hneg{color:var(--red);font-weight:700}
+td.na{color:#94a3b8}
+td.ind{padding-left:24px!important}
+td.bld{font-weight:700}
+/* Charts */
+.charts-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:22px}
+@media(max-width:860px){.charts-grid{grid-template-columns:1fr 1fr}}
+@media(max-width:560px){.charts-grid{grid-template-columns:1fr}}
+.ch-card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px 14px 10px}
+.ch-card h4{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px}
+.ch-card canvas{max-height:150px}
+/* DCF */
+.dcf-wrap{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:18px;margin-bottom:22px}
+.dcf-hdr{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+.dcf-t{font-size:15px;font-weight:700;color:var(--navy)}
+.dcf-s{font-size:12px;color:var(--muted)}
+.dcf-ctx{display:flex;gap:18px;flex-wrap:wrap;background:var(--bg);border-radius:6px;padding:12px 14px;margin-bottom:14px}
+.dci-label{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted)}
+.dci-val{font-size:14px;font-weight:700;font-variant-numeric:tabular-nums}
+.dcf-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+@media(max-width:700px){.dcf-cards{grid-template-columns:1fr}}
+.dcf-card{border:2px solid var(--border);border-radius:8px;padding:14px;position:relative;overflow:hidden}
+.dcf-card::before{content:'';position:absolute;top:0;left:0;right:0;height:4px}
+.dcf-card.s5::before{background:#3b82f6}
+.dcf-card.s10::before{background:#8b5cf6}
+.dcf-card.s20::before{background:#ec4899}
+.dcf-card h3{font-size:13px;font-weight:700;color:var(--navy);margin-bottom:12px}
+.dcf-m{display:flex;justify-content:space-between;margin-bottom:6px}
+.dcf-ml{font-size:11px;color:var(--muted)}
+.dcf-mv{font-size:12px;font-weight:700;font-variant-numeric:tabular-nums}
+.dcf-mv.hi{color:var(--red)}
+.dcf-mv.lo{color:var(--green)}
+.bar-track{height:8px;background:#e2e8f0;border-radius:4px;overflow:hidden;margin:8px 0 10px}
+.bar-fill{height:100%;border-radius:4px;transition:width .4s}
+.dcf-note{font-size:11px;color:var(--muted);margin-top:14px;line-height:1.6;padding-top:12px;border-top:1px solid var(--border)}
+/* Shareholders */
+.sh-wrap{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:16px 18px;margin-bottom:22px}
+.sh-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px;margin-top:10px}
+.sh-row{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:6px;background:var(--bg);border:1px solid var(--border)}
+.sh-rank{font-size:11px;font-weight:700;color:var(--muted);min-width:20px;text-align:center}
+.sh-info{flex:1;min-width:0}
+.sh-name{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sh-shares{font-size:10px;color:var(--muted)}
+.sh-pct-wrap{text-align:right;min-width:60px}
+.sh-pct{font-size:14px;font-weight:700;color:var(--blue)}
+.sh-bar-wrap{width:100%;height:4px;background:#e2e8f0;border-radius:2px;margin-top:3px}
+.sh-bar{height:100%;background:var(--blue);border-radius:2px}
+/* VIC writeups */
+.vic-wrap{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:14px 18px;margin-bottom:22px}
+.vic-list{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+.vic-row{display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:6px;border:1px solid var(--border);text-decoration:none;color:var(--text);transition:background .12s}
+.vic-row:hover{background:var(--row-hover)}
+.vic-badge{font-size:10px;font-weight:700;padding:2px 6px;border-radius:3px;min-width:32px;text-align:center}
+.vic-badge.l{background:#dcfce7;color:#15803d}
+.vic-badge.s{background:#fee2e2;color:#991b1b}
+.vic-date{font-size:11px;color:var(--muted);min-width:70px}
+.vic-comp{font-size:12px;font-weight:600;flex:1}
+.vic-arrow{color:var(--muted);font-size:12px}
+.vic-spinner{text-align:center;padding:20px;color:var(--muted);font-size:12px}
+.footer{text-align:center;color:var(--muted);font-size:11px;padding:18px;border-top:1px solid var(--border)}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <h1>Investment <span>Analysis</span></h1>
+  <div class="form-row">
+    <input id="inp-ticker"  type="text"   placeholder="Ticker (AAPL, MSFT…)" maxlength="10" style="width:145px;text-transform:uppercase">
+    <input id="inp-dr"      type="number" placeholder="Discount % (e.g. 10)"  value="10" min="1" max="30" step="0.5" style="width:130px">
+    <input id="inp-tv"      type="number" placeholder="Terminal Value ($B)"    value=""   min="0" step="1"          style="width:150px">
+    <button class="btn" id="btn" onclick="doAnalyze()">Analyze ▸</button>
+  </div>
+</div>
+
+<div class="container">
+<div id="root">
+  <div class="landing">
+    <h2>Value Line Style Financial Reports</h2>
+    <p>Enter a US stock ticker to pull up to 15 years of SEC EDGAR 10-K data — income statement, cash flow, balance sheet, returns, and a reverse DCF analysis at your chosen discount rate and exit multiple.</p>
+  </div>
+</div>
+</div>
+<div class="footer">Financial data from SEC EDGAR 10-K filings · Current price &amp; market stats from Yahoo Finance · Not financial advice</div>
+
+<script>
+// ── Formatters ────────────────────────────────────────────────────────────────
+const F = {
+  $M(v){ // auto-scale millions
+    if(v==null) return '—';
+    const a=Math.abs(v), s=v<0?'(':'' , e=v<0?')':'';
+    if(a>=1e12) return s+'$'+(a/1e12).toFixed(2)+'T'+e;
+    if(a>=1e9)  return s+'$'+(a/1e9).toFixed(2)+'B'+e;
+    if(a>=1e6)  return s+'$'+(a/1e6).toFixed(1)+'M'+e;
+    if(a>=1e3)  return s+'$'+(a/1e3).toFixed(0)+'K'+e;
+    return s+'$'+a.toFixed(0)+e;
+  },
+  pct(v){ return v==null?'—':(v*100).toFixed(1)+'%' },
+  $ps(v){ return v==null?'—':'$'+v.toFixed(2) },
+  sh(v){
+    if(v==null) return '—';
+    const a=Math.abs(v);
+    if(a>=1e9) return (a/1e9).toFixed(2)+'B';
+    if(a>=1e6) return (a/1e6).toFixed(1)+'M';
+    return (a/1e3).toFixed(0)+'K';
+  },
+  x(v){ return v==null?'—':v.toFixed(1)+'x' },
+  cagr(v){ return v==null?'—':(v>=0?'+':'')+(v*100).toFixed(1)+'%' },
+};
+
+// ── Table definition ──────────────────────────────────────────────────────────
+const ROWS = [
+  {sec:'PER SHARE  ($)'},
+  {lbl:'Revenue / Share',         key:'revenue_per_share',       t:'ps'},
+  {lbl:'EPS (Diluted)',            key:'eps_diluted',              t:'ps'},
+  {lbl:'Book Value / Share',       key:'book_value_per_share',    t:'ps'},
+  {lbl:'FCF / Share',              key:'fcf_per_share',           t:'ps'},
+  {lbl:'Dividends / Share',        key:'dividends_per_share',     t:'ps'},
+  // BDC per-share
+  {lbl:'NII / Share',              key:'nii_per_share',           t:'ps',  bdc:true},
+  {lbl:'NAV / Share',              key:'nav_per_share',           t:'ps',  bdc:true},
+
+  {sec:'INCOME STATEMENT  ($M)'},
+  {lbl:'Revenue',                  key:'revenue',                 t:'$'},
+  {lbl:'Gross Profit',             key:'gross_profit',            t:'$'},
+  {lbl:'  Gross Margin',           key:'gross_margin',            t:'%', hi:true, ind:true},
+  {lbl:'R&D Expense',              key:'rd_expense',              t:'$'},
+  {lbl:'SG&A Expense',             key:'sga_expense',             t:'$'},
+  {lbl:'Operating Income',         key:'operating_income',        t:'$'},
+  {lbl:'  Operating Margin',       key:'operating_margin',        t:'%', hi:true, ind:true},
+  {lbl:'Depreciation & Amort.',    key:'depreciation',            t:'$'},
+  {lbl:'EBITDA',                   key:'ebitda',                  t:'$'},
+  {lbl:'  EBITDA Margin',          key:'ebitda_margin',           t:'%', hi:true, ind:true},
+  {lbl:'Interest Expense',         key:'interest_expense',        t:'$'},
+  {lbl:'Net Income',               key:'net_income',              t:'$', bld:true},
+  {lbl:'  Net Margin',             key:'net_margin',              t:'%', hi:true, ind:true},
+  {lbl:'Effective Tax Rate',       key:'effective_tax_rate',      t:'%'},
+  // BDC income
+  {sec:'BDC INCOME  ($M)',         bdc:true},
+  {lbl:'Gross Investment Income',  key:'gross_investment_income', t:'$',  bdc:true, bld:true},
+  {lbl:'Net Investment Income (NII)', key:'net_investment_income',t:'$',  bdc:true, bld:true},
+
+  {sec:'CASH FLOW  ($M)'},
+  {lbl:'Operating Cash Flow',      key:'operating_cash_flow',     t:'$'},
+  {lbl:'Capital Expenditures',     key:'capex',                   t:'$'},
+  {lbl:'Free Cash Flow',           key:'fcf',                     t:'$', bld:true},
+  {lbl:'  FCF Margin',             key:'fcf_margin',              t:'%', hi:true, ind:true},
+  {lbl:'  Stock-Based Comp (SBC)', key:'stock_based_compensation', t:'$', ind:true},
+  {lbl:'  Adj. FCF (FCF − SBC)',   key:'adj_fcf',                 t:'$', ind:true},
+  {lbl:'  Adj. FCF Margin',        key:'adj_fcf_margin',          t:'%', hi:true, ind:true},
+
+  {sec:'CAPITAL ALLOCATION  ($M)'},
+  {lbl:'Dividends Paid',           key:'dividends_paid',          t:'$'},
+  {lbl:'Share Repurchases ($)',     key:'buybacks_value',          t:'$', bld:true},
+  {lbl:'Shares Repurchased',       key:'shares_repurchased',      t:'sh'},
+
+  {sec:'BALANCE SHEET  ($M)'},
+  {lbl:'Cash & Equivalents',      key:'cash',                    t:'$'},
+  {lbl:'Short-term Investments',  key:'short_term_investments',  t:'$'},
+  {lbl:'Cash & Investments',       key:'total_cash',              t:'$'},
+  {lbl:'Total Debt',               key:'total_debt',              t:'$'},
+  {lbl:'Net Cash / (Debt)',        key:'net_cash',                t:'$±'},
+  {lbl:"Shareholders' Equity / NAV", key:'equity',               t:'$'},
+  {lbl:'Working Capital',          key:'working_capital',         t:'$'},
+  {lbl:'Goodwill',                 key:'goodwill',                t:'$'},
+  {lbl:'Total Assets',             key:'total_assets',            t:'$'},
+
+  {sec:'SHARES'},
+  {lbl:'Shares Outstanding (yr-end)', key:'shares_outstanding_end', t:'sh'},
+
+  {sec:'CAPITAL QUALITY'},
+  {lbl:'Unlev. Net Tangible Assets (UNTA)',  key:'unta',              t:'$'},
+  {lbl:'NOPAT  (EBIT × (1−Tax))',           key:'nopat',             t:'$', bld:true},
+  {lbl:'Economic Goodwill  (NOPAT / UNTA)', key:'economic_goodwill', t:'%', hi:true},
+
+  {sec:'RETURNS & PROFITABILITY'},
+  {lbl:'ROE  (NI / Equity)',        key:'roe',                  t:'%', hi:true},
+  {lbl:'ROTE  (NI / Tangible Eq.)',  key:'rote',                t:'%', hi:true},
+  {lbl:'FCF ROE  (FCF / Equity)',   key:'fcf_roe',              t:'%', hi:true},
+  {lbl:'NII ROE  (NII / NAV)',      key:'nii_roe',              t:'%', hi:true, bdc:true},
+  {lbl:'BRK Operating Earnings (reported)', key:'brk_operating_earnings', t:'$', bld:true},
+  {lbl:'Owner Earnings (NI+D&A−CapEx−Unreal.Gains)', key:'owner_earnings', t:'$'},
+  {lbl:'  Real Owner Return',       key:'owner_earnings_return', t:'%', hi:true, ind:true},
+  {lbl:'  Real Owner Return (after-tax & inflation)', key:'real_owner_return', t:'%', hi:true, ind:true},
+  {lbl:'ROIC',                      key:'roic',                 t:'%', hi:true},
+  {lbl:'ROA',                       key:'roa',     t:'%', hi:true},
+];
+
+function cellFmt(v, t){
+  switch(t){
+    case 'ps': return F.$ps(v);
+    case '%':  return F.pct(v);
+    case '$':  return F.$M(v);
+    case '$±': return F.$M(v);
+    case 'sh': return F.sh(v);
+    case 'x':  return F.x(v);
+    default:   return v==null?'—':String(v);
+  }
+}
+
+function cellCls(v, t, hi, isLat){
+  let c = '';
+  if(t==='$±' && v!=null) c = v>0?'pos':v<0?'neg':'';
+  if(hi && t==='%' && v!=null){
+    if(v>0.20) c='hpos';
+    else if(v>0.08) c='pos';
+    else if(v<0) c='hneg';
+  }
+  if(isLat) c=(c?c+' ':'')+'lat2';
+  return c;
+}
+
+// ── Charts ────────────────────────────────────────────────────────────────────
+let _charts=[];
+const CHART_DEFS=[
+  {id:'c_rev',  title:'Revenue ($B)',         key:'revenue',              sc:1e9,  unit:'$B', clr:'#2563eb', type:'bar'},
+  {id:'c_fcf',  title:'Free Cash Flow ($B)',  key:'fcf',                  sc:1e9,  unit:'$B', clr:'#0891b2', type:'bar'},
+  {id:'c_ni',   title:'Net Income ($B)',       key:'net_income',           sc:1e9,  unit:'$B', clr:'#16a34a', type:'bar'},
+  {id:'c_eps',  title:'EPS Diluted ($)',       key:'eps_diluted',          sc:1,    unit:'$',  clr:'#7c3aed', type:'line'},
+  {id:'c_roe',  title:'ROE (%)',               key:'roe',                  sc:100,  unit:'%',  clr:'#ea580c', type:'line'},
+  {id:'c_shr',  title:'Shares Outstanding (M)',key:'shares_outstanding_end',sc:1e6, unit:'M',  clr:'#64748b', type:'line'},
+];
+
+function drawCharts(years, fin){
+  _charts.forEach(c=>c.destroy()); _charts=[];
+  const yrs=years.slice(-12);
+  Chart.defaults.font.family='system-ui,-apple-system,sans-serif';
+  Chart.defaults.font.size=11;
+  for(const d of CHART_DEFS){
+    const el=document.getElementById(d.id);
+    if(!el) continue;
+    const ser=fin[d.key]||{};
+    const vals=yrs.map(y=>{ const v=ser[y]; return v!=null?+(v/d.sc).toFixed(3):null; });
+    if(vals.every(v=>v==null)){el.closest('.ch-card').style.display='none';continue;}
+    const isBar=d.type==='bar';
+    const c=new Chart(el,{
+      type:d.type,
+      data:{
+        labels:yrs,
+        datasets:[{
+          label:d.title,data:vals,
+          borderColor:d.clr,borderWidth:isBar?0:2,
+          backgroundColor:isBar?d.clr+'cc':d.clr+'22',
+          fill:!isBar,tension:0.35,pointRadius:2,spanGaps:true,
+        }]
+      },
+      options:{
+        responsive:true,maintainAspectRatio:true,
+        plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>`${ctx.parsed.y.toFixed(2)} ${d.unit}`}}},
+        scales:{
+          x:{grid:{display:false},ticks:{maxRotation:45,font:{size:10}}},
+          y:{grid:{color:'#f1f5f9'},ticks:{font:{size:10},callback:v=>v+' '+d.unit}}
+        }
+      }
+    });
+    _charts.push(c);
+  }
+}
+
+// ── Main render ───────────────────────────────────────────────────────────────
+function render(data){
+  const {company:co, market:mk, years, quarters:qtrs=[], quarter_dates:qd={}, quarter_links:ql={}, financials:fin, dcf, filing_links:fl={}, proxy:px={}} = data;
+  const latY = years[years.length-1];
+  const allCols = [...years, ...qtrs];   // annual + quarterly columns
+
+  // Build quarter column label: "Q1'26 (Dec)"
+  // Year = last annual FY + 1 (the fiscal year the quarter belongs to),
+  // regardless of whether the end date falls in that calendar year or not.
+  const nextFY = ((parseInt(latY) + 1) % 100).toString().padStart(2,'0');
+  function qtrLabel(q){
+    const d = qd[q];
+    const mon = d ? ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][parseInt(d.slice(5,7))-1] : '';
+    return mon ? `${q}'${nextFY} (${mon})` : `${q}'${nextFY}`;
+  }
+  let h='';
+
+  // ── Value Line header ─────────────────────────────────────────────────────
+  const lo=mk['52w_low'], hi=mk['52w_high'], pr=mk.price;
+  let rangeHtml='';
+  if(lo && hi && hi>lo){
+    const pct=pr?Math.max(0,Math.min((pr-lo)/(hi-lo)*100,100)):null;
+    rangeHtml=`<div class="vl-range-row">
+      <div class="vl-range-label">52-Week Price Range</div>
+      <div class="vl-range-track">
+        <div class="vl-range-fill" style="width:${pct!=null?pct.toFixed(1):50}%"></div>
+        ${pct!=null?`<div class="vl-range-dot" style="left:${pct.toFixed(1)}%"></div>`:''}
+      </div>
+      <div class="vl-range-ends"><span>$${lo.toFixed(2)}</span><span>$${hi.toFixed(2)}</span></div>
+    </div>`;
+  }
+
+  const brTxt = mk.buyback_remaining ? F.$M(mk.buyback_remaining) : '—';
+  const brCls = mk.buyback_remaining ? 'g' : '';
+
+  const vlStats = [
+    {l:'P/E Ratio',     v: mk.pe   ? mk.pe.toFixed(1)+'×'  : '—'},
+    {l:'P/FCF',         v: mk.p_fcf? mk.p_fcf.toFixed(1)+'×': '—'},
+    {l:'EV/EBITDA',     v: mk.ev_ebitda? mk.ev_ebitda.toFixed(1)+'×':'—'},
+    {l:'P/Sales',       v: mk.p_s  ? mk.p_s.toFixed(2)+'×' : '—'},
+    {l:'Earnings Yield',v: mk.earnings_yield ? F.pct(mk.earnings_yield) : '—', cls: mk.earnings_yield>0?'g':''},
+    {l:'FCF Yield',     v: mk.fcf_yield ? F.pct(mk.fcf_yield) : '—', cls: mk.fcf_yield>0?'g':''},
+    {l:'Div. Yield',    v: mk.dividend_yield ? F.pct(mk.dividend_yield) : '—'},
+    {l:'Beta',          v: mk.beta ? mk.beta.toFixed(2) : '—'},
+    {l:'Market Cap',    v: F.$M(mk.market_cap)},
+    {l:'Enterprise Val',v: F.$M(mk.enterprise_value)},
+    {l:'Shares Out.',   v: F.sh(mk.shares_outstanding)},
+    {l:'Buyback Auth.', v: brTxt, cls: brCls},
+  ];
+
+  h+=`<div class="vl-card">
+  <div class="vl-top">
+    <div class="vl-title-block">
+      <div class="vl-name">${co.name}<span>(${co.ticker})</span></div>
+      <div class="vl-meta">${co.sic_description||''} · SIC ${co.sic} · FY ends ${co.fiscal_year_end} · ${co.state||'—'}</div>
+    </div>
+    <div class="vl-price-block">
+      <div class="vl-price">${pr?'$'+pr.toFixed(2):'N/A'}</div>
+      <div class="vl-price-sub">Current Price</div>
+    </div>
+  </div>
+  <div class="vl-stats">
+    ${vlStats.map(s=>`<div class="vl-stat"><div class="vl-sl">${s.l}</div><div class="vl-sv${s.cls?' '+s.cls:''}">${s.v}</div></div>`).join('')}
+  </div>
+  ${rangeHtml}
+  <div class="vl-links">
+    ${co.latest_10k?`<a class="badge lk" href="${co.latest_10k.url}" target="_blank" rel="noreferrer">Latest ${co.latest_10k.form} (${co.latest_10k.filing_date})</a>`:''}
+    ${co.latest_10q?`<a class="badge lk" href="${co.latest_10q.url}" target="_blank" rel="noreferrer">Latest ${co.latest_10q.form} (${co.latest_10q.filing_date})</a>`:''}
+    <span class="badge bl">P/E ${F.x(mk.pe)}</span>
+    <span class="badge bl">P/FCF ${F.x(mk.p_fcf)}</span>
+    <span class="badge bl">EV/EBITDA ${F.x(mk.ev_ebitda)}</span>
+    <span class="badge gr">FCF Yield ${F.pct(mk.fcf_yield)}</span>
+  </div>
+</div>`;
+
+  // ── Business description (AI-generated from 10-K) ─────────────────────────
+  if(co.business_summary){
+    h+=`<div class="vl-desc"><div class="vl-desc-hd">Business Description — from 10-K (AI Summary)</div>${co.business_summary}</div>`;
+  }
+
+  // Table
+  h+=`<div class="sec-title">15-Year Financial Summary — ${co.name}</div>`;
+  h+=`<div class="tbl-wrap"><table><thead><tr class="yr-row"><th>Metric</th>`;
+  for(const col of allCols){
+    const isQ = qtrs.includes(col);
+    const isLat = col===latY;
+    if(isQ){
+      const url=ql[col];
+      const lbl=qtrLabel(col);
+      const linked=url?`<a href="${url}" target="_blank" rel="noreferrer" title="View 10-Q on SEC EDGAR" style="color:inherit;text-decoration:underline dotted;text-underline-offset:2px">${lbl}</a>`:lbl;
+      h+=`<th class="qtr-col">${linked}</th>`;
+    } else {
+      const url=fl[col];
+      const yLbl=url
+        ? `<a href="${url}" target="_blank" rel="noreferrer" title="View ${col} 10-K on SEC EDGAR" style="color:inherit;text-decoration:underline dotted;text-underline-offset:2px">${col}</a>`
+        : col;
+      h+=`<th class="${isLat?'lat':''}">${isLat?'★ ':''}${yLbl}</th>`;
+    }
+  }
+  h+=`</tr></thead><tbody>`;
+
+  for(const row of ROWS){
+    if(row.bdc && !co.is_bdc) continue;   // hide BDC-only rows for non-BDC companies
+    if(row.sec){
+      h+=`<tr class="sh"><td colspan="${allCols.length+1}">${row.sec}</td></tr>`;
+      continue;
+    }
+    const ser=fin[row.key]||{};
+    h+=`<tr class="dr">`;
+    h+=`<td class="${row.ind?'ind':''}" style="${row.bld?'font-weight:700':''}">`;
+    h+=`${row.lbl}</td>`;
+    for(const col of allCols){
+      const isQ = qtrs.includes(col);
+      const isLat = col===latY;
+      const v=ser[col]??null;
+      const txt=cellFmt(v,row.t);
+      const cls=cellCls(v,row.t,row.hi,isLat);
+      const qStyle = isQ ? 'background:var(--qtr-bg);color:var(--qtr-fg);border-left:' + (col===qtrs[0]?'2px solid #d97706':'none') + ';' : '';
+      h+=`<td class="${cls||''}" style="${qStyle}">${txt}</td>`;
+    }
+    h+=`</tr>`;
+  }
+  h+=`</tbody></table></div>`;
+
+  // Charts
+  h+=`<div class="sec-title">Trend Charts</div><div class="charts-grid">`;
+  for(const d of CHART_DEFS)
+    h+=`<div class="ch-card"><h4>${d.title}</h4><canvas id="${d.id}"></canvas></div>`;
+  h+=`</div>`;
+
+  // Proxy statement link
+  if(px.url){
+    h+=`<div style="margin-bottom:18px">
+      <a href="${px.url}" target="_blank" rel="noreferrer" style="display:inline-flex;align-items:center;gap:8px;font-size:13px;font-weight:600;padding:9px 16px;border-radius:6px;background:#1d4ed8;color:#fff;text-decoration:none;border:none;transition:background .15s" onmouseover="this.style.background='#1e40af'" onmouseout="this.style.background='#1d4ed8'">
+        📄 Proxy Statement (DEF 14A) — ${px.date}
+      </a>
+    </div>`;
+  }
+
+  // DCF
+  const {discount_rate:dr, tv_dollar:tvDollar, current_fcf:cFCF, market_cap:cMC, scenarios:sc}=dcf;
+  const entMult=cMC&&cFCF&&cFCF>0?(cMC/cFCF).toFixed(1)+'x':'—';
+  const sc_cls={5:'s5',10:'s10',20:'s20'};
+  const sc_clr={5:'#3b82f6',10:'#8b5cf6',20:'#ec4899'};
+  const tvTxt = tvDollar ? F.$M(tvDollar) : '(none)';
+
+  h+=`<div class="sec-title">Reverse DCF Analysis</div>
+<div class="dcf-wrap">
+  <div class="dcf-hdr">
+    <div><div class="dcf-t">Average annual FCF needed to justify today's price</div>
+    <div class="dcf-s">Flat annual FCF discounted at ${(dr*100).toFixed(1)}%${tvDollar ? ` + terminal value of ${tvTxt} at end of period` : ' (no terminal value)'} = market cap</div></div>
+  </div>
+  <div class="dcf-ctx">
+    <div><div class="dci-label">Current FCF (LTM)</div><div class="dci-val">${F.$M(cFCF)}</div></div>
+    <div><div class="dci-label">Market Cap</div><div class="dci-val">${F.$M(cMC)}</div></div>
+    <div><div class="dci-label">Current FCF Multiple</div><div class="dci-val">${entMult}</div></div>
+    <div><div class="dci-label">Terminal Value (your input)</div><div class="dci-val">${tvTxt}</div></div>
+    <div><div class="dci-label">Discount Rate</div><div class="dci-val">${(dr*100).toFixed(1)}%</div></div>
+  </div>
+  <div class="dcf-cards">`;
+
+  for(const [hor,s] of Object.entries(sc)){
+    const clr=sc_clr[parseInt(hor)];
+    // color the avg FCF vs current: red if needs much more, green if close/below
+    const ratio=s.vs_current;
+    const ratioCls=ratio==null?'':ratio>2?'hi':ratio<1.2?'lo':'';
+    const histAvg=s.hist_avg_fcf;
+    // bar: how far avg_fcf is above current FCF (capped at 4×)
+    const barW=ratio!=null?Math.min((ratio-1)/3*100,100).toFixed(0):'0';
+    h+=`<div class="dcf-card ${sc_cls[parseInt(hor)]}">
+      <h3>${hor}-Year Horizon</h3>
+      <div class="dcf-m">
+        <span class="dcf-ml">Avg. Annual FCF Needed</span>
+        <span class="dcf-mv ${ratioCls}" style="font-size:15px">${F.$M(s.avg_fcf)}</span>
+      </div>
+      <div style="margin:6px 0 10px">
+        <div style="font-size:10px;color:var(--muted);margin-bottom:3px">vs. current FCF of ${F.$M(cFCF)}</div>
+        <div class="bar-track"><div class="bar-fill" style="width:${barW}%;background:${clr}"></div></div>
+      </div>
+      <div class="dcf-m"><span class="dcf-ml">Multiple of Current FCF</span><span class="dcf-mv ${ratioCls}">${ratio!=null?ratio.toFixed(2)+'×':'—'}</span></div>
+      <div class="dcf-m"><span class="dcf-ml">Historical Avg FCF (${hor}yr)</span><span class="dcf-mv">${F.$M(histAvg)}</span></div>
+      <div class="dcf-m"><span class="dcf-ml">Terminal Value (PV)</span><span class="dcf-mv">${F.$M(s.tv_pv)} <span style="font-size:10px;color:#94a3b8">${s.tv_pct}% of cap</span></span></div>
+      <div class="dcf-m"><span class="dcf-ml">Annuity Value</span><span class="dcf-mv">${s.annuity_pct}% of cap</span></div>
+      <div class="dcf-m"><span class="dcf-ml">Entry FCF Multiple</span><span class="dcf-mv">${s.entry_multiple}×</span></div>
+    </div>`;
+  }
+
+  if(!Object.keys(sc).length)
+    h+=`<div style="color:var(--muted);grid-column:span 3">Reverse DCF unavailable — terminal value already exceeds market cap, or market cap not available.</div>`;
+
+  h+=`</div>
+  <div class="dcf-note"><strong>How to read:</strong>
+    ${tvDollar ? `Your terminal value of ${tvTxt} is discounted back N years at ${(dr*100).toFixed(1)}% — the remaining gap to market cap must be covered by the FCF annuity.` : `No terminal value entered — the full market cap must be justified by the FCF annuity alone.`}
+    The required average annual FCF is what the company must earn each year (on average) for the PV of those cash flows plus the TV to equal today's market cap.
+    Shorter horizons require a higher annual average; longer horizons spread the burden over more years.
+    Compare the required average against the historical average shown — a required average well above history implies significant growth is priced in.
+  </div>
+</div>`;
+
+  // VIC section placeholder — filled asynchronously after main render
+  h+=`<div id="vic-section"></div>`;
+
+  document.getElementById('root').innerHTML=h;
+  drawCharts(years,fin);
+}
+
+// ── VIC writeups ──────────────────────────────────────────────────────────────
+function renderVIC(ideas, ticker){
+  const wrap = document.getElementById('vic-section');
+  if(!wrap) return;
+  if(!ideas || !ideas.length){
+    wrap.innerHTML=`<div class="sec-title">Value Investors Club — ${ticker}</div>
+      <div class="vic-wrap"><p style="color:var(--muted);font-size:12px">No writeups found on Value Investors Club for ${ticker}.</p></div>`;
+    return;
+  }
+  let h=`<div class="sec-title">Value Investors Club Writeups — ${ticker} (${ideas.length})</div>
+  <div class="vic-wrap">
+    <div style="font-size:11px;color:var(--muted);margin-bottom:2px">Ideas posted by VIC members · publicly visible after 90 days · click to read</div>
+    <div class="vic-list">`;
+  for(const idea of ideas){
+    const cls = idea.long ? 'l' : 's';
+    const lbl = idea.long ? 'LONG' : 'SHORT';
+    h+=`<a class="vic-row" href="${idea.url}" target="_blank" rel="noreferrer">
+      <span class="vic-badge ${cls}">${lbl}</span>
+      <span class="vic-date">${idea.date}</span>
+      <span class="vic-comp">${idea.comp}</span>
+      <span class="vic-arrow">↗</span>
+    </a>`;
+  }
+  h+=`</div></div>`;
+  wrap.innerHTML=h;
+}
+
+// ── Fetch ─────────────────────────────────────────────────────────────────────
+async function doAnalyze(){
+  const tk  = document.getElementById('inp-ticker').value.trim().toUpperCase();
+  const dr  = parseFloat(document.getElementById('inp-dr').value)/100;
+  const tvRaw = document.getElementById('inp-tv').value.trim();
+  const tv = tvRaw ? parseFloat(tvRaw) * 1e9 : null;
+  if(!tk){ document.getElementById('inp-ticker').focus(); return; }
+
+  const btn=document.getElementById('btn');
+  btn.disabled=true; btn.textContent='Loading…';
+  document.getElementById('root').innerHTML=`
+    <div class="spinner-wrap"><div class="spinner"></div>
+    <p>Fetching 15 years of SEC filings for <strong>${tk}</strong>…</p></div>`;
+
+  try{
+    const tvParam = tv != null ? `&tv=${tv}` : '';
+    const res=await fetch(`/api/analyze?ticker=${tk}&discount_rate=${dr}${tvParam}`);
+    const d=await res.json();
+    if(!res.ok||d.error){
+      document.getElementById('root').innerHTML=`<div class="error-box">⚠ ${d.error||'Unknown error'}</div>`;
+      return;
+    }
+    render(d);
+    // Fetch VIC ideas in background after main render
+    const vicWrap = document.getElementById('vic-section');
+    if(vicWrap) vicWrap.innerHTML=`<div class="sec-title">Value Investors Club — ${tk}</div><div class="vic-wrap"><div class="vic-spinner">⏳ Loading VIC writeups…</div></div>`;
+    fetch(`/api/vic?ticker=${tk}`)
+      .then(r=>r.json())
+      .then(v=>renderVIC(v.ideas||[], tk))
+      .catch(()=>{ const w=document.getElementById('vic-section'); if(w) w.innerHTML=''; });
+  }catch(e){
+    document.getElementById('root').innerHTML=`<div class="error-box">⚠ Network error: ${e.message}</div>`;
+  }finally{
+    btn.disabled=false; btn.textContent='Analyze ▸';
+  }
+}
+
+document.getElementById('inp-ticker').addEventListener('keydown',e=>{if(e.key==='Enter')doAnalyze()});
+</script>
+</body>
+</html>
