@@ -1711,7 +1711,7 @@ def analyze():
     all_10k_filings = all_filing_infos_from_submissions(
         submissions, {"10-K", "10-K/A", "20-F", "20-F/A"}, max_count=25)
     all_10q_filings = all_filing_infos_from_submissions(
-        submissions, {"10-Q", "10-Q/A"}, max_count=10)
+        submissions, {"10-Q", "10-Q/A"}, max_count=20)
     latest_10k = all_10k_filings[0] if all_10k_filings else None
     latest_10q = all_10q_filings[0] if all_10q_filings else None
 
@@ -1974,12 +1974,16 @@ def analyze():
     if _last_annual_date:
         _last_dt = datetime.strptime(_last_annual_date, "%Y-%m-%d")
 
-        # Discover the actual quarter-end dates (from revenue; fall back to NII for BDCs)
+        # Discover the actual quarter-end dates.
+        # Try revenue first; fall back through a chain of common metrics so banks
+        # (no revenue tag), BDCs (no revenue), and other non-standard filers all work.
         _rev_tags = METRIC_TAGS.get("revenue", [])
         _q_end_dates = _discover_quarter_end_dates(facts, _rev_tags, _last_dt)
         if not _q_end_dates:
-            # BDCs have no revenue; use gross investment income or NII instead
-            for _fallback_key in ("gross_investment_income", "net_investment_income"):
+            for _fallback_key in (
+                "gross_investment_income", "net_investment_income",  # BDCs
+                "net_income", "operating_income", "operating_cash_flow",  # banks / others
+            ):
                 _q_end_dates = _discover_quarter_end_dates(facts, METRIC_TAGS.get(_fallback_key, []), _last_dt)
                 if _q_end_dates:
                     break
@@ -2005,7 +2009,7 @@ def analyze():
                         key=lambda kv: abs((datetime.strptime(kv[0], "%Y-%m-%d") - qdt).days),
                         default=None,
                     )
-                    if best and abs((datetime.strptime(best[0], "%Y-%m-%d") - qdt).days) <= 7:
+                    if best and abs((datetime.strptime(best[0], "%Y-%m-%d") - qdt).days) <= 14:
                         quarter_filing_links[qk] = best[1]
                 except Exception:
                     pass
