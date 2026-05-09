@@ -2415,10 +2415,12 @@ def analyze():
 
     def mult(num, den): return round(num / den, 2) if num and den and den > 0 else None
 
+    current_eq = L("equity")
     multiples = {
         "pe":           mult(mktcap, current_ni),
         "p_fcf":        mult(mktcap, current_fcf),
         "p_s":          mult(mktcap, current_rev),
+        "p_b":          mult(mktcap, current_eq),
         "ev_ebitda":    mult(ev, current_ebitda),
         "earnings_yield": round(current_ni / mktcap, 4) if current_ni and mktcap else None,
         "fcf_yield":    round(current_fcf / mktcap, 4) if current_fcf and mktcap else None,

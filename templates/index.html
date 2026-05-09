@@ -458,6 +458,7 @@ function render(data){
     {l:'P/FCF',         v: mk.p_fcf? mk.p_fcf.toFixed(1)+'×': '—'},
     {l:'EV/EBITDA',     v: mk.ev_ebitda? mk.ev_ebitda.toFixed(1)+'×':'—'},
     {l:'P/Sales',       v: mk.p_s  ? mk.p_s.toFixed(2)+'×' : '—'},
+    {l:'P/Book',        v: mk.p_b  ? mk.p_b.toFixed(2)+'×' : '—'},
     {l:'Earnings Yield',v: mk.earnings_yield ? F.pct(mk.earnings_yield) : '—', cls: mk.earnings_yield>0?'g':''},
     {l:'FCF Yield',     v: mk.fcf_yield ? F.pct(mk.fcf_yield) : '—', cls: mk.fcf_yield>0?'g':''},
     {l:'Div. Yield',    v: mk.dividend_yield ? F.pct(mk.dividend_yield) : '—'},
