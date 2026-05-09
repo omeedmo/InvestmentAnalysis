@@ -9,12 +9,6 @@ import math
 import os
 import re
 
-# Load .env file if present (before reading ANTHROPIC_API_KEY below)
-try:
-    from dotenv import load_dotenv
-    load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"), override=True)
-except ImportError:
-    pass
 from collections import Counter
 from datetime import datetime
 from typing import Optional
@@ -22,12 +16,6 @@ from typing import Optional
 import requests
 from bs4 import BeautifulSoup
 from flask import Flask, jsonify, render_template, request
-
-try:
-    import anthropic as _anthropic_mod
-    _ANTHROPIC_AVAILABLE = True
-except ImportError:
-    _ANTHROPIC_AVAILABLE = False
 
 app = Flask(__name__)
 
@@ -42,21 +30,6 @@ SEC_ARCHIVES = "https://www.sec.gov/Archives/edgar/data/{cik_no_zero}/{accession
 # Adjust INFLATION_RATE to the current environment as needed.
 CAPITAL_GAINS_TAX_RATE = 0.15   # rate used in Buffett's original 1980 analysis
 INFLATION_RATE         = 0.03   # approximate current long-run inflation assumption
-
-# ── Claude AI setup ───────────────────────────────────────────────────────────
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-CLAUDE_MODEL = "claude-3-5-haiku-latest"
-_claude_client = None
-
-
-def get_claude_client():
-    """Return a singleton Anthropic client, or None if API key not set."""
-    global _claude_client
-    if not _ANTHROPIC_AVAILABLE or not ANTHROPIC_API_KEY:
-        return None
-    if _claude_client is None:
-        _claude_client = _anthropic_mod.Anthropic(api_key=ANTHROPIC_API_KEY)
-    return _claude_client
 
 
 def find_section(text: str, markers: list, char_limit: int = 60000) -> str:
@@ -436,107 +409,6 @@ def extract_berkshire_cash_components(text: str, filing_date: str = "") -> dict[
 # ── AI-powered extraction functions ──────────────────────────────────────────
 
 
-
-def ai_business_summary(filing_text: str, company_name: str) -> str:
-    """
-    Use Claude to generate a 2-3 sentence business description from a 10-K.
-    Returns empty string if no API key or on error.
-    """
-    client = get_claude_client()
-    if not client:
-        return ""
-
-    section = find_section(filing_text, [
-        "item 1.", "item 1 ", "item\xa01", "business overview",
-        "our business", "overview of our business",
-    ], char_limit=10000)
-
-    prompt = f"""Write a concise 2-3 sentence business description of {company_name} based on this 10-K excerpt.
-Focus on: what the company does, key business segments or products, and its market position.
-Be factual and specific. Return only the description — no preamble, no headings.
-
-10-K excerpt:
-{section[:8000]}"""
-
-    try:
-        response = client.messages.create(
-            model=CLAUDE_MODEL,
-            max_tokens=350,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        return response.content[0].text.strip()
-    except Exception:
-        return ""
-
-
-def ai_extract_brk_financials(text: str, filing_date: str) -> dict:
-    """
-    Use Claude to extract BRK-specific financial data from a 10-K filing.
-    Returns {"data": {...}, "curr_year": int, "prior_year": int} or {}.
-    Falls back to {} if no API key (caller should use regex functions instead).
-    """
-    client = get_claude_client()
-    if not client:
-        return {}
-
-    try:
-        fy = int(filing_date[:4])
-        fm = int(filing_date[5:7])
-        curr_year = fy - 1 if fm <= 6 else fy
-        prior_year = curr_year - 1
-    except (ValueError, IndexError):
-        return {}
-
-    # Find sections most likely to contain the data we need
-    section = find_section(text, [
-        "equivalent class a",
-        "notes payable and other borrowings",
-        "short-term investments in u.s. treasury",
-        "cash and cash equivalents",
-    ], char_limit=35000)
-
-    prompt = f"""Extract specific financial data from this Berkshire Hathaway 10-K filing (fiscal year ending December 31, {curr_year}).
-
-Return ONLY this JSON object (no explanation, no markdown):
-{{
-  "shares_b_equiv_{curr_year}": <total Class B-equivalent shares outstanding as of Dec 31 {curr_year} — if you see "X shares on an equivalent Class A basis" multiply X by 1500; otherwise add Class A × 1500 + Class B shares>,
-  "shares_b_equiv_{prior_year}": <same for Dec 31 {prior_year}, or null>,
-  "total_debt_{curr_year}": <sum of "insurance and other" + "railroad, utilities and energy" notes payable carrying amount, in millions of dollars, as of Dec 31 {curr_year}>,
-  "total_debt_{prior_year}": <same for Dec 31 {prior_year}, or null>,
-  "cash_{curr_year}": <consolidated cash and cash equivalents as of Dec 31 {curr_year}, in millions>,
-  "cash_{prior_year}": <same for Dec 31 {prior_year}, or null>,
-  "tbills_{curr_year}": <short-term investments in U.S. Treasury Bills as of Dec 31 {curr_year}, in millions>,
-  "tbills_{prior_year}": <same for Dec 31 {prior_year}, or null>
-}}
-
-Use null for any value you cannot find with high confidence.
-
-10-K text:
-{section}"""
-
-    try:
-        response = client.messages.create(
-            model=CLAUDE_MODEL,
-            max_tokens=600,
-            messages=[{
-                "role": "user",
-                "content": [{
-                    "type": "text",
-                    "text": prompt,
-                    "cache_control": {"type": "ephemeral"},
-                }]
-            }]
-        )
-        raw = response.content[0].text.strip()
-        start = raw.find("{")
-        end = raw.rfind("}") + 1
-        if start >= 0 and end > start:
-            parsed = json.loads(raw[start:end])
-            return {"data": parsed, "curr_year": curr_year, "prior_year": prior_year}
-    except Exception:
-        pass
-
-    return {}
 
 
 def extract_berkshire_operating_earnings(text: str, filing_date: str = "") -> dict[str, float]:
@@ -1816,57 +1688,8 @@ def analyze():
             try:
                 text = _get_brk_text(filing)
 
-                # ── Try AI extraction first; fall back to regex ───────────────
-                ai_result = ai_extract_brk_financials(text, filing["filing_date"])
-
-                if ai_result and ai_result.get("data"):
-                    d    = ai_result["data"]
-                    curr = ai_result["curr_year"]
-                    pri  = ai_result["prior_year"]
-
-                    if not sh_covered:
-                        equiv_b = {}
-                        for yr in [curr, pri]:
-                            val = d.get(f"shares_b_equiv_{yr}")
-                            if val:
-                                equiv_b[f"{yr}-12-31"] = float(val)
-                        if equiv_b:
-                            financials["shares_outstanding_end"] = {**existing_sh, **equiv_b}
-
-                    if not td_covered:
-                        debt = {}
-                        for yr in [curr, pri]:
-                            val = d.get(f"total_debt_{yr}")
-                            if val:
-                                debt[f"{yr}-12-31"] = float(val) * 1e6
-                        if debt:
-                            merged_td = dict(existing_td)
-                            for dk, dv in debt.items():
-                                if dk not in merged_td:
-                                    merged_td[dk] = dv
-                            financials["total_debt"]      = merged_td
-                            financials["long_term_debt"]  = merged_td
-
-                    if not tc_covered or not cash_components_covered:
-                        for yr in [curr, pri]:
-                            key   = f"{yr}-12-31"
-                            c_val = d.get(f"cash_{yr}")
-                            t_val = d.get(f"tbills_{yr}")
-                            if c_val:
-                                mc = dict(financials.get("cash", {}))
-                                mc[key] = float(c_val) * 1e6
-                                financials["cash"] = mc
-                            if t_val:
-                                ms = dict(financials.get("short_term_investments", {}))
-                                ms[key] = float(t_val) * 1e6
-                                financials["short_term_investments"] = ms
-                            if c_val or t_val:
-                                mt = dict(financials.get("total_cash", {}))
-                                mt[key] = (float(c_val or 0) + float(t_val or 0)) * 1e6
-                                financials["total_cash"] = mt
-
-                else:
-                    # ── Regex fallback (no API key or AI parse failed) ────────
+                # ── Regex extraction ──────────────────────────────────────────
+                if True:
                     if not sh_covered:
                         equiv_b = extract_berkshire_equivalent_b_shares(
                             text, filing["filing_date"])
@@ -2379,17 +2202,6 @@ def analyze():
     is_bdc = bool(financials.get("net_investment_income"))
 
     company_name = submissions.get("name", ticker)
-    business_summary = ""
-
-    # ── Business summary (AI, from latest 10-K) ──────────────────────────────
-    latest_10k_text = ""
-    if latest_10k:
-        try:
-            latest_10k_text = quick_filing_text(sec_get_text(latest_10k["url"]))
-        except Exception:
-            latest_10k_text = ""
-    if latest_10k_text:
-        business_summary = ai_business_summary(latest_10k_text, company_name)
 
     # ── Proxy statement link (DEF 14A) ────────────────────────────────────────
     proxy_url, proxy_date = get_proxy_filing_url(submissions)
@@ -2406,7 +2218,6 @@ def analyze():
             "state":            submissions.get("stateOfIncorporation", ""),
             "latest_10k":       latest_10k,
             "latest_10q":       latest_10q,
-            "business_summary": business_summary,
         },
         "market": {
             "price":             price,
