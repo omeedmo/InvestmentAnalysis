@@ -278,7 +278,17 @@ const ROWS = [
   {lbl:'  Net Margin',             key:'net_margin',              t:'%', hi:true, ind:true},
   {lbl:'Effective Tax Rate',       key:'effective_tax_rate',      t:'%'},
   // BDC income
-  {sec:'BDC INCOME  ($M)',         bdc:true},
+  // Bank income section
+  {sec:'BANK INCOME  ($M)',                                              bank:true},
+  {lbl:'Interest Income',          key:'interest_income',     t:'$',    bank:true},
+  {lbl:'Net Interest Income (NII)',key:'net_interest_income', t:'$',    bank:true, bld:true},
+  {lbl:'  NIM  (NII / Assets)',    key:'nim',                 t:'%',    bank:true, hi:true, ind:true},
+  {lbl:'Non-Interest Income',      key:'noninterest_income',  t:'$',    bank:true},
+  {lbl:'Provision for Losses',     key:'provision_for_losses',t:'$',    bank:true},
+  {lbl:'Non-Interest Expense',     key:'noninterest_expense', t:'$',    bank:true},
+  {lbl:'Efficiency Ratio',         key:'efficiency_ratio',    t:'%',    bank:true, hi:true},
+
+  {sec:'BDC INCOME  ($M)',                                               bdc:true},
   {lbl:'Gross Investment Income',  key:'gross_investment_income', t:'$',  bdc:true, bld:true},
   {lbl:'Net Investment Income (NII)', key:'net_investment_income',t:'$',  bdc:true, bld:true},
 
@@ -340,13 +350,20 @@ function cellFmt(v, t){
   }
 }
 
-function cellCls(v, t, hi, isLat){
+function cellCls(v, t, hi, isLat, key){
   let c = '';
   if(t==='$±' && v!=null) c = v>0?'pos':v<0?'neg':'';
   if(hi && t==='%' && v!=null){
-    if(v>0.20) c='hpos';
-    else if(v>0.08) c='pos';
-    else if(v<0) c='hneg';
+    // Efficiency ratio: lower = better (inverse coloring)
+    if(key==='efficiency_ratio'){
+      if(v<0.50) c='hpos';
+      else if(v<0.60) c='pos';
+      else if(v>0.70) c='hneg';
+    } else {
+      if(v>0.20) c='hpos';
+      else if(v>0.08) c='pos';
+      else if(v<0) c='hneg';
+    }
   }
   if(isLat) c=(c?c+' ':'')+'lat2';
   return c;
@@ -516,7 +533,8 @@ function render(data){
   h+=`</tr></thead><tbody>`;
 
   for(const row of ROWS){
-    if(row.bdc && !co.is_bdc) continue;   // hide BDC-only rows for non-BDC companies
+    if(row.bdc  && !co.is_bdc)  continue;
+    if(row.bank && !co.is_bank) continue;
     if(row.sec){
       h+=`<tr class="sh"><td colspan="${allCols.length+1}">${row.sec}</td></tr>`;
       continue;
@@ -531,7 +549,7 @@ function render(data){
       const isOld = !isQ && !recentYears.has(col);
       const v=ser[col]??null;
       const txt=cellFmt(v,row.t);
-      let cls=cellCls(v,row.t,row.hi,isLat);
+      let cls=cellCls(v,row.t,row.hi,isLat,row.key);
       if(isOld) cls=(cls?cls+' ':'')+'hidden-col';
       const qStyle = isQ ? 'background:var(--qtr-bg);color:var(--qtr-fg);border-left:' + (col===qtrs[0]?'2px solid #d97706':'none') + ';' : '';
       const yrAttr = isOld ? ' data-old="1"' : '';

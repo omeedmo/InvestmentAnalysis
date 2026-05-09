@@ -769,6 +769,15 @@ METRIC_TAGS: dict[str, list[str]] = {
     "income_tax": ["IncomeTaxExpenseBenefit"],
     "net_income": ["NetIncomeLoss", "NetIncomeLossAvailableToCommonStockholdersBasic"],
 
+    # Bank-specific income statement metrics
+    "interest_income":      ["InterestAndDividendIncomeOperating", "InterestAndFeeIncomeLoansAndLeases",
+                             "InterestIncomeOperating"],
+    "net_interest_income":  ["InterestIncomeExpenseNet", "InterestIncomeExpenseAfterProvisionForLosses"],
+    "noninterest_income":   ["NoninterestIncome"],
+    "noninterest_expense":  ["NoninterestExpense"],
+    "provision_for_losses": ["ProvisionForLoanAndLeaseLosses", "ProvisionForLoanLeaseAndOtherLosses",
+                             "ProvisionForCreditLosses"],
+
     # Per Share (USD/shares unit)
     "eps_diluted": ["EarningsPerShareDiluted", "EarningsPerShareBasicAndDiluted"],
     "dividends_per_share": ["CommonStockDividendsPerShareDeclared", "CommonStockDividendsPerShareCashPaid"],
@@ -1377,6 +1386,44 @@ def build_financials(facts: dict) -> dict[str, dict[str, float]]:
                 nii_roe[d] = nii_series[d] / e
         raw["nii_roe"] = nii_roe or None
 
+    # ── Bank-specific derived metrics ────────────────────────────────────────
+    int_inc  = raw.get("interest_income",     {})
+    nii_bank = raw.get("net_interest_income", {})
+    noni     = raw.get("noninterest_income",  {})
+    none_exp = raw.get("noninterest_expense", {})
+    ta       = raw.get("total_assets",        {})
+
+    # net_interest_income: prefer direct tag; fall back to interest_income − interest_expense
+    int_exp = raw.get("interest_expense", {})
+    if not nii_bank and int_inc and int_exp:
+        nii_bank = {}
+        for d in int_inc:
+            ie = fy_get(int_exp, d[:4])
+            if ie is not None:
+                nii_bank[d] = int_inc[d] - abs(ie)
+        if nii_bank:
+            raw["net_interest_income"] = nii_bank
+
+    # NIM = Net Interest Income / Total Assets  (proxy for earning assets)
+    if nii_bank and ta:
+        nim = {}
+        for d in nii_bank:
+            ta_v = fy_get(ta, d[:4])
+            if ta_v and ta_v != 0:
+                nim[d] = nii_bank[d] / ta_v
+        raw["nim"] = nim or None
+
+    # Efficiency Ratio = Non-interest Expense / (NII + Non-interest Income)
+    if none_exp and nii_bank:
+        eff = {}
+        for d in none_exp:
+            nii_v  = fy_get(nii_bank, d[:4]) or 0
+            noni_v = fy_get(noni,     d[:4]) or 0
+            denom  = nii_v + noni_v
+            if denom and denom != 0:
+                eff[d] = abs(none_exp[d]) / denom
+        raw["efficiency_ratio"] = eff or None
+
     # Owner Earnings (Buffett, 1986 letter) = Net Income + D&A − CapEx − Investment Gains/Losses
     # Investment gains/losses are stripped out because they are non-cash, lumpy, and not
     # representative of the business's recurring earning power.
@@ -1956,6 +2003,9 @@ def analyze():
         "dividends_paid", "buybacks_value",
         # BDC flow metrics
         "net_investment_income", "gross_investment_income", "nii_per_share",
+        # Bank flow metrics
+        "interest_income", "net_interest_income", "noninterest_income",
+        "noninterest_expense", "provision_for_losses",
     }
     _quarterly_bs_keys = {
         "total_assets", "current_assets", "current_liabilities", "equity",
@@ -2156,6 +2206,36 @@ def analyze():
                     dv = rev_q.get(qk)
                     if dv and dv > 0:
                         mg[qk] = nv / dv
+
+        # Quarterly bank metrics: NIM and Efficiency Ratio
+        _q_nii_bank  = {k: v for k, v in financials.get("net_interest_income", {}).items() if k.startswith("Q")}
+        _q_int_inc   = {k: v for k, v in financials.get("interest_income",     {}).items() if k.startswith("Q")}
+        _q_int_exp   = {k: v for k, v in financials.get("interest_expense",    {}).items() if k.startswith("Q")}
+        _q_noni      = {k: v for k, v in financials.get("noninterest_income",  {}).items() if k.startswith("Q")}
+        _q_none_exp  = {k: v for k, v in financials.get("noninterest_expense", {}).items() if k.startswith("Q")}
+        _q_ta_bank   = {k: v for k, v in financials.get("total_assets",        {}).items() if k.startswith("Q")}
+
+        # Fill net_interest_income Q-keys if missing but components exist
+        if not _q_nii_bank and _q_int_inc and _q_int_exp:
+            _nii_bk = financials.setdefault("net_interest_income", {})
+            for qk in set(_q_int_inc) & set(_q_int_exp):
+                _nii_bk[qk] = _q_int_inc[qk] - abs(_q_int_exp[qk])
+            _q_nii_bank = {k: v for k, v in _nii_bk.items() if k.startswith("Q")}
+
+        if _q_nii_bank and _q_ta_bank:
+            _nim_q = financials.setdefault("nim", {})
+            for qk in set(_q_nii_bank) & set(_q_ta_bank):
+                if _q_ta_bank[qk] and _q_ta_bank[qk] != 0:
+                    _nim_q[qk] = (_q_nii_bank[qk] * 4) / _q_ta_bank[qk]  # annualised
+
+        if _q_none_exp and _q_nii_bank:
+            _eff_q = financials.setdefault("efficiency_ratio", {})
+            for qk in set(_q_none_exp) & (set(_q_nii_bank) | set(_q_noni)):
+                nii_v  = _q_nii_bank.get(qk) or 0
+                noni_v = _q_noni.get(qk)      or 0
+                denom  = nii_v + noni_v
+                if denom and denom != 0:
+                    _eff_q[qk] = abs(_q_none_exp[qk]) / denom
 
         # Quarterly ROE, FCF ROE, ROA (annualized: × 4)
         _q_ni  = {k: v for k, v in financials.get("net_income", {}).items() if k.startswith("Q")}
@@ -2360,7 +2440,8 @@ def analyze():
                     "Jul","Aug","Sep","Oct","Nov","Dec"][m_num - 1]
 
     # BDC detection: true if XBRL data contains NetInvestmentIncome entries
-    is_bdc = bool(financials.get("net_investment_income"))
+    is_bdc  = bool(financials.get("net_investment_income"))
+    is_bank = bool(financials.get("net_interest_income") or financials.get("noninterest_expense"))
 
     company_name = submissions.get("name", ticker)
 
@@ -2375,6 +2456,7 @@ def analyze():
             "sic":              submissions.get("sic", ""),
             "sic_description":  submissions.get("sicDescription", ""),
             "is_bdc":           is_bdc,
+            "is_bank":          is_bank,
             "fiscal_year_end":  fy_month,
             "state":            submissions.get("stateOfIncorporation", ""),
             "latest_10k":       latest_10k,
