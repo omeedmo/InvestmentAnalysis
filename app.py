@@ -792,6 +792,7 @@ METRIC_TAGS: dict[str, list[str]] = {
         "PaymentsToAcquireOilAndGasPropertyAndEquipment",
         "PaymentsToAcquirePropertyPlantEquipmentAndIntangibleAssets",
         "SegmentExpenditureAdditionToLongLivedAssets",
+        "PaymentsForCapitalImprovements",               # Noble Corporation (NE) and similar
     ],
     "depreciation": ["DepreciationDepletionAndAmortization", "DepreciationAndAmortization", "Depreciation"],
     "stock_based_compensation": ["ShareBasedCompensation", "AllocatedShareBasedCompensationExpense",
