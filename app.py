@@ -2502,10 +2502,18 @@ def analyze():
     market = get_market_data(ticker)
     price  = market.get("price")
 
-    # Shares outstanding and market cap come entirely from EDGAR (10-K data).
+    # Shares outstanding: prefer the most-recent quarterly cover-page figure
+    # (Q3 > Q2 > Q1 of the latest fiscal year) over the annual 10-K figure,
+    # since the quarterly count is more current.
     latest_yr = years[-1] if years else None
     so_series = financials.get("shares_outstanding_end", {})
-    edgar_shares = fy_get(so_series, latest_yr) if latest_yr else None
+    edgar_shares = None
+    for _qk in ("Q3", "Q2", "Q1"):
+        if so_series.get(_qk):
+            edgar_shares = so_series[_qk]
+            break
+    if edgar_shares is None:
+        edgar_shares = fy_get(so_series, latest_yr) if latest_yr else None
 
     # Market cap = current price × most-recent EDGAR share count
     mktcap = (price * edgar_shares) if (price and edgar_shares) else None
