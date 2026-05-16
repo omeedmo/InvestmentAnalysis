@@ -238,7 +238,7 @@ def get_earnings_materials(
         materials.append({
             "type":  "transcript",
             "label": "Transcripts (Motley Fool)",
-            "url":   f"https://www.fool.com/search/?q={sa_ticker}+earnings+transcript",
+            "url":   f"https://www.google.com/search?q={sa_ticker}+earnings+call+transcript+site:fool.com",
         })
         materials.append({
             "type":  "transcript",
