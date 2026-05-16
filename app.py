@@ -1476,6 +1476,11 @@ def build_financials(facts: dict) -> dict[str, dict[str, float]]:
     margin(fcf,              rev, "fcf_margin")
     margin(raw.get("ebitda",{}), rev, "ebitda_margin")
 
+    # EBIT = Operating Income (standard proxy; same XBRL source)
+    if oi:
+        raw["ebit"] = oi
+        margin(oi, rev, "ebit_margin")
+
     # Adjusted FCF = FCF - Stock-Based Compensation
     sbc = raw.get("stock_based_compensation", {})
     if fcf and sbc:
@@ -2337,6 +2342,7 @@ def analyze():
         for num_key, out_key in [
             ("gross_profit",    "gross_margin"),
             ("operating_income","operating_margin"),
+            ("operating_income","ebit_margin"),   # EBIT = operating income
             ("net_income",      "net_margin"),
             ("fcf",             "fcf_margin"),
         ]:
@@ -2347,6 +2353,11 @@ def analyze():
                     dv = rev_q.get(qk)
                     if dv and dv > 0:
                         mg[qk] = nv / dv
+
+        # Quarterly EBIT = quarterly operating income
+        _q_oi = {k: v for k, v in financials.get("operating_income", {}).items() if k.startswith("Q")}
+        if _q_oi:
+            financials.setdefault("ebit", {}).update(_q_oi)
 
         # Quarterly bank metrics: NIM and Efficiency Ratio
         _q_nii_bank  = {k: v for k, v in financials.get("net_interest_income", {}).items() if k.startswith("Q")}
