@@ -159,6 +159,26 @@ th.hidden-col{display:none}
 .sh-bar-wrap{width:100%;height:4px;background:#e2e8f0;border-radius:2px;margin-top:3px}
 .sh-bar{height:100%;background:var(--blue);border-radius:2px}
 
+/* ── Earnings Materials ───────────────────────────────────────────────── */
+.em-wrap{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:14px 18px;margin-bottom:22px}
+.em-quarters{display:flex;flex-direction:column;gap:14px;margin-top:10px}
+.em-quarter{border:1px solid var(--border);border-radius:7px;overflow:hidden}
+.em-q-header{background:var(--section-bg);padding:7px 13px;font-size:11px;font-weight:800;letter-spacing:.8px;text-transform:uppercase;color:var(--navy)}
+.em-links{display:flex;flex-wrap:wrap;gap:8px;padding:10px 13px}
+.em-link{display:inline-flex;align-items:center;gap:5px;padding:5px 11px;border-radius:5px;border:1px solid var(--border);font-size:12px;font-weight:500;text-decoration:none;color:var(--text);transition:background .12s,border-color .12s;white-space:nowrap}
+.em-link:hover{background:var(--row-hover);border-color:var(--blue)}
+.em-link.sec{border-color:#c7d2fe;background:#eef2ff;color:#3730a3}
+.em-link.sec:hover{background:#e0e7ff}
+.em-link.sec .em-icon{color:#6366f1}
+.em-link.transcript-q{border-color:#d1fae5;background:#ecfdf5;color:#065f46}
+.em-link.transcript-q:hover{background:#d1fae5}
+.em-link.transcript-q .em-icon{color:#10b981}
+.em-link.presentation{border-color:#fde68a;background:#fef9c3;color:#854d0e}
+.em-link.presentation:hover{background:#fef08a}
+.em-link.presentation .em-icon{color:#d97706}
+.em-icon{font-size:13px}
+.em-filing-date{font-size:10px;color:var(--muted);margin-left:2px}
+
 /* ── VIC ─────────────────────────────────────────────────────────────── */
 .vic-wrap{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:14px 18px;margin-bottom:22px}
 .vic-list{display:flex;flex-direction:column;gap:6px;margin-top:10px}
@@ -638,11 +658,73 @@ function render(data){
   </div>
 </div>`;
 
+  // Earnings materials section
+  h+=renderEarningsMaterials(data.earnings_materials||{}, data.quarter_dates||{}, co.ticker);
+
   // VIC section placeholder — filled asynchronously after main render
   h+=`<div id="vic-section"></div>`;
 
   document.getElementById('root').innerHTML=h;
   drawCharts(years,fin);
+}
+
+// ── Earnings Materials ────────────────────────────────────────────────────────
+function renderEarningsMaterials(materials, qDates, ticker){
+  const quarters = Object.keys(materials).sort();
+  if(!quarters.length) return '';
+
+  const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  function qLabel(qk){
+    const d = qDates[qk];
+    if(!d) return qk;
+    const yr  = (parseInt(d.slice(0,4)) % 100).toString().padStart(2,'0');
+    const mon = MONTHS[parseInt(d.slice(5,7))-1] || '';
+    return mon ? `${qk}'${yr} (${mon})` : `${qk}'${yr}`;
+  }
+
+  const TYPE_META = {
+    earnings_release: {cls:'sec',        icon:'📋', suffix:''},
+    presentation:     {cls:'presentation',icon:'📊', suffix:''},
+    other:            {cls:'sec',         icon:'📄', suffix:''},
+    transcript:       {cls:'transcript-q',icon:'🎙️', suffix:''},
+  };
+
+  let h = `<div class="sec-title-row"><span class="sec-title">Quarterly Earnings Materials — ${ticker}</span></div>
+  <div class="em-wrap">
+    <div style="font-size:11px;color:var(--muted);margin-bottom:10px">
+      Press releases &amp; presentations from SEC EDGAR · transcripts via Quartr &amp; Seeking Alpha
+    </div>
+    <div class="em-quarters">`;
+
+  for(const qk of quarters){
+    const items = materials[qk] || [];
+    h += `<div class="em-quarter">
+      <div class="em-q-header">${qLabel(qk)}</div>
+      <div class="em-links">`;
+    for(const item of items){
+      const meta = TYPE_META[item.type] || {cls:'sec', icon:'🔗', suffix:''};
+      const dateTag = item.filing_date
+        ? `<span class="em-filing-date">${item.filing_date}</span>` : '';
+      // For SEC filings show both primary doc and index (all exhibits)
+      if(item.index_url){
+        h += `<a class="em-link ${meta.cls}" href="${item.url}" target="_blank" rel="noreferrer">
+          <span class="em-icon">${meta.icon}</span>${item.label}${dateTag}
+        </a>
+        <a class="em-link ${meta.cls}" href="${item.index_url}" target="_blank" rel="noreferrer"
+           title="View all exhibits in this filing" style="font-size:11px;padding:4px 8px">
+          <span class="em-icon">📂</span>All Exhibits
+        </a>`;
+      } else {
+        h += `<a class="em-link ${meta.cls}" href="${item.url}" target="_blank" rel="noreferrer">
+          <span class="em-icon">${meta.icon}</span>${item.label}
+        </a>`;
+      }
+    }
+    h += `</div></div>`;
+  }
+
+  h += `</div></div>`;
+  return h;
 }
 
 // ── VIC writeups ──────────────────────────────────────────────────────────────

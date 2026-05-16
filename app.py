@@ -143,6 +143,115 @@ def quick_filing_text(html: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def get_earnings_materials(
+    submissions: dict,
+    quarter_end_dates: dict[str, str],
+    ticker: str,
+) -> dict[str, list]:
+    """
+    For each quarter-end date, collect SEC 8-K filings filed within 60 days
+    afterwards that relate to earnings (item 2.02) or investor presentations
+    (items 7.01 / 8.01).  Also attaches a Seeking Alpha transcript link.
+
+    Returns {qk: [{"type", "label", "url", "index_url", "filing_date"}, …]}
+    """
+    if not quarter_end_dates:
+        return {}
+
+    recent       = submissions.get("filings", {}).get("recent", {})
+    form_list    = recent.get("form", [])
+    accessions   = recent.get("accessionNumber", [])
+    primary_docs = recent.get("primaryDocument", [])
+    filing_dates = recent.get("filingDate", [])
+    items_list   = recent.get("items", [])
+    cik_no_zero  = str(int(submissions.get("cik", "0")))
+
+    # Collect all 8-K / 8-K/A filings once
+    eight_ks: list[dict] = []
+    for idx, form in enumerate(form_list):
+        if form not in {"8-K", "8-K/A"}:
+            continue
+        fd = filing_dates[idx] if idx < len(filing_dates) else ""
+        if not fd:
+            continue
+        eight_ks.append({
+            "filing_date": fd,
+            "items":       items_list[idx] if idx < len(items_list) else "",
+            "accession":   accessions[idx],
+            "primary_doc": primary_docs[idx] if idx < len(primary_docs) else "",
+        })
+
+    # Seeking Alpha ticker format (BRK.B → BRK-B)
+    sa_ticker = ticker.replace(".", "-").replace("/", "-")
+
+    result: dict[str, list] = {}
+    for qk, qdate in quarter_end_dates.items():
+        try:
+            qdt = datetime.strptime(qdate, "%Y-%m-%d")
+        except Exception:
+            continue
+
+        materials: list[dict] = []
+
+        for ek in eight_ks:
+            try:
+                fdt = datetime.strptime(ek["filing_date"], "%Y-%m-%d")
+            except Exception:
+                continue
+            days_after = (fdt - qdt).days
+            if not (0 <= days_after <= 60):
+                continue
+
+            items = ek.get("items", "")
+            if "2.02" in items:
+                label    = "Earnings Press Release (8-K)"
+                mat_type = "earnings_release"
+            elif "7.01" in items:
+                label    = "Investor Presentation / Reg-FD (8-K)"
+                mat_type = "presentation"
+            elif "8.01" in items:
+                label    = "Other Earnings Event (8-K)"
+                mat_type = "other"
+            else:
+                continue  # unrelated 8-K
+
+            acc            = ek["accession"]
+            acc_no_dash    = acc.replace("-", "")
+            primary_url    = SEC_ARCHIVES.format(
+                cik_no_zero=cik_no_zero,
+                accession_no_dash=acc_no_dash,
+                document=ek["primary_doc"],
+            )
+            index_url = (
+                f"https://www.sec.gov/Archives/edgar/data/"
+                f"{cik_no_zero}/{acc_no_dash}/{acc}-index.htm"
+            )
+            materials.append({
+                "type":         mat_type,
+                "label":        label,
+                "url":          primary_url,
+                "index_url":    index_url,
+                "filing_date":  ek["filing_date"],
+            })
+
+        # Always add transcript links (free services)
+        materials.append({
+            "type":  "transcript",
+            "label": "Transcripts & Audio (Quartr)",
+            "url":   f"https://quartr.com/companies/{sa_ticker.lower()}",
+        })
+        materials.append({
+            "type":  "transcript",
+            "label": "Transcripts (Seeking Alpha)",
+            "url":   f"https://seekingalpha.com/symbol/{sa_ticker}/earnings/transcripts",
+        })
+
+        if materials:
+            result[qk] = materials
+
+    return result
+
+
 def all_filing_infos_from_submissions(submissions: dict, forms: set[str],
                                       max_count: int = 25) -> list[dict]:
     """Return a list of all matching filings (most-recent first), up to max_count."""
@@ -2479,6 +2588,9 @@ def analyze():
     # ── Proxy statement link (DEF 14A) ────────────────────────────────────────
     proxy_url, proxy_date = get_proxy_filing_url(submissions)
 
+    # ── Earnings materials (8-Ks + Seeking Alpha links) per quarter ───────────
+    earnings_materials = get_earnings_materials(submissions, quarter_end_dates, ticker)
+
     return jsonify({
         "company": {
             "name":             company_name,
@@ -2508,9 +2620,10 @@ def analyze():
         "years":           years,
         "quarters":        quarters,
         "quarter_dates":   quarter_end_dates,
-        "quarter_links":   quarter_filing_links,
-        "financials":      fin_data,
-        "filing_links": filing_links,
+        "quarter_links":      quarter_filing_links,
+        "earnings_materials": earnings_materials,
+        "financials":         fin_data,
+        "filing_links":       filing_links,
         "proxy": {
             "url":  proxy_url,
             "date": proxy_date,
