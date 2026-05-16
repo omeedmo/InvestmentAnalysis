@@ -2588,6 +2588,17 @@ def analyze():
     # ── Proxy statement link (DEF 14A) ────────────────────────────────────────
     proxy_url, proxy_date = get_proxy_filing_url(submissions)
 
+    # ── Investor relations URL ─────────────────────────────────────────────────
+    # EDGAR submissions often carry the company's website; we prefer that and
+    # append /investors as a best-effort IR path, then fall back to a Google
+    # search so there is always a working link.
+    _edgar_website = (submissions.get("website") or "").strip().rstrip("/")
+    if _edgar_website:
+        ir_url = _edgar_website + "/investors"
+    else:
+        _ir_search_q = requests.utils.quote(f"{company_name} investor relations")
+        ir_url = f"https://www.google.com/search?q={_ir_search_q}"
+
     # ── Earnings materials (8-Ks + Seeking Alpha links) per quarter ───────────
     earnings_materials = get_earnings_materials(submissions, quarter_end_dates, ticker)
 
@@ -2622,6 +2633,7 @@ def analyze():
         "quarter_dates":   quarter_end_dates,
         "quarter_links":      quarter_filing_links,
         "earnings_materials": earnings_materials,
+        "ir_url":             ir_url,
         "financials":         fin_data,
         "filing_links":       filing_links,
         "proxy": {

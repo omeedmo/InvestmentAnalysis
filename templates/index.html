@@ -178,6 +178,8 @@ th.hidden-col{display:none}
 .em-link.presentation .em-icon{color:#d97706}
 .em-icon{font-size:13px}
 .em-filing-date{font-size:10px;color:var(--muted);margin-left:2px}
+.em-ir-btn{display:inline-flex;align-items:center;gap:5px;padding:5px 13px;border-radius:5px;border:1px solid #bfdbfe;background:#eff6ff;color:#1d4ed8;font-size:12px;font-weight:600;text-decoration:none;transition:background .12s}
+.em-ir-btn:hover{background:#dbeafe}
 
 /* ── VIC ─────────────────────────────────────────────────────────────── */
 .vic-wrap{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:14px 18px;margin-bottom:22px}
@@ -659,7 +661,7 @@ function render(data){
 </div>`;
 
   // Earnings materials section
-  h+=renderEarningsMaterials(data.earnings_materials||{}, data.quarter_dates||{}, co.ticker);
+  h+=renderEarningsMaterials(data.earnings_materials||{}, data.quarter_dates||{}, co.ticker, data.ir_url||'');
 
   // VIC section placeholder — filled asynchronously after main render
   h+=`<div id="vic-section"></div>`;
@@ -669,9 +671,9 @@ function render(data){
 }
 
 // ── Earnings Materials ────────────────────────────────────────────────────────
-function renderEarningsMaterials(materials, qDates, ticker){
+function renderEarningsMaterials(materials, qDates, ticker, irUrl){
   const quarters = Object.keys(materials).sort();
-  if(!quarters.length) return '';
+  if(!quarters.length && !irUrl) return '';
 
   const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   function qLabel(qk){
@@ -689,10 +691,15 @@ function renderEarningsMaterials(materials, qDates, ticker){
     transcript:       {cls:'transcript-q',icon:'🎙️', suffix:''},
   };
 
+  const irBtn = irUrl
+    ? `<a class="em-ir-btn" href="${irUrl}" target="_blank" rel="noreferrer">🏢 Investor Relations Website</a>`
+    : '';
+
   let h = `<div class="sec-title-row"><span class="sec-title">Quarterly Earnings Materials — ${ticker}</span></div>
   <div class="em-wrap">
-    <div style="font-size:11px;color:var(--muted);margin-bottom:10px">
-      Press releases &amp; presentations from SEC EDGAR · transcripts via Motley Fool &amp; Seeking Alpha
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+      <span style="font-size:11px;color:var(--muted)">Press releases &amp; presentations from SEC EDGAR · transcripts via Motley Fool &amp; Seeking Alpha</span>
+      ${irBtn}
     </div>
     <div class="em-quarters">`;
 
