@@ -892,7 +892,10 @@ METRIC_TAGS: dict[str, list[str]] = {
     "dividends_per_share": ["CommonStockDividendsPerShareDeclared", "CommonStockDividendsPerShareCashPaid"],
 
     # Cash Flow
-    "operating_cash_flow": ["NetCashProvidedByUsedInOperatingActivities"],
+    "operating_cash_flow": [
+        "NetCashProvidedByUsedInOperatingActivities",
+        "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations",  # DPZ 2014-2016 and similar
+    ],
     "capex": [
         "PaymentsToAcquirePropertyPlantAndEquipment",
         "PaymentsToAcquireProductiveAssets",
