@@ -237,8 +237,8 @@ def get_earnings_materials(
         # Always add transcript links (free services)
         materials.append({
             "type":  "transcript",
-            "label": "Transcripts & Audio (Quartr)",
-            "url":   f"https://quartr.com/companies/{sa_ticker.lower()}",
+            "label": "Transcripts (Motley Fool)",
+            "url":   f"https://www.fool.com/search/?q={sa_ticker}+earnings+transcript",
         })
         materials.append({
             "type":  "transcript",
