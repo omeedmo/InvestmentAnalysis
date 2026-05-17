@@ -2150,7 +2150,7 @@ def analyze():
 
     # Metrics to extract for quarterly view
     _quarterly_flow_keys = {
-        "revenue", "gross_profit", "operating_income", "net_income",
+        "revenue", "gross_profit", "cost_of_revenue", "operating_income", "net_income",
         "operating_cash_flow", "capex", "depreciation", "stock_based_compensation",
         "income_tax", "interest_expense", "investment_gains",
         "dividends_paid", "buybacks_value",
@@ -2371,6 +2371,19 @@ def analyze():
                     dv = rev_q.get(qk)
                     if dv and dv > 0:
                         mg[qk] = nv / dv
+
+        # Quarterly Gross Profit = Revenue - COGS (for companies that don't tag GrossProfit)
+        _q_gp = {k: v for k, v in financials.get("gross_profit", {}).items() if k.startswith("Q")}
+        if not _q_gp:
+            _q_rev_gp = {k: v for k, v in financials.get("revenue", {}).items() if k.startswith("Q")}
+            _q_cogs   = {k: v for k, v in financials.get("cost_of_revenue", {}).items() if k.startswith("Q")}
+            if _q_rev_gp and _q_cogs:
+                _q_gp_derived = {}
+                for qk in _q_rev_gp:
+                    if qk in _q_cogs:
+                        _q_gp_derived[qk] = _q_rev_gp[qk] - abs(_q_cogs[qk])
+                if _q_gp_derived:
+                    financials.setdefault("gross_profit", {}).update(_q_gp_derived)
 
         # Quarterly EBIT = quarterly operating income
         _q_oi = {k: v for k, v in financials.get("operating_income", {}).items() if k.startswith("Q")}
