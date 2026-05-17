@@ -862,7 +862,12 @@ METRIC_TAGS: dict[str, list[str]] = {
         "Revenues", "SalesRevenueNet", "SalesRevenueGoodsNet",
         "SalesRevenueServicesNet", "NetSales",
     ],
-    "cost_of_revenue": ["CostOfRevenue", "CostOfGoodsAndServicesSold", "CostOfGoodsSold"],
+    "cost_of_revenue": [
+        "CostOfRevenue",
+        "CostOfGoodsAndServicesSold",
+        "CostOfGoodsSold",
+        "CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization",  # AMR and similar mining/industrial
+    ],
     "gross_profit": ["GrossProfit"],
     "rd_expense": ["ResearchAndDevelopmentExpense"],
     "sga_expense": ["SellingGeneralAndAdministrativeExpense"],
@@ -1376,6 +1381,19 @@ def build_financials(facts: dict) -> dict[str, dict[str, float]]:
             if da is not None:
                 ebitda[d] = oi[d] + da
         raw["ebitda"] = ebitda if ebitda else None
+
+    # Gross Profit = Revenue - Cost of Revenue (when not directly tagged in XBRL)
+    if not gp and rev:
+        cogs = raw.get("cost_of_revenue", {})
+        if cogs:
+            gp_derived = {}
+            for d in rev:
+                c = fy_get(cogs, d[:4])
+                if c is not None:
+                    gp_derived[d] = rev[d] - abs(c)
+            if gp_derived:
+                raw["gross_profit"] = gp_derived
+                gp = gp_derived
 
     # Total Cash = Cash + ST Investments
     if cash or st:
