@@ -1341,17 +1341,16 @@ def build_financials(facts: dict) -> dict[str, dict[str, float]]:
     rev   = raw.get("revenue", {})
     gp    = raw.get("gross_profit", {})
 
-    # Merge dividends: PaymentsOfDividendsCommonStock (specific) is authoritative.
-    # PaymentsOfDividends (generic) only fills years where the specific tag has
-    # zero data — prevents RSU dividend equivalents / preferred leaking in.
+    # Merge dividends: if a company ever files PaymentsOfDividendsCommonStock,
+    # use it exclusively — it means the company distinguishes common dividends
+    # from RSU equivalents / preferred, so the generic tag is untrustworthy.
+    # Only fall back to the generic when the specific tag has never been used.
     _div_common  = raw.pop("dividends_paid_common",  {}) or {}
     _div_generic = raw.pop("dividends_paid_generic", {}) or {}
-    _div_merged: dict[str, float] = dict(_div_common)   # start with specific (authoritative)
-    for d, v in _div_generic.items():
-        if fy_get(_div_common, d[:4]) is None:           # generic only fills uncovered years
-            _div_merged[d] = v
-    if _div_merged:
-        raw["dividends_paid"] = _div_merged
+    if _div_common:
+        raw["dividends_paid"] = _div_common   # specific tag used → trust it exclusively
+    elif _div_generic:
+        raw["dividends_paid"] = _div_generic  # specific never filed → use generic
 
     # For banks: derive revenue = Net Interest Income + Non-interest Income
     # when no standard revenue tag is filed (WFC, JPM, BAC, etc.)
@@ -2448,15 +2447,19 @@ def analyze():
                 if _q_gp_derived:
                     financials.setdefault("gross_profit", {}).update(_q_gp_derived)
 
-        # Merge quarterly dividends: specific tag is authoritative; generic only fills missing Q-keys
-        _q_div_common  = {k: v for k, v in financials.get("dividends_paid_common",  {}).items() if k.startswith("Q")}
-        _q_div_generic = {k: v for k, v in financials.get("dividends_paid_generic", {}).items() if k.startswith("Q")}
-        _q_div_merged = dict(_q_div_common)
-        for qk, v in _q_div_generic.items():
-            if qk not in _q_div_common:          # generic only fills Q-keys not covered by specific
-                _q_div_merged[qk] = v
-        if _q_div_merged:
-            financials.setdefault("dividends_paid", {}).update(_q_div_merged)
+        # Merge quarterly dividends: same rule as annual —
+        # if the specific tag was ever used (has any annual data), use it exclusively for quarters too.
+        _ann_div_common = {k: v for k, v in financials.get("dividends_paid_common",  {}).items() if not k.startswith("Q")}
+        _q_div_common   = {k: v for k, v in financials.get("dividends_paid_common",  {}).items() if k.startswith("Q")}
+        _q_div_generic  = {k: v for k, v in financials.get("dividends_paid_generic", {}).items() if k.startswith("Q")}
+        if _ann_div_common:
+            # Company uses the specific tag → trust quarterly specific only
+            if _q_div_common:
+                financials.setdefault("dividends_paid", {}).update(_q_div_common)
+        else:
+            # Company never used specific tag → use generic quarters
+            if _q_div_generic:
+                financials.setdefault("dividends_paid", {}).update(_q_div_generic)
 
         # Quarterly buybacks fallback: delta between Q treasury stock and last year-end balance
         _q_bb = {k: v for k, v in financials.get("buybacks_value", {}).items() if k.startswith("Q")}
