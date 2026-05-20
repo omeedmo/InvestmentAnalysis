@@ -975,7 +975,12 @@ METRIC_TAGS: dict[str, list[str]] = {
 
     # Capital Returns
     "dividends_paid": ["PaymentsOfDividendsCommonStock", "PaymentsOfDividends"],
-    "buybacks_value": ["PaymentsForRepurchaseOfCommonStock"],
+    "buybacks_value": [
+        "PaymentsForRepurchaseOfCommonStock",
+        "StockRepurchasedAndRetiredDuringPeriodValue",
+        "StockRepurchasedDuringPeriodValue",
+    ],
+    "treasury_stock": ["TreasuryStockCommonValue", "TreasuryStockValue"],
     "shares_repurchased": [
         "StockRepurchasedAndRetiredDuringPeriodShares",
         "StockRepurchasedDuringPeriodShares",
@@ -1510,6 +1515,26 @@ def build_financials(facts: dict) -> dict[str, dict[str, float]]:
         if adj_fcf:
             raw["adj_fcf"] = adj_fcf
             margin(adj_fcf, rev, "adj_fcf_margin")
+
+    # Buybacks fallback: derive from YoY change in Treasury Stock balance
+    # Needed for companies (e.g. AMR) that file repurchase cash flows as
+    # cumulative-since-inception, which the 10-14 month period filter rejects.
+    bb = raw.get("buybacks_value", {})
+    ts = raw.get("treasury_stock", {})
+    if ts:
+        ts_by_year: dict[str, float] = {}
+        for d, v in ts.items():
+            y = d[:4]
+            if y not in ts_by_year or d > max(k for k in ts if k[:4] == y):
+                ts_by_year[y] = v
+        sorted_ts_years = sorted(ts_by_year)
+        for i, y in enumerate(sorted_ts_years[1:], 1):
+            prev_y = sorted_ts_years[i - 1]
+            if not fy_get(bb, y) and ts_by_year[y] > ts_by_year[prev_y]:
+                end_date = next((d for d in ts if d[:4] == y), f"{y}-12-31")
+                bb[end_date] = ts_by_year[y] - ts_by_year[prev_y]
+        if bb:
+            raw["buybacks_value"] = bb
 
     # ROE = Net Income / Equity
     if ni and eq:
@@ -2164,6 +2189,7 @@ def analyze():
         "total_assets", "current_assets", "current_liabilities", "equity",
         "cash", "short_term_investments", "long_term_debt", "current_debt",
         "total_liabilities", "goodwill", "inventory", "shares_outstanding_end",
+        "treasury_stock",
         # BDC point-in-time
         "nav_per_share",
     }
@@ -2171,6 +2197,7 @@ def analyze():
         "total_assets", "current_assets", "current_liabilities", "total_liabilities",
         "equity", "cash", "short_term_investments", "long_term_debt", "current_debt",
         "goodwill", "intangibles", "inventory", "shares_outstanding_end", "buyback_remaining",
+        "treasury_stock",
         # BDC point-in-time
         "nav_per_share",
     }
@@ -2384,6 +2411,22 @@ def analyze():
                         _q_gp_derived[qk] = _q_rev_gp[qk] - abs(_q_cogs[qk])
                 if _q_gp_derived:
                     financials.setdefault("gross_profit", {}).update(_q_gp_derived)
+
+        # Quarterly buybacks fallback: YoY change in quarterly treasury stock balance
+        # vs the last annual treasury stock value (for companies with cumulative flows)
+        _q_bb = {k: v for k, v in financials.get("buybacks_value", {}).items() if k.startswith("Q")}
+        if not _q_bb:
+            _q_ts = {k: v for k, v in financials.get("treasury_stock", {}).items() if k.startswith("Q")}
+            _ann_ts = {k: v for k, v in financials.get("treasury_stock", {}).items() if not k.startswith("Q")}
+            if _q_ts and _ann_ts:
+                _last_ann_ts_val = _ann_ts[max(_ann_ts)]
+                _bb_q_derived = {}
+                for qk in sorted(_q_ts):
+                    _delta = _q_ts[qk] - _last_ann_ts_val
+                    if _delta > 0:
+                        _bb_q_derived[qk] = _delta
+                if _bb_q_derived:
+                    financials.setdefault("buybacks_value", {}).update(_bb_q_derived)
 
         # Quarterly EBIT = quarterly operating income
         _q_oi = {k: v for k, v in financials.get("operating_income", {}).items() if k.startswith("Q")}
