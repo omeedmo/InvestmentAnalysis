@@ -986,6 +986,7 @@ METRIC_TAGS: dict[str, list[str]] = {
         "StockRepurchasedDuringPeriodShares",
         "TreasuryStockSharesAcquired",
     ],
+    "treasury_stock_shares": ["TreasuryStockCommonShares", "TreasuryStockShares"],
 
     # Buyback program remaining (best-effort; not all companies report via XBRL)
     "buyback_remaining": [
@@ -1312,6 +1313,7 @@ def build_financials(facts: dict) -> dict[str, dict[str, float]]:
         "shares_outstanding_end",
         "buyback_remaining",
         "treasury_stock",
+        "treasury_stock_shares",
         # BDC point-in-time
         "nav_per_share",
     }
@@ -1536,6 +1538,23 @@ def build_financials(facts: dict) -> dict[str, dict[str, float]]:
                 bb[curr_date] = curr_val - prev_val
         if bb:
             raw["buybacks_value"] = bb
+
+    # Shares repurchased fallback: YoY change in treasury stock share count
+    sh_bb = raw.get("shares_repurchased", {})
+    ts_sh = raw.get("treasury_stock_shares", {})
+    if ts_sh:
+        ts_sh_by_year: dict[str, tuple[str, float]] = {}
+        for d in sorted(ts_sh):
+            ts_sh_by_year[d[:4]] = (d, ts_sh[d])
+        sorted_ts_sh_years = sorted(ts_sh_by_year)
+        for i, y in enumerate(sorted_ts_sh_years[1:], 1):
+            prev_y = sorted_ts_sh_years[i - 1]
+            prev_val = ts_sh_by_year[prev_y][1]
+            curr_date, curr_val = ts_sh_by_year[y]
+            if fy_get(sh_bb, y) is None and curr_val > prev_val:
+                sh_bb[curr_date] = curr_val - prev_val
+        if sh_bb:
+            raw["shares_repurchased"] = sh_bb
 
     # ROE = Net Income / Equity
     if ni and eq:
@@ -2190,7 +2209,7 @@ def analyze():
         "total_assets", "current_assets", "current_liabilities", "equity",
         "cash", "short_term_investments", "long_term_debt", "current_debt",
         "total_liabilities", "goodwill", "inventory", "shares_outstanding_end",
-        "treasury_stock",
+        "treasury_stock", "treasury_stock_shares",
         # BDC point-in-time
         "nav_per_share",
     }
@@ -2198,7 +2217,7 @@ def analyze():
         "total_assets", "current_assets", "current_liabilities", "total_liabilities",
         "equity", "cash", "short_term_investments", "long_term_debt", "current_debt",
         "goodwill", "intangibles", "inventory", "shares_outstanding_end", "buyback_remaining",
-        "treasury_stock",
+        "treasury_stock", "treasury_stock_shares",
         # BDC point-in-time
         "nav_per_share",
     }
@@ -2419,7 +2438,7 @@ def analyze():
             _q_ts  = {k: v for k, v in financials.get("treasury_stock", {}).items() if k.startswith("Q")}
             _ann_ts = {k: v for k, v in financials.get("treasury_stock", {}).items() if not k.startswith("Q")}
             if _q_ts and _ann_ts:
-                _base_ts = _ann_ts[max(_ann_ts)]   # last annual year-end treasury stock
+                _base_ts = _ann_ts[max(_ann_ts)]
                 _bb_q_derived = {}
                 for qk in sorted(_q_ts):
                     _delta = _q_ts[qk] - _base_ts
@@ -2427,6 +2446,21 @@ def analyze():
                         _bb_q_derived[qk] = _delta
                 if _bb_q_derived:
                     financials.setdefault("buybacks_value", {}).update(_bb_q_derived)
+
+        # Quarterly shares repurchased fallback: delta in treasury share count
+        _q_sh_bb = {k: v for k, v in financials.get("shares_repurchased", {}).items() if k.startswith("Q")}
+        if not _q_sh_bb:
+            _q_ts_sh  = {k: v for k, v in financials.get("treasury_stock_shares", {}).items() if k.startswith("Q")}
+            _ann_ts_sh = {k: v for k, v in financials.get("treasury_stock_shares", {}).items() if not k.startswith("Q")}
+            if _q_ts_sh and _ann_ts_sh:
+                _base_ts_sh = _ann_ts_sh[max(_ann_ts_sh)]
+                _sh_bb_q_derived = {}
+                for qk in sorted(_q_ts_sh):
+                    _delta = _q_ts_sh[qk] - _base_ts_sh
+                    if _delta > 0:
+                        _sh_bb_q_derived[qk] = _delta
+                if _sh_bb_q_derived:
+                    financials.setdefault("shares_repurchased", {}).update(_sh_bb_q_derived)
 
         # Quarterly EBIT = quarterly operating income
         _q_oi = {k: v for k, v in financials.get("operating_income", {}).items() if k.startswith("Q")}
