@@ -1311,6 +1311,7 @@ def build_financials(facts: dict) -> dict[str, dict[str, float]]:
         "inventory",
         "shares_outstanding_end",
         "buyback_remaining",
+        "treasury_stock",
         # BDC point-in-time
         "nav_per_share",
     }
@@ -1522,17 +1523,17 @@ def build_financials(facts: dict) -> dict[str, dict[str, float]]:
     bb = raw.get("buybacks_value", {})
     ts = raw.get("treasury_stock", {})
     if ts:
-        ts_by_year: dict[str, float] = {}
-        for d, v in ts.items():
-            y = d[:4]
-            if y not in ts_by_year or d > max(k for k in ts if k[:4] == y):
-                ts_by_year[y] = v
+        # Build {year: (end_date, value)} keeping the latest date per year
+        ts_by_year: dict[str, tuple[str, float]] = {}
+        for d in sorted(ts):
+            ts_by_year[d[:4]] = (d, ts[d])
         sorted_ts_years = sorted(ts_by_year)
         for i, y in enumerate(sorted_ts_years[1:], 1):
             prev_y = sorted_ts_years[i - 1]
-            if not fy_get(bb, y) and ts_by_year[y] > ts_by_year[prev_y]:
-                end_date = next((d for d in ts if d[:4] == y), f"{y}-12-31")
-                bb[end_date] = ts_by_year[y] - ts_by_year[prev_y]
+            prev_val = ts_by_year[prev_y][1]
+            curr_date, curr_val = ts_by_year[y]
+            if fy_get(bb, y) is None and curr_val > prev_val:
+                bb[curr_date] = curr_val - prev_val
         if bb:
             raw["buybacks_value"] = bb
 
@@ -2412,17 +2413,16 @@ def analyze():
                 if _q_gp_derived:
                     financials.setdefault("gross_profit", {}).update(_q_gp_derived)
 
-        # Quarterly buybacks fallback: YoY change in quarterly treasury stock balance
-        # vs the last annual treasury stock value (for companies with cumulative flows)
+        # Quarterly buybacks fallback: delta between Q treasury stock and last year-end balance
         _q_bb = {k: v for k, v in financials.get("buybacks_value", {}).items() if k.startswith("Q")}
         if not _q_bb:
-            _q_ts = {k: v for k, v in financials.get("treasury_stock", {}).items() if k.startswith("Q")}
+            _q_ts  = {k: v for k, v in financials.get("treasury_stock", {}).items() if k.startswith("Q")}
             _ann_ts = {k: v for k, v in financials.get("treasury_stock", {}).items() if not k.startswith("Q")}
             if _q_ts and _ann_ts:
-                _last_ann_ts_val = _ann_ts[max(_ann_ts)]
+                _base_ts = _ann_ts[max(_ann_ts)]   # last annual year-end treasury stock
                 _bb_q_derived = {}
                 for qk in sorted(_q_ts):
-                    _delta = _q_ts[qk] - _last_ann_ts_val
+                    _delta = _q_ts[qk] - _base_ts
                     if _delta > 0:
                         _bb_q_derived[qk] = _delta
                 if _bb_q_derived:
