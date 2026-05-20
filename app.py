@@ -1341,18 +1341,15 @@ def build_financials(facts: dict) -> dict[str, dict[str, float]]:
     rev   = raw.get("revenue", {})
     gp    = raw.get("gross_profit", {})
 
-    # Merge dividends: specific common-stock tag takes priority per year;
-    # generic tag only fills years where the specific tag has no data.
-    # This prevents RSU dividend equivalents / preferred leaking in (e.g. AMR 2024-2025).
+    # Merge dividends: PaymentsOfDividendsCommonStock (specific) is authoritative.
+    # PaymentsOfDividends (generic) only fills years where the specific tag has
+    # zero data — prevents RSU dividend equivalents / preferred leaking in.
     _div_common  = raw.pop("dividends_paid_common",  {}) or {}
     _div_generic = raw.pop("dividends_paid_generic", {}) or {}
-    _div_merged: dict[str, float] = dict(_div_generic)   # start with generic
-    for d, v in _div_common.items():                      # specific overwrites per year
-        _div_merged[d] = v
-    # Remove generic-only years where specific tag exists for that year
-    for d in list(_div_merged):
-        if fy_get(_div_common, d[:4]) is not None and d not in _div_common:
-            del _div_merged[d]
+    _div_merged: dict[str, float] = dict(_div_common)   # start with specific (authoritative)
+    for d, v in _div_generic.items():
+        if fy_get(_div_common, d[:4]) is None:           # generic only fills uncovered years
+            _div_merged[d] = v
     if _div_merged:
         raw["dividends_paid"] = _div_merged
 
@@ -2451,11 +2448,13 @@ def analyze():
                 if _q_gp_derived:
                     financials.setdefault("gross_profit", {}).update(_q_gp_derived)
 
-        # Merge quarterly dividends: specific tag wins per quarter key
+        # Merge quarterly dividends: specific tag is authoritative; generic only fills missing Q-keys
         _q_div_common  = {k: v for k, v in financials.get("dividends_paid_common",  {}).items() if k.startswith("Q")}
         _q_div_generic = {k: v for k, v in financials.get("dividends_paid_generic", {}).items() if k.startswith("Q")}
-        _q_div_merged = {**_q_div_generic}
-        _q_div_merged.update(_q_div_common)   # specific overwrites generic per Q-key
+        _q_div_merged = dict(_q_div_common)
+        for qk, v in _q_div_generic.items():
+            if qk not in _q_div_common:          # generic only fills Q-keys not covered by specific
+                _q_div_merged[qk] = v
         if _q_div_merged:
             financials.setdefault("dividends_paid", {}).update(_q_div_merged)
 
