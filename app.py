@@ -974,11 +974,7 @@ METRIC_TAGS: dict[str, list[str]] = {
     ],
 
     # Capital Returns
-    # Split into specific (common stock only) and generic to avoid leaking
-    # RSU dividend equivalents / preferred dividends from the generic tag.
-    # build_financials merges them with specific tag taking priority per year.
-    "dividends_paid_common": ["PaymentsOfDividendsCommonStock"],
-    "dividends_paid_generic": ["PaymentsOfDividends", "PaymentsOfDividendsAndDividendEquivalentsOnRestrictedStockUnitsNetOfTax"],
+    "dividends_paid": ["PaymentsOfDividends", "PaymentsOfDividendsCommonStock"],
     "buybacks_value": [
         "PaymentsForRepurchaseOfCommonStock",
         "StockRepurchasedAndRetiredDuringPeriodValue",
@@ -1341,16 +1337,6 @@ def build_financials(facts: dict) -> dict[str, dict[str, float]]:
     rev   = raw.get("revenue", {})
     gp    = raw.get("gross_profit", {})
 
-    # Merge dividends: if a company ever files PaymentsOfDividendsCommonStock,
-    # use it exclusively — it means the company distinguishes common dividends
-    # from RSU equivalents / preferred, so the generic tag is untrustworthy.
-    # Only fall back to the generic when the specific tag has never been used.
-    _div_common  = raw.pop("dividends_paid_common",  {}) or {}
-    _div_generic = raw.pop("dividends_paid_generic", {}) or {}
-    if _div_common:
-        raw["dividends_paid"] = _div_common   # specific tag used → trust it exclusively
-    elif _div_generic:
-        raw["dividends_paid"] = _div_generic  # specific never filed → use generic
 
     # For banks: derive revenue = Net Interest Income + Non-interest Income
     # when no standard revenue tag is filed (WFC, JPM, BAC, etc.)
@@ -2213,7 +2199,7 @@ def analyze():
         "revenue", "gross_profit", "cost_of_revenue", "operating_income", "net_income",
         "operating_cash_flow", "capex", "depreciation", "stock_based_compensation",
         "income_tax", "interest_expense", "investment_gains",
-        "dividends_paid_common", "dividends_paid_generic", "buybacks_value",
+        "dividends_paid", "buybacks_value",
         # BDC flow metrics
         "net_investment_income", "gross_investment_income", "nii_per_share",
         # Bank flow metrics
@@ -2447,19 +2433,6 @@ def analyze():
                 if _q_gp_derived:
                     financials.setdefault("gross_profit", {}).update(_q_gp_derived)
 
-        # Merge quarterly dividends: same rule as annual —
-        # if the specific tag was ever used (has any annual data), use it exclusively for quarters too.
-        _ann_div_common = {k: v for k, v in financials.get("dividends_paid_common",  {}).items() if not k.startswith("Q")}
-        _q_div_common   = {k: v for k, v in financials.get("dividends_paid_common",  {}).items() if k.startswith("Q")}
-        _q_div_generic  = {k: v for k, v in financials.get("dividends_paid_generic", {}).items() if k.startswith("Q")}
-        if _ann_div_common:
-            # Company uses the specific tag → trust quarterly specific only
-            if _q_div_common:
-                financials.setdefault("dividends_paid", {}).update(_q_div_common)
-        else:
-            # Company never used specific tag → use generic quarters
-            if _q_div_generic:
-                financials.setdefault("dividends_paid", {}).update(_q_div_generic)
 
         # Quarterly buybacks fallback: delta between Q treasury stock and last year-end balance
         _q_bb = {k: v for k, v in financials.get("buybacks_value", {}).items() if k.startswith("Q")}
