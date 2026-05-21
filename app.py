@@ -2432,6 +2432,22 @@ def analyze():
                     if dv and dv > 0:
                         mg[qk] = nv / dv
 
+        # Quarterly Owner Earnings = Net Income + D&A - CapEx - Investment Gains
+        _q_ni_oe   = {k: v for k, v in financials.get("net_income",       {}).items() if k.startswith("Q")}
+        _q_dep_oe  = {k: v for k, v in financials.get("depreciation",     {}).items() if k.startswith("Q")}
+        _q_cx_oe   = {k: v for k, v in financials.get("capex",            {}).items() if k.startswith("Q")}
+        _q_ig_oe   = {k: v for k, v in financials.get("investment_gains", {}).items() if k.startswith("Q")}
+        if _q_ni_oe and _q_dep_oe and _q_cx_oe:
+            _q_oe = {}
+            for qk, nv in _q_ni_oe.items():
+                dv = _q_dep_oe.get(qk)
+                cv = _q_cx_oe.get(qk)
+                if dv is not None and cv is not None:
+                    ig = _q_ig_oe.get(qk) or 0.0
+                    _q_oe[qk] = nv + abs(dv) - abs(cv) - ig
+            if _q_oe:
+                financials.setdefault("owner_earnings", {}).update(_q_oe)
+
         # Quarterly Adj. FCF = FCF - SBC; Adj. FCF Margin = Adj. FCF / Revenue
         _q_fcf = {k: v for k, v in financials.get("fcf", {}).items() if k.startswith("Q")}
         _q_sbc = {k: v for k, v in financials.get("stock_based_compensation", {}).items() if k.startswith("Q")}
