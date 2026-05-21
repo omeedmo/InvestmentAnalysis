@@ -2420,6 +2420,22 @@ def analyze():
                     if dv and dv > 0:
                         mg[qk] = nv / dv
 
+        # Quarterly Adj. FCF = FCF - SBC; Adj. FCF Margin = Adj. FCF / Revenue
+        _q_fcf = {k: v for k, v in financials.get("fcf", {}).items() if k.startswith("Q")}
+        _q_sbc = {k: v for k, v in financials.get("stock_based_compensation", {}).items() if k.startswith("Q")}
+        if _q_fcf and _q_sbc:
+            _q_adj_fcf = {}
+            for qk, fv in _q_fcf.items():
+                sv = _q_sbc.get(qk)
+                if sv is not None:
+                    _q_adj_fcf[qk] = fv - abs(sv)
+            if _q_adj_fcf:
+                financials.setdefault("adj_fcf", {}).update(_q_adj_fcf)
+                for qk, av in _q_adj_fcf.items():
+                    dv = rev_q.get(qk)
+                    if dv and dv > 0:
+                        financials.setdefault("adj_fcf_margin", {})[qk] = av / dv
+
         # Quarterly Gross Profit = Revenue - COGS (for companies that don't tag GrossProfit)
         _q_gp = {k: v for k, v in financials.get("gross_profit", {}).items() if k.startswith("Q")}
         if not _q_gp:
