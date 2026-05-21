@@ -1120,7 +1120,8 @@ def extract_post_annual_quarters(
                     continue
 
                 if is_balance_sheet:
-                    if end not in bs_by_end or abs(val) > abs(bs_by_end[end]):
+                    # First tag wins per end-date (earlier/more-specific tags take priority)
+                    if end not in bs_by_end:
                         bs_by_end[end] = val
                 else:
                     start = e.get("start", "")
@@ -1243,34 +1244,44 @@ def extract_point_in_time_series(facts: dict, tags: list[str]) -> dict[str, floa
     gaap = facts.get("facts", {}).get("us-gaap", {})
     dei = facts.get("facts", {}).get("dei", {})
 
-    merged: dict[str, float] = {}
+    # First-tag-wins per date: earlier tags in the list take priority.
+    # This prevents catch-all tags (e.g. CashCashEquivalentsRestrictedCash...)
+    # from overriding more specific tags (e.g. CashAndCashEquivalentsAtCarryingValue).
+    # Within a single tag, take the largest absolute value to handle comparatives.
+    per_tag: list[dict[str, float]] = []
 
     for tag in tags:
         concept = gaap.get(tag) or dei.get(tag)
         if not concept:
             continue
         units = concept.get("units", {})
+        tag_data: dict[str, float] = {}
         for unit_key in ["shares", "USD", "pure", "USD/shares"]:
             entries = units.get(unit_key, [])
             if not entries:
                 continue
             for e in entries:
-                # Annual series only: 10-Q balance sheet dates are handled
-                # separately by extract_post_annual_quarters and would otherwise
-                # bleed the latest quarter-end date into a phantom annual column.
                 if e.get("form") not in {"10-K", "10-K/A", "20-F", "20-F/A"}:
                     continue
                 end = e.get("end", "")
                 val = e.get("val")
                 if val is None or not end:
                     continue
-                # Same fiscal-year boundary remap as extract_annual_series
                 fy_field = e.get("fy")
                 if fy_field and (int(end[:4]) - fy_field == 1):
                     end = f"{fy_field}{end[4:]}"
-                if end not in merged or abs(val) > abs(merged[end]):
-                    merged[end] = val
-            break  # found the right unit type for this tag
+                if end not in tag_data or abs(val) > abs(tag_data[end]):
+                    tag_data[end] = val
+            break
+        if tag_data:
+            per_tag.append(tag_data)
+
+    # Merge: first tag that has a value for a given date wins
+    merged: dict[str, float] = {}
+    for tag_data in per_tag:
+        for end, val in tag_data.items():
+            if end not in merged:
+                merged[end] = val
     return merged
 
 
