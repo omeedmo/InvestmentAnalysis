@@ -944,6 +944,7 @@ METRIC_TAGS: dict[str, list[str]] = {
         "ShortTermInvestments", "MarketableSecuritiesCurrent",
         "AvailableForSaleSecuritiesDebtSecuritiesCurrent",
         "AvailableForSaleSecuritiesCurrent",
+        "DebtSecuritiesAvailableForSaleExcludingAccruedInterestCurrent",  # INTU post-FY2023
     ],
     "long_term_debt": [
         "LongTermDebtNoncurrent",
