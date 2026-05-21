@@ -2332,6 +2332,48 @@ def analyze():
             for _qk, (_, _val) in _qk_best.items():
                 _so_series[_qk] = _val   # cover-page quarterly wins
 
+        # Fallback for companies that don't file CommonStockSharesOutstanding or
+        # EntityCommonStockSharesOutstanding (e.g. META): use the quarterly
+        # WeightedAverageNumberOfSharesOutstandingBasic as a proxy.
+        _so_series = financials.setdefault("shares_outstanding_end", {})
+        _missing_qks = [qk for qk in quarter_end_dates if not _so_series.get(qk)]
+        if _missing_qks:
+            _wtd_avg_tag = (
+                facts.get("facts", {}).get("us-gaap", {})
+                    .get("WeightedAverageNumberOfSharesOutstandingBasic")
+            )
+            if _wtd_avg_tag:
+                _qdate_parsed2 = {
+                    qk: datetime.strptime(qd, "%Y-%m-%d")
+                    for qk, qd in quarter_end_dates.items()
+                    if qk in _missing_qks
+                }
+                _wtd_best: dict[str, tuple[int, float]] = {}  # qk -> (period_days, val)
+                for _e in _wtd_avg_tag.get("units", {}).get("shares", []):
+                    if _e.get("form") not in {"10-Q", "10-Q/A"}:
+                        continue
+                    _end = _e.get("end", "")
+                    _start = _e.get("start", "")
+                    _val = _e.get("val")
+                    if not _end or not _start or not _val:
+                        continue
+                    try:
+                        _end_dt   = datetime.strptime(_end,   "%Y-%m-%d")
+                        _start_dt = datetime.strptime(_start, "%Y-%m-%d")
+                    except Exception:
+                        continue
+                    _period_days = (_end_dt - _start_dt).days
+                    # Only use quarterly (roughly 3-month) periods, not YTD
+                    if not (60 <= _period_days <= 100):
+                        continue
+                    for _qk, _qdt in _qdate_parsed2.items():
+                        if _end_dt == _qdt:   # exact quarter-end match
+                            prev2 = _wtd_best.get(_qk)
+                            if prev2 is None:
+                                _wtd_best[_qk] = (_period_days, _val)
+                for _qk, (_, _val) in _wtd_best.items():
+                    _so_series[_qk] = _val
+
         # ── BRK-specific quarterly overrides ────────────────────────────────
         if normalized_ticker in {"BRK.A", "BRK.B"}:
             # 1. Cash: XBRL double-counts (combined tag + T-bill tag). Replace with
