@@ -911,7 +911,12 @@ METRIC_TAGS: dict[str, list[str]] = {
         "SegmentExpenditureAdditionToLongLivedAssets",
         "PaymentsForCapitalImprovements",               # Noble Corporation (NE) and similar
     ],
-    "depreciation": ["DepreciationDepletionAndAmortization", "DepreciationAndAmortization", "Depreciation"],
+    "depreciation": [
+        "DepreciationDepletionAndAmortization",
+        "DepreciationAndAmortization",
+        "Depreciation",
+        "CostOfGoodsAndServicesSoldDepreciationAndAmortization",  # NE (Noble) and similar drillers
+    ],
     "stock_based_compensation": ["ShareBasedCompensation", "AllocatedShareBasedCompensationExpense",
                                   "StockBasedCompensation", "EmployeeBenefitsAndShareBasedCompensation"],
     # Unrealized investment gains / (losses) only — positive = gain, negative = loss.
