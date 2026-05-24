@@ -324,6 +324,9 @@ const ROWS = [
   {lbl:'  Stock-Based Comp (SBC)', key:'stock_based_compensation', t:'$', ind:true},
   {lbl:'  Adj. FCF (FCF − SBC)',   key:'adj_fcf',                 t:'$', ind:true},
   {lbl:'  Adj. FCF Margin',        key:'adj_fcf_margin',          t:'%', hi:true, ind:true},
+  {lbl:'Owner Earnings (NI+D&A−CapEx−Unreal.Gains)', key:'owner_earnings', t:'$'},
+  {lbl:'  Real Owner Return',       key:'owner_earnings_return',  t:'%', hi:true, ind:true},
+  {lbl:'  Real Owner Return (after-tax & inflation)', key:'real_owner_return', t:'%', hi:true, ind:true},
 
   {sec:'CAPITAL ALLOCATION  ($M)'},
   {lbl:'Dividends Paid',           key:'dividends_paid',          t:'$'},
@@ -355,9 +358,6 @@ const ROWS = [
   {lbl:'FCF ROE  (FCF / Equity)',   key:'fcf_roe',              t:'%', hi:true},
   {lbl:'NII ROE  (NII / NAV)',      key:'nii_roe',              t:'%', hi:true, bdc:true},
   {lbl:'BRK Operating Earnings (reported)', key:'brk_operating_earnings', t:'$', bld:true},
-  {lbl:'Owner Earnings (NI+D&A−CapEx−Unreal.Gains)', key:'owner_earnings', t:'$'},
-  {lbl:'  Real Owner Return',       key:'owner_earnings_return', t:'%', hi:true, ind:true},
-  {lbl:'  Real Owner Return (after-tax & inflation)', key:'real_owner_return', t:'%', hi:true, ind:true},
   {lbl:'ROIC',                      key:'roic',                 t:'%', hi:true},
   {lbl:'ROA',                       key:'roa',     t:'%', hi:true},
 ];
