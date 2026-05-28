@@ -2775,6 +2775,7 @@ def analyze():
         "p_s":          mult(mktcap, current_rev),
         "p_b":          mult(mktcap, current_eq),
         "ev_ebitda":    mult(ev, current_ebitda),
+        "ev_ebit":      mult(ev, L("ebit")),
         "earnings_yield": round(current_ni / mktcap, 4) if current_ni and mktcap else None,
         "fcf_yield":    round(current_fcf / mktcap, 4) if current_fcf and mktcap else None,
     }

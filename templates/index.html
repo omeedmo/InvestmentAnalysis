@@ -482,7 +482,7 @@ function render(data){
   const vlStats = [
     {l:'P/E Ratio',     v: mk.pe   ? mk.pe.toFixed(1)+'×'  : '—'},
     {l:'P/FCF',         v: mk.p_fcf? mk.p_fcf.toFixed(1)+'×': '—'},
-    {l:'EV/EBITDA',     v: mk.ev_ebitda? mk.ev_ebitda.toFixed(1)+'×':'—'},
+    {l:'EV/EBIT',       v: mk.ev_ebit  ? mk.ev_ebit.toFixed(1)  +'×':'—'},
     {l:'P/Sales',       v: mk.p_s  ? mk.p_s.toFixed(2)+'×' : '—'},
     {l:'P/Book',        v: mk.p_b  ? mk.p_b.toFixed(2)+'×' : '—'},
     {l:'Earnings Yield',v: mk.earnings_yield ? F.pct(mk.earnings_yield) : '—', cls: mk.earnings_yield>0?'g':''},
@@ -515,7 +515,7 @@ function render(data){
     ${co.latest_10q?`<a class="badge lk" href="${co.latest_10q.url}" target="_blank" rel="noreferrer">Latest ${co.latest_10q.form} (${co.latest_10q.filing_date})</a>`:''}
     <span class="badge bl">P/E ${F.x(mk.pe)}</span>
     <span class="badge bl">P/FCF ${F.x(mk.p_fcf)}</span>
-    <span class="badge bl">EV/EBITDA ${F.x(mk.ev_ebitda)}</span>
+    <span class="badge bl">EV/EBIT ${F.x(mk.ev_ebit)}</span>
     <span class="badge gr">FCF Yield ${F.pct(mk.fcf_yield)}</span>
   </div>
 </div>`;
