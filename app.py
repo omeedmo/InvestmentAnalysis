@@ -1702,6 +1702,19 @@ def build_financials(facts: dict) -> dict[str, dict[str, float]]:
                 roic[d] = oi[d] * (1 - min(t or 0.21, 0.5)) / ic
         raw["roic"] = roic or None
 
+    # Pre-tax ROIC = EBIT / Invested Capital  (same IC as ROIC, no tax adjustment)
+    if oi and eq:
+        pretax_roic = {}
+        for d in oi:
+            y = d[:4]
+            e      = fy_get(eq, y) or 0
+            debt   = fy_get(td, y) or 0
+            cash_v = fy_get(tc, y) or 0
+            ic     = e + debt - cash_v
+            if ic and ic > 0:
+                pretax_roic[d] = oi[d] / ic
+        raw["pretax_roic"] = pretax_roic or None
+
     # ── New capital-quality metrics ───────────────────────────────────────────
     gw  = raw.get("goodwill",    {})
     ia  = raw.get("intangibles", {})
@@ -2679,16 +2692,18 @@ def analyze():
                 if _q_so[qk]:
                     _bvps_q[qk] = _q_eq2[qk] / _q_so[qk]
 
-        # Quarterly ROIC
+        # Quarterly ROIC and Pre-tax ROIC
         _q_oi  = {k: v for k, v in financials.get("operating_income", {}).items() if k.startswith("Q")}
         _q_td2 = {k: v for k, v in financials.get("total_debt", {}).items() if k.startswith("Q")}
         _q_eq3 = {k: v for k, v in financials.get("equity", {}).items() if k.startswith("Q")}
         if _q_oi and (_q_td2 or _q_eq3):
-            _roic_q = financials.setdefault("roic", {})
+            _roic_q        = financials.setdefault("roic",        {})
+            _pretax_roic_q = financials.setdefault("pretax_roic", {})
             for qk in set(_q_oi) & (set(_q_td2) | set(_q_eq3)):
                 ic = (_q_td2.get(qk) or 0) + (_q_eq3.get(qk) or 0)
                 if ic and ic != 0:
-                    _roic_q[qk] = (_q_oi[qk] * 4 * (1 - 0.21)) / ic
+                    _roic_q[qk]        = (_q_oi[qk] * 4 * (1 - 0.21)) / ic
+                    _pretax_roic_q[qk] = (_q_oi[qk] * 4) / ic
 
         # Quarterly UNTA, NOPAT, Economic Goodwill
         _q_tc_q  = {k: v for k, v in financials.get("total_cash", {}).items() if k.startswith("Q")}
