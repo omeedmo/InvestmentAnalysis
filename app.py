@@ -956,12 +956,15 @@ METRIC_TAGS: dict[str, list[str]] = {
         "LongTermDebtAndCapitalLeaseObligations",       # DPZ securitization + leases (noncurrent)
         "LongTermDebtAndFinanceLeaseObligations",
         "DebtAndFinanceLeaseObligationsNoncurrent",
+        "LongTermNotesPayable",                         # ORCL (annual 10-K noncurrent)
+        "LongTermNotesAndLoans",                        # ORCL (quarterly 10-Q noncurrent)
         "LongTermDebt",                                 # last: generic, may be partial (e.g. DPZ ~$14M only)
     ],
     "current_debt": [
         "LongTermDebtAndCapitalLeaseObligationsCurrent",  # DPZ current portion of securitization
         "LongTermDebtCurrent",
         "DebtCurrent",
+        "NotesPayableCurrent",                          # ORCL quarterly current debt
         "ShortTermBorrowings",
         "CurrentPortionOfLongTermDebt",
         "LongTermDebtMaturitiesRepaymentsOfPrincipalInNextTwelveMonths",
