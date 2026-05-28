@@ -1757,6 +1757,16 @@ def build_financials(facts: dict) -> dict[str, dict[str, float]]:
                 eco_gw[d] = _nopat[d] / u
         raw["economic_goodwill"] = eco_gw or None
 
+    # Pre-tax Economic Goodwill = EBIT / UNTA
+    # Same as economic_goodwill but uses pre-tax EBIT instead of NOPAT
+    if _unta and oi:
+        pretax_eco_gw: dict[str, float] = {}
+        for d in oi:
+            u = fy_get(_unta, d[:4])
+            if u and u != 0:
+                pretax_eco_gw[d] = oi[d] / u
+        raw["pretax_economic_goodwill"] = pretax_eco_gw or None
+
     # Clean up None entries
     return {k: v for k, v in raw.items() if v}
 
@@ -2704,6 +2714,12 @@ def analyze():
                 for qk in set(_nopat_q) & set(_unta_vals):
                     if _unta_vals[qk] and _unta_vals[qk] != 0:
                         _eco_q[qk] = _nopat_q[qk] / _unta_vals[qk]
+
+                # Quarterly Pre-tax Economic Goodwill = EBIT / UNTA (annualised)
+                _pretax_eco_q = financials.setdefault("pretax_economic_goodwill", {})
+                for qk in set(_q_oi) & set(_unta_vals):
+                    if _unta_vals[qk] and _unta_vals[qk] != 0:
+                        _pretax_eco_q[qk] = (_q_oi[qk] * 4) / _unta_vals[qk]
 
         # Quarterly BDC: NII per share (if not already from XBRL tag, compute from NII / shares)
         _q_nii = {k: v for k, v in financials.get("net_investment_income", {}).items() if k.startswith("Q")}
