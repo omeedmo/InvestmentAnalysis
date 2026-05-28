@@ -483,6 +483,7 @@ function render(data){
     {l:'P/E Ratio',     v: mk.pe   ? mk.pe.toFixed(1)+'×'  : '—'},
     {l:'P/FCF',         v: mk.p_fcf? mk.p_fcf.toFixed(1)+'×': '—'},
     {l:'EV/EBIT',       v: mk.ev_ebit  ? mk.ev_ebit.toFixed(1)  +'×':'—'},
+    {l:'NOPAT Yield',   v: mk.nopat_yield ? F.pct(mk.nopat_yield) : '—', cls: mk.nopat_yield>0?'g':''},
     {l:'P/Sales',       v: mk.p_s  ? mk.p_s.toFixed(2)+'×' : '—'},
     {l:'P/Book',        v: mk.p_b  ? mk.p_b.toFixed(2)+'×' : '—'},
     {l:'Earnings Yield',v: mk.earnings_yield ? F.pct(mk.earnings_yield) : '—', cls: mk.earnings_yield>0?'g':''},
