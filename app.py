@@ -2230,7 +2230,7 @@ def analyze():
     _quarterly_bs_keys = {
         "total_assets", "current_assets", "current_liabilities", "equity",
         "cash", "short_term_investments", "long_term_debt", "current_debt",
-        "total_liabilities", "goodwill", "inventory", "shares_outstanding_end",
+        "total_liabilities", "goodwill", "intangibles", "inventory", "shares_outstanding_end",
         "treasury_stock", "treasury_stock_shares",
         # BDC point-in-time
         "nav_per_share",
