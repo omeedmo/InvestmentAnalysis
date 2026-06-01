@@ -301,6 +301,18 @@ const ROWS = [
   {lbl:'Net Income',               key:'net_income',              t:'$', bld:true},
   {lbl:'  Net Margin',             key:'net_margin',              t:'%', hi:true, ind:true},
   {lbl:'Effective Tax Rate',       key:'effective_tax_rate',      t:'%'},
+  // REIT section
+  {sec:'REIT METRICS  ($M)',                                             reit:true},
+  {lbl:'NOI  (EBITDA + G&A)',                   key:'noi',              t:'$',  reit:true, bld:true},
+  {lbl:'  NOI Margin',                          key:'noi_margin',       t:'%',  reit:true, hi:true, ind:true},
+  {lbl:'  NOI / Share',                         key:'noi_per_share',    t:'ps', reit:true, hi:true, ind:true},
+  {lbl:'FFO  (NI + D&A − RE Gains)',           key:'ffo',              t:'$',  reit:true, bld:true},
+  {lbl:'  FFO / Share',                         key:'ffo_per_share',    t:'ps', reit:true, hi:true, ind:true},
+  {lbl:'AFFO  (FFO − Str-Line Rent − Maint CapEx)', key:'affo',        t:'$',  reit:true, bld:true},
+  {lbl:'  AFFO / Share',                        key:'affo_per_share',   t:'ps', reit:true, hi:true, ind:true},
+  {lbl:'FFO Payout Ratio',                      key:'ffo_payout_ratio', t:'%',  reit:true},
+  {lbl:'Real Estate Assets (Net)',              key:'real_estate_assets',t:'$', reit:true},
+
   // BDC income
   // Bank income section
   {sec:'BANK INCOME  ($M)',                                              bank:true},
@@ -482,13 +494,25 @@ function render(data){
 
   const vlStats = [
     {l:'P/E Ratio',     v: mk.pe   ? mk.pe.toFixed(1)+'×'  : '—'},
-    {l:'P/FCF',         v: mk.p_fcf? mk.p_fcf.toFixed(1)+'×': '—'},
-    {l:'EV/EBIT',       v: mk.ev_ebit  ? mk.ev_ebit.toFixed(1)  +'×':'—'},
-    {l:'NOPAT Yield',   v: mk.nopat_yield ? F.pct(mk.nopat_yield) : '—', cls: mk.nopat_yield>0?'g':''},
+    // REIT: show P/FFO instead of P/FCF; non-REIT: show P/FCF
+    co.is_reit
+      ? {l:'P/FFO',       v: mk.p_ffo  ? mk.p_ffo.toFixed(1)+'×'  : '—'}
+      : {l:'P/FCF',       v: mk.p_fcf  ? mk.p_fcf.toFixed(1)+'×'  : '—'},
+    co.is_reit
+      ? {l:'P/AFFO',      v: mk.p_affo ? mk.p_affo.toFixed(1)+'×' : '—'}
+      : {l:'EV/EBIT',     v: mk.ev_ebit ? mk.ev_ebit.toFixed(1)+'×': '—'},
+    co.is_reit
+      ? {l:'FFO Yield',   v: mk.ffo_yield ? F.pct(mk.ffo_yield) : '—', cls: mk.ffo_yield>0?'g':''}
+      : {l:'NOPAT Yield', v: mk.nopat_yield ? F.pct(mk.nopat_yield) : '—', cls: mk.nopat_yield>0?'g':''},
     {l:'P/Sales',       v: mk.p_s  ? mk.p_s.toFixed(2)+'×' : '—'},
     {l:'P/Book',        v: mk.p_b  ? mk.p_b.toFixed(2)+'×' : '—'},
     {l:'Earnings Yield',v: mk.earnings_yield ? F.pct(mk.earnings_yield) : '—', cls: mk.earnings_yield>0?'g':''},
-    {l:'FCF Yield',     v: mk.fcf_yield ? F.pct(mk.fcf_yield) : '—', cls: mk.fcf_yield>0?'g':''},
+    co.is_reit
+      ? {l:'EV/FFO',      v: mk.ev_ffo ? mk.ev_ffo.toFixed(1)+'×' : '—'}
+      : {l:'FCF Yield',   v: mk.fcf_yield ? F.pct(mk.fcf_yield) : '—', cls: mk.fcf_yield>0?'g':''},
+    co.is_reit
+      ? {l:'Cap Rate',    v: mk.cap_rate ? F.pct(mk.cap_rate) : '—', cls: mk.cap_rate>0?'g':''}
+      : null,
     {l:'Div. Yield',    v: mk.dividend_yield ? F.pct(mk.dividend_yield) : '—'},
     {l:'Beta',          v: mk.beta ? mk.beta.toFixed(2) : '—'},
     {l:'Market Cap',    v: F.$M(mk.market_cap)},
@@ -509,15 +533,17 @@ function render(data){
     </div>
   </div>
   <div class="vl-stats">
-    ${vlStats.map(s=>`<div class="vl-stat"><div class="vl-sl">${s.l}</div><div class="vl-sv${s.cls?' '+s.cls:''}">${s.v}</div></div>`).join('')}
+    ${vlStats.filter(Boolean).map(s=>`<div class="vl-stat"><div class="vl-sl">${s.l}</div><div class="vl-sv${s.cls?' '+s.cls:''}">${s.v}</div></div>`).join('')}
   </div>
   ${rangeHtml}
   <div class="vl-links">
     ${co.latest_10k?`<a class="badge lk" href="${co.latest_10k.url}" target="_blank" rel="noreferrer">Latest ${co.latest_10k.form} (${co.latest_10k.filing_date})</a>`:''}
     ${co.latest_10q?`<a class="badge lk" href="${co.latest_10q.url}" target="_blank" rel="noreferrer">Latest ${co.latest_10q.form} (${co.latest_10q.filing_date})</a>`:''}
     <span class="badge bl">P/E ${F.x(mk.pe)}</span>
-    <span class="badge bl">P/FCF ${F.x(mk.p_fcf)}</span>
-    <span class="badge bl">EV/EBIT ${F.x(mk.ev_ebit)}</span>
+    ${co.is_reit
+      ? `<span class="badge bl">P/FFO ${F.x(mk.p_ffo)}</span><span class="badge bl">P/AFFO ${F.x(mk.p_affo)}</span>`
+      : `<span class="badge bl">P/FCF ${F.x(mk.p_fcf)}</span><span class="badge bl">EV/EBIT ${F.x(mk.ev_ebit)}</span>`
+    }
     <span class="badge gr">FCF Yield ${F.pct(mk.fcf_yield)}</span>
   </div>
 </div>`;
@@ -566,6 +592,7 @@ function render(data){
   for(const row of ROWS){
     if(row.bdc  && !co.is_bdc)  continue;
     if(row.bank && !co.is_bank) continue;
+    if(row.reit && !co.is_reit) continue;
     if(row.sec){
       h+=`<tr class="sh"><td colspan="${allCols.length+1}">${row.sec}</td></tr>`;
       continue;

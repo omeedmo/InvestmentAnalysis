@@ -871,6 +871,16 @@ METRIC_TAGS: dict[str, list[str]] = {
     "gross_profit": ["GrossProfit"],
     "rd_expense": ["ResearchAndDevelopmentExpense"],
     "sga_expense": ["SellingGeneralAndAdministrativeExpense"],
+    # G&A as a separate line (useful for REIT NOI derivation: NOI = EBITDA + G&A)
+    "general_admin_expense": [
+        "GeneralAndAdministrativeExpense",
+        # Some companies embed G&A in SGA — only use as fallback when G&A is not separately filed
+    ],
+    # Selling & marketing expense (filed separately from G&A by some companies, e.g. TMHC post-2021)
+    "selling_marketing_expense": [
+        "SellingAndMarketingExpense",
+        "SellingExpense",
+    ],
     "operating_income": [
         "OperatingIncomeLoss",
         # Fallback for companies (e.g. BRK) that don't separately file OperatingIncomeLoss
@@ -1002,6 +1012,38 @@ METRIC_TAGS: dict[str, list[str]] = {
     "buyback_remaining": [
         "StockRepurchaseProgramRemainingAuthorizedRepurchaseAmount1",
         "StockRepurchaseProgramRemainingAuthorizedRepurchaseAmount",
+    ],
+
+    # ── REIT-specific metrics ─────────────────────────────────────────────────
+    # Gains / losses on real estate dispositions — subtracted in FFO derivation
+    "gains_on_real_estate": [
+        "GainLossOnSaleOfProperties",
+        "GainsLossesOnSalesOfInvestmentRealEstate",
+        "GainLossOnDispositionOfRealEstateAssets",
+        "GainOnSaleOfProperties",
+        "GainLossOnSaleOfPropertiesBeforeApplicableIncomeTaxes",  # SPG and similar
+    ],
+    # Real property depreciation — added back in FFO (may differ from total D&A).
+    # Only REIT-specific tags here; general D&A fallback is applied in build_financials
+    # but only when other REIT signals (real_estate_assets, straight_line_rent) are present.
+    "real_estate_depreciation": [
+        "DepreciationOfRealEstate",          # standard REIT tag (most REITs file this)
+        "RealEstateDepreciationAndAmortization",
+    ],
+    # Straight-line rent adjustment — stripped out in AFFO derivation
+    "straight_line_rent": [
+        "StraightLineRent",
+        "StraightLineRentAdjustments",
+    ],
+    # Net real estate assets on balance sheet
+    "real_estate_assets": [
+        "RealEstateInvestmentPropertyNet",
+        "RealEstateAndAccumulatedDepreciation",  # alternative tag
+    ],
+    # Recurring (maintenance/tenant improvement) capex — used in AFFO
+    "recurring_capex": [
+        "PaymentsForTenantImprovements",
+        "PaymentsForLeasingCosts",
     ],
 
     # ── BDC / Investment Company metrics ─────────────────────────────────────
@@ -1337,6 +1379,8 @@ def build_financials(facts: dict) -> dict[str, dict[str, float]]:
         "treasury_stock_shares",
         # BDC point-in-time
         "nav_per_share",
+        # REIT point-in-time
+        "real_estate_assets",
     }
     for key, tags in METRIC_TAGS.items():
         if not tags:
@@ -1358,6 +1402,52 @@ def build_financials(facts: dict) -> dict[str, dict[str, float]]:
     rev   = raw.get("revenue", {})
     gp    = raw.get("gross_profit", {})
 
+    # OI fallback: derive from Gross Profit − operating expenses when OperatingIncomeLoss
+    # is not tagged (e.g. TMHC post-2021 files GP + SellingAndMarketing + G&A separately).
+    # Build a combined opex series covering all years where GP is known but OI is missing.
+    if gp:
+        _sga  = raw.get("sga_expense",             {})  # SellingGeneralAndAdministrativeExpense
+        _ga   = raw.get("general_admin_expense",    {})  # GeneralAndAdministrativeExpense
+        _sm   = raw.get("selling_marketing_expense",{})  # SellingAndMarketingExpense
+        _oi_derived: dict[str, float] = {}
+        for d in gp:
+            if fy_get(oi, d[:4]) is not None:
+                continue   # already have a direct OI value for this year
+            # Total opex = SGA (combined) OR (S&M + G&A separately)
+            sga_v = fy_get(_sga, d[:4])
+            ga_v  = fy_get(_ga,  d[:4])
+            sm_v  = fy_get(_sm,  d[:4])
+            if sga_v is not None:
+                opex = abs(sga_v)
+            elif ga_v is not None or sm_v is not None:
+                opex = abs(ga_v or 0) + abs(sm_v or 0)
+            else:
+                continue   # can't derive OI without any expense data
+            _oi_derived[d] = gp[d] - opex
+        if _oi_derived:
+            if oi:
+                oi.update(_oi_derived)
+            else:
+                oi = _oi_derived
+            raw["operating_income"] = oi
+
+        # Backfill sga_expense for years where the combined tag is absent but
+        # the components (S&M + G&A) were filed separately (e.g. TMHC 2024+).
+        _sga_existing = raw.get("sga_expense", {})
+        _all_expense_dates = set(_sm) | set(_ga)
+        _sga_fill: dict[str, float] = {}
+        for d in _all_expense_dates:
+            if fy_get(_sga_existing, d[:4]) is not None:
+                continue   # combined tag already covers this year
+            ga_v = fy_get(_ga, d[:4]) or 0.0
+            sm_v = fy_get(_sm, d[:4]) or 0.0
+            if ga_v or sm_v:
+                _sga_fill[d] = abs(ga_v) + abs(sm_v)
+        if _sga_fill:
+            if _sga_existing:
+                _sga_existing.update(_sga_fill)
+            else:
+                raw["sga_expense"] = _sga_fill
 
     # For banks: derive revenue = Net Interest Income + Non-interest Income
     # when no standard revenue tag is filed (WFC, JPM, BAC, etc.)
@@ -1779,6 +1869,101 @@ def build_financials(facts: dict) -> dict[str, dict[str, float]]:
             if u and u != 0:
                 pretax_eco_gw[d] = oi[d] / u
         raw["pretax_economic_goodwill"] = pretax_eco_gw or None
+
+    # ── REIT-specific derived metrics ─────────────────────────────────────────
+    # Only compute REIT metrics when REIT-specific XBRL data is present.
+    # If neither RealEstateInvestmentPropertyNet nor DepreciationOfRealEstate is
+    # tagged, this is not a REIT and we skip FFO/AFFO derivation entirely.
+    _has_reit_data = bool(
+        raw.get("real_estate_assets") or
+        raw.get("real_estate_depreciation") or
+        raw.get("straight_line_rent")
+    )
+    # FFO (NAREIT definition) = Net Income + Real Estate Depreciation
+    #                         − Gains on sale of real estate properties
+    # Use DepreciationOfRealEstate when available; fall back to general D&A only
+    # when real estate assets are present (confirming this is a REIT).
+    re_dep_specific = raw.get("real_estate_depreciation", {})
+    re_dep = re_dep_specific if re_dep_specific else (dep if _has_reit_data else {})
+    re_gains = raw.get("gains_on_real_estate", {})
+    if ni and re_dep:
+        ffo: dict[str, float] = {}
+        for d in ni:
+            da_v = fy_get(re_dep, d[:4])
+            if da_v is not None:
+                gains_v = fy_get(re_gains, d[:4]) or 0.0
+                ffo[d] = ni[d] + abs(da_v) - gains_v
+        if ffo:
+            raw["ffo"] = ffo
+            # FFO per share
+            if share_base_for_per_share:
+                ffo_ps: dict[str, float] = {}
+                for d in ffo:
+                    s = fy_get(share_base_for_per_share, d[:4])
+                    if s and s > 0:
+                        ffo_ps[d] = ffo[d] / s
+                raw["ffo_per_share"] = ffo_ps or None
+
+    # AFFO (Adjusted FFO) = FFO − Straight-line Rent Adjustment − Recurring CapEx
+    # Straight-line rent is a non-cash accrual that inflates FFO; recurring CapEx
+    # (tenant improvements, leasing costs) is needed to maintain occupancy.
+    ffo_series   = raw.get("ffo", {})
+    slr          = raw.get("straight_line_rent", {})
+    rec_cx       = raw.get("recurring_capex", {})
+    if ffo_series:
+        affo: dict[str, float] = {}
+        for d in ffo_series:
+            sl_v  = fy_get(slr,    d[:4]) or 0.0
+            rc_v  = fy_get(rec_cx, d[:4]) or 0.0
+            affo[d] = ffo_series[d] - abs(sl_v) - abs(rc_v)
+        if affo:
+            raw["affo"] = affo
+            if share_base_for_per_share:
+                affo_ps: dict[str, float] = {}
+                for d in affo:
+                    s = fy_get(share_base_for_per_share, d[:4])
+                    if s and s > 0:
+                        affo_ps[d] = affo[d] / s
+                raw["affo_per_share"] = affo_ps or None
+
+    # NOI (Net Operating Income) for REITs
+    # Formula: NOI = EBITDA + G&A
+    # Derivation: Income Statement = Revenue − PropertyOpEx − RETax − G&A − D&A
+    #   → EBITDA (Operating Income + D&A) = Revenue − PropertyOpEx − RETax − G&A
+    #   → NOI   = Revenue − PropertyOpEx − RETax = EBITDA + G&A
+    # When G&A is not separately tagged, NOI ≈ EBITDA (acceptable for net-lease REITs
+    # where G&A is a small fraction of revenue and tenants pay most property costs).
+    ebitda_series = raw.get("ebitda", {})
+    ga_series     = raw.get("general_admin_expense", {})
+    if _has_reit_data and ebitda_series:
+        noi: dict[str, float] = {}
+        for d in ebitda_series:
+            eb = ebitda_series[d]
+            if eb is None:
+                continue
+            ga_v = fy_get(ga_series, d[:4]) or 0.0
+            noi[d] = eb + abs(ga_v)
+        if noi:
+            raw["noi"] = noi
+            margin(noi, rev, "noi_margin")
+            # NOI per share
+            if share_base_for_per_share:
+                noi_ps: dict[str, float] = {}
+                for d in noi:
+                    s = fy_get(share_base_for_per_share, d[:4])
+                    if s and s > 0:
+                        noi_ps[d] = noi[d] / s
+                raw["noi_per_share"] = noi_ps or None
+
+    # FFO payout ratio = Dividends Paid / FFO
+    divs = raw.get("dividends_paid", {})
+    if ffo_series and divs:
+        ffo_payout: dict[str, float] = {}
+        for d in ffo_series:
+            dv = fy_get(divs, d[:4])
+            if dv is not None and ffo_series[d] and ffo_series[d] > 0:
+                ffo_payout[d] = abs(dv) / ffo_series[d]
+        raw["ffo_payout_ratio"] = ffo_payout or None
 
     # Clean up None entries
     return {k: v for k, v in raw.items() if v}
@@ -2249,6 +2434,9 @@ def analyze():
         # Bank flow metrics
         "interest_income", "net_interest_income", "noninterest_income",
         "noninterest_expense", "provision_for_losses",
+        # REIT flow metrics
+        "gains_on_real_estate", "real_estate_depreciation", "straight_line_rent", "recurring_capex",
+        "general_admin_expense", "selling_marketing_expense",
     }
     _quarterly_bs_keys = {
         "total_assets", "current_assets", "current_liabilities", "equity",
@@ -2257,6 +2445,8 @@ def analyze():
         "treasury_stock", "treasury_stock_shares",
         # BDC point-in-time
         "nav_per_share",
+        # REIT point-in-time
+        "real_estate_assets",
     }
     _point_in_time_metrics = {
         "total_assets", "current_assets", "current_liabilities", "total_liabilities",
@@ -2265,6 +2455,8 @@ def analyze():
         "treasury_stock", "treasury_stock_shares",
         # BDC point-in-time
         "nav_per_share",
+        # REIT point-in-time
+        "real_estate_assets",
     }
 
     # quarter_end_dates: {"Q1": "YYYY-MM-DD", ...}  for display labels
@@ -2478,6 +2670,49 @@ def analyze():
             for qk, ocf_v in ocf_q.items():
                 fcf_existing[qk] = ocf_v - abs(cpx_q.get(qk) or 0)
 
+        # Quarterly OI fallback: GP − (SGA or S&M + G&A) when OI not tagged
+        _q_gp_oi  = {k: v for k, v in financials.get("gross_profit",           {}).items() if k.startswith("Q")}
+        _q_sga_oi = {k: v for k, v in financials.get("sga_expense",            {}).items() if k.startswith("Q")}
+        _q_ga_oi  = {k: v for k, v in financials.get("general_admin_expense",  {}).items() if k.startswith("Q")}
+        _q_sm_oi  = {k: v for k, v in financials.get("selling_marketing_expense",{}).items() if k.startswith("Q")}
+        _q_oi_existing = {k: v for k, v in financials.get("operating_income",  {}).items() if k.startswith("Q")}
+        if _q_gp_oi:
+            _oi_fb = financials.setdefault("operating_income", {})
+            for qk, gp_v in _q_gp_oi.items():
+                if qk in _q_oi_existing:
+                    continue
+                sga_v = _q_sga_oi.get(qk)
+                ga_v  = _q_ga_oi.get(qk)
+                sm_v  = _q_sm_oi.get(qk)
+                if sga_v is not None:
+                    opex = abs(sga_v)
+                elif ga_v is not None or sm_v is not None:
+                    opex = abs(ga_v or 0) + abs(sm_v or 0)
+                else:
+                    continue
+                _oi_fb[qk] = gp_v - opex
+
+        # Quarterly SGA backfill: S&M + G&A when combined tag absent
+        _q_sga_ex = {k: v for k, v in financials.get("sga_expense", {}).items() if k.startswith("Q")}
+        _q_sga_fill: dict[str, float] = {}
+        for qk in set(_q_sm_oi) | set(_q_ga_oi):
+            if qk in _q_sga_ex:
+                continue
+            sm_v = _q_sm_oi.get(qk) or 0.0
+            ga_v = _q_ga_oi.get(qk) or 0.0
+            if sm_v or ga_v:
+                _q_sga_fill[qk] = abs(sm_v) + abs(ga_v)
+        if _q_sga_fill:
+            financials.setdefault("sga_expense", {}).update(_q_sga_fill)
+
+        # Quarterly EBITDA = quarterly OI + quarterly D&A
+        _q_oi_eb  = {k: v for k, v in financials.get("operating_income", {}).items() if k.startswith("Q")}
+        _q_dep_eb = {k: v for k, v in financials.get("depreciation",      {}).items() if k.startswith("Q")}
+        if _q_oi_eb and _q_dep_eb:
+            _ebitda_q = financials.setdefault("ebitda", {})
+            for qk in set(_q_oi_eb) & set(_q_dep_eb):
+                _ebitda_q[qk] = _q_oi_eb[qk] + abs(_q_dep_eb[qk])
+
         # Quarterly margins
         rev_q  = {k: v for k, v in financials.get("revenue", {}).items() if k.startswith("Q")}
         # For banks: derive quarterly revenue from NII + non-interest income if absent
@@ -2655,6 +2890,87 @@ def analyze():
                 if _q_eq_bdc[qk] and _q_eq_bdc[qk] != 0:
                     _nii_roe_q[qk] = (_q_nii_flow[qk] * 4) / _q_eq_bdc[qk]
 
+        # Quarterly FFO / AFFO (REIT)
+        _q_ni_reit  = {k: v for k, v in financials.get("net_income",            {}).items() if k.startswith("Q")}
+        _q_re_dep   = {k: v for k, v in financials.get("real_estate_depreciation",{}).items() if k.startswith("Q")}
+        # Fall back to general D&A only when REIT-specific data (RE assets or SL rent) exists
+        _has_reit_q = bool(
+            {k for k in financials.get("real_estate_assets", {}) if k.startswith("Q")} or
+            {k for k in financials.get("straight_line_rent", {}) if k.startswith("Q")} or
+            {k for k in financials.get("real_estate_assets", {}) if not k.startswith("Q")}
+        )
+        if not _q_re_dep and _has_reit_q:
+            _q_re_dep = {k: v for k, v in financials.get("depreciation", {}).items() if k.startswith("Q")}
+        _q_re_gains = {k: v for k, v in financials.get("gains_on_real_estate",  {}).items() if k.startswith("Q")}
+        _q_slr      = {k: v for k, v in financials.get("straight_line_rent",    {}).items() if k.startswith("Q")}
+        _q_rec_cx   = {k: v for k, v in financials.get("recurring_capex",       {}).items() if k.startswith("Q")}
+        if _q_ni_reit and _q_re_dep:
+            _q_ffo = {}
+            for qk in set(_q_ni_reit) & set(_q_re_dep):
+                gains_v = _q_re_gains.get(qk) or 0.0
+                _q_ffo[qk] = _q_ni_reit[qk] + abs(_q_re_dep[qk]) - gains_v
+            if _q_ffo:
+                financials.setdefault("ffo", {}).update(_q_ffo)
+                # AFFO quarterly
+                _q_affo = {}
+                for qk, fv in _q_ffo.items():
+                    sl_v = _q_slr.get(qk) or 0.0
+                    rc_v = _q_rec_cx.get(qk) or 0.0
+                    _q_affo[qk] = fv - abs(sl_v) - abs(rc_v)
+                if _q_affo:
+                    financials.setdefault("affo", {}).update(_q_affo)
+                # FFO payout ratio quarterly (annualised FFO as denominator)
+                _q_divs_reit = {k: v for k, v in financials.get("dividends_paid", {}).items() if k.startswith("Q")}
+                if _q_divs_reit:
+                    _ffo_payout_q = financials.setdefault("ffo_payout_ratio", {})
+                    for qk, fv in _q_ffo.items():
+                        dv = _q_divs_reit.get(qk)
+                        ann_ffo = fv * 4
+                        if dv is not None and ann_ffo and ann_ffo > 0:
+                            _ffo_payout_q[qk] = abs(dv) * 4 / ann_ffo
+
+        # Quarterly NOI = quarterly EBITDA + G&A
+        _q_ebitda = {k: v for k, v in financials.get("ebitda", {}).items() if k.startswith("Q")}
+        _q_ga     = {k: v for k, v in financials.get("general_admin_expense", {}).items() if k.startswith("Q")}
+        if _has_reit_q and _q_ebitda:
+            _q_noi = {}
+            for qk, eb in _q_ebitda.items():
+                if eb is None:
+                    continue
+                ga_v = _q_ga.get(qk) or 0.0
+                _q_noi[qk] = eb + abs(ga_v)
+            if _q_noi:
+                financials.setdefault("noi", {}).update(_q_noi)
+                for qk, nv in _q_noi.items():
+                    rv = rev_q.get(qk)
+                    if rv and rv > 0:
+                        financials.setdefault("noi_margin", {})[qk] = nv / rv
+
+        # Quarterly per-share FFO / AFFO
+        _q_sb_reit = (
+            {k: v for k, v in financials.get("shares_diluted_wtd", {}).items() if k.startswith("Q")}
+            or {k: v for k, v in financials.get("shares_outstanding_end", {}).items() if k.startswith("Q")}
+        )
+        if _q_sb_reit:
+            _q_ffo_vals  = {k: v for k, v in financials.get("ffo",  {}).items() if k.startswith("Q")}
+            _q_affo_vals = {k: v for k, v in financials.get("affo", {}).items() if k.startswith("Q")}
+            if _q_ffo_vals:
+                _ffo_ps_q = financials.setdefault("ffo_per_share", {})
+                for qk in set(_q_ffo_vals) & set(_q_sb_reit):
+                    if _q_sb_reit[qk]:
+                        _ffo_ps_q[qk] = _q_ffo_vals[qk] / _q_sb_reit[qk]
+            if _q_affo_vals:
+                _affo_ps_q = financials.setdefault("affo_per_share", {})
+                for qk in set(_q_affo_vals) & set(_q_sb_reit):
+                    if _q_sb_reit[qk]:
+                        _affo_ps_q[qk] = _q_affo_vals[qk] / _q_sb_reit[qk]
+            _q_noi_vals = {k: v for k, v in financials.get("noi", {}).items() if k.startswith("Q")}
+            if _q_noi_vals:
+                _noi_ps_q = financials.setdefault("noi_per_share", {})
+                for qk in set(_q_noi_vals) & set(_q_sb_reit):
+                    if _q_sb_reit[qk]:
+                        _noi_ps_q[qk] = _q_noi_vals[qk] / _q_sb_reit[qk]
+
         # Quarterly per-share metrics
         # Use diluted weighted-avg shares if available, else period-end shares
         _q_sd = {k: v for k, v in financials.get("shares_diluted_wtd", {}).items() if k.startswith("Q")}
@@ -2784,6 +3100,8 @@ def analyze():
     def mult(num, den): return round(num / den, 2) if num and den and den > 0 else None
 
     current_eq = L("equity")
+    current_ffo  = L("ffo")
+    current_affo = L("affo")
     multiples = {
         "pe":           mult(mktcap, current_ni),
         "p_fcf":        mult(mktcap, current_fcf),
@@ -2794,6 +3112,13 @@ def analyze():
         "nopat_yield":  round(L("nopat") / ev, 4) if L("nopat") and ev else None,
         "earnings_yield": round(current_ni / mktcap, 4) if current_ni and mktcap else None,
         "fcf_yield":    round(current_fcf / mktcap, 4) if current_fcf and mktcap else None,
+        # REIT-specific multiples
+        "p_ffo":        mult(mktcap, current_ffo),
+        "p_affo":       mult(mktcap, current_affo),
+        "ev_ffo":       mult(ev, current_ffo),
+        "ffo_yield":    round(current_ffo / mktcap, 4) if current_ffo and mktcap else None,
+        # Cap Rate = NOI / EV (market-implied yield on the real estate portfolio)
+        "cap_rate":     round(L("noi") / ev, 4) if L("noi") and ev else None,
     }
 
     # ── Buyback remaining ────────────────────────────────────────────────────
@@ -2839,9 +3164,26 @@ def analyze():
         fy_month = ["Jan","Feb","Mar","Apr","May","Jun",
                     "Jul","Aug","Sep","Oct","Nov","Dec"][m_num - 1]
 
+    _sic     = str(submissions.get("sic", "") or "")
+    _sic_int = int(_sic) if _sic.isdigit() else 0
+
     # BDC detection: true if XBRL data contains NetInvestmentIncome entries
     is_bdc  = bool(financials.get("net_investment_income"))
-    is_bank = bool(financials.get("net_interest_income") or financials.get("noninterest_expense"))
+    # Bank detection: SIC 6000-6199 (depository institutions, credit agencies) OR
+    # presence of NoninterestExpense (a tag essentially exclusive to bank filers).
+    # We intentionally do NOT use net_interest_income alone — many non-banks (e.g.
+    # homebuilders with mortgage subsidiaries) file InterestIncomeExpenseNet, which
+    # would trigger false positives.
+    is_bank  = (
+        (6000 <= _sic_int <= 6199) or
+        bool(financials.get("noninterest_expense"))
+    )
+    # REIT detection: SIC 6798 (Real Estate Investment Trusts) or SIC 6500-6552,
+    # or presence of real estate asset / straight-line rent XBRL data.
+    # Note: we do NOT use ffo presence to detect REITs because FFO is derived
+    # and would produce false positives for non-REITs with D&A and NI.
+    is_reit = (_sic in {"6798", "6500", "6512", "6552"} or
+               bool(financials.get("real_estate_assets") or financials.get("straight_line_rent")))
 
     company_name = submissions.get("name", ticker)
 
@@ -2871,6 +3213,7 @@ def analyze():
             "sic_description":  submissions.get("sicDescription", ""),
             "is_bdc":           is_bdc,
             "is_bank":          is_bank,
+            "is_reit":          is_reit,
             "fiscal_year_end":  fy_month,
             "state":            submissions.get("stateOfIncorporation", ""),
             "latest_10k":       latest_10k,
