@@ -3204,6 +3204,38 @@ def analyze():
     # ── Earnings materials (8-Ks + Seeking Alpha links) per quarter ───────────
     earnings_materials = get_earnings_materials(submissions, quarter_end_dates, ticker)
 
+    # ── Recent SEC filings (last 10, all form types) ──────────────────────────
+    _recent_f   = submissions.get("filings", {}).get("recent", {})
+    _f_forms    = _recent_f.get("form", [])
+    _f_accns    = _recent_f.get("accessionNumber", [])
+    _f_docs     = _recent_f.get("primaryDocument", [])
+    _f_dates    = _recent_f.get("filingDate", [])
+    _f_reports  = _recent_f.get("reportDate", [])
+    _f_sizes    = _recent_f.get("size", [])
+    _cik_nz     = str(int(submissions.get("cik", "0")))
+    recent_filings: list[dict] = []
+    for _i, _form in enumerate(_f_forms):
+        if len(recent_filings) >= 10:
+            break
+        _accn = _f_accns[_i] if _i < len(_f_accns) else ""
+        _doc  = _f_docs[_i]  if _i < len(_f_docs)  else ""
+        recent_filings.append({
+            "form":        _form,
+            "filing_date": _f_dates[_i]   if _i < len(_f_dates)   else "",
+            "report_date": _f_reports[_i] if _i < len(_f_reports) else "",
+            "size_kb":     round(_f_sizes[_i] / 1024) if _i < len(_f_sizes) and _f_sizes[_i] else None,
+            "url": SEC_ARCHIVES.format(
+                cik_no_zero=_cik_nz,
+                accession_no_dash=_accn.replace("-", ""),
+                document=_doc,
+            ) if _accn and _doc else "",
+            "index_url": f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik}&type=&dateb=&owner=include&count=40",
+        })
+    all_filings_url = (
+        f"https://www.sec.gov/cgi-bin/browse-edgar"
+        f"?action=getcompany&CIK={cik}&type=&dateb=&owner=include&count=40"
+    )
+
     return jsonify({
         "company": {
             "name":             company_name,
@@ -3236,6 +3268,8 @@ def analyze():
         "quarter_dates":   quarter_end_dates,
         "quarter_links":      quarter_filing_links,
         "earnings_materials": earnings_materials,
+        "recent_filings":     recent_filings,
+        "all_filings_url":    all_filings_url,
         "ir_url":             ir_url,
         "financials":         fin_data,
         "filing_links":       filing_links,

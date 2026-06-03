@@ -159,6 +159,22 @@ th.hidden-col{display:none}
 .sh-bar-wrap{width:100%;height:4px;background:#e2e8f0;border-radius:2px;margin-top:3px}
 .sh-bar{height:100%;background:var(--blue);border-radius:2px}
 
+/* ── Recent Filings ──────────────────────────────────────────────────── */
+.rf-wrap{background:var(--card);border:1px solid var(--border);border-radius:8px;margin-bottom:22px;overflow:hidden}
+.rf-table{width:100%;border-collapse:collapse;font-size:12px}
+.rf-table th{background:var(--section-bg);color:var(--navy);font-size:10px;font-weight:800;letter-spacing:.7px;text-transform:uppercase;padding:7px 13px;text-align:left;border-bottom:2px solid var(--navy)}
+.rf-table td{padding:7px 13px;border-bottom:1px solid var(--border);vertical-align:middle}
+.rf-table tr:last-child td{border-bottom:none}
+.rf-table tr:hover td{background:var(--row-hover)}
+.rf-badge{display:inline-block;padding:2px 7px;border-radius:4px;font-size:10px;font-weight:700;background:#e0e7ff;color:#3730a3;border:1px solid #c7d2fe;white-space:nowrap}
+.rf-badge.k{background:#dcfce7;color:#15803d;border-color:#bbf7d0}
+.rf-badge.q{background:#fef9c3;color:#854d0e;border-color:#fde68a}
+.rf-badge.k8{background:#fce7f3;color:#9d174d;border-color:#fbcfe8}
+.rf-badge.def{background:#f3f4f6;color:#374151;border-color:#d1d5db}
+.rf-link{color:var(--blue);text-decoration:none;font-weight:500}
+.rf-link:hover{text-decoration:underline}
+.rf-footer{padding:9px 13px;background:var(--section-bg);border-top:1px solid var(--border);font-size:12px}
+
 /* ── Earnings Materials ───────────────────────────────────────────────── */
 .em-wrap{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:14px 18px;margin-bottom:22px}
 .em-quarters{display:flex;flex-direction:column;gap:14px;margin-top:10px}
@@ -695,6 +711,9 @@ function render(data){
   // Earnings materials section
   h+=renderEarningsMaterials(data.earnings_materials||{}, data.quarter_dates||{}, co.ticker, data.ir_url||'');
 
+  // Recent SEC filings section
+  h+=renderRecentFilings(data.recent_filings||[], data.all_filings_url||'', co.ticker);
+
   // VIC section placeholder — filled asynchronously after main render
   h+=`<div id="vic-section"></div>`;
 
@@ -764,6 +783,44 @@ function renderEarningsMaterials(materials, qDates, ticker, irUrl){
 
   h += `</div></div>`;
   return h;
+}
+
+// ── Recent SEC Filings ────────────────────────────────────────────────────────
+function renderRecentFilings(filings, allUrl, ticker){
+  if(!filings || !filings.length) return '';
+  function badgeCls(form){
+    if(/^10-K/.test(form)) return 'k';
+    if(/^10-Q/.test(form)) return 'q';
+    if(/^8-K/.test(form))  return 'k8';
+    if(/^DEF/.test(form)||/^PRE/.test(form)) return 'def';
+    return '';
+  }
+  let rows = filings.map(f=>{
+    const badge = `<span class="rf-badge ${badgeCls(f.form)}">${f.form}</span>`;
+    const link  = f.url
+      ? `<a class="rf-link" href="${f.url}" target="_blank" rel="noreferrer">View filing ↗</a>`
+      : '—';
+    const desc  = f.report_date ? `Period: ${f.report_date}` : '';
+    return `<tr>
+      <td>${badge}</td>
+      <td>${f.filing_date||'—'}</td>
+      <td style="color:var(--muted);font-size:11px">${desc}</td>
+      <td>${link}</td>
+      <td style="color:var(--muted);text-align:right">${f.size_kb!=null ? f.size_kb.toLocaleString()+' KB' : ''}</td>
+    </tr>`;
+  }).join('');
+  return `<div class="sec-title-row"><span class="sec-title">Recent SEC Filings — ${ticker}</span></div>
+  <div class="rf-wrap">
+    <table class="rf-table">
+      <thead><tr>
+        <th>Form</th><th>Filed</th><th>Period</th><th>Document</th><th style="text-align:right">Size</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div class="rf-footer">
+      <a class="rf-link" href="${allUrl}" target="_blank" rel="noreferrer">View all SEC filings for ${ticker} on EDGAR ↗</a>
+    </div>
+  </div>`;
 }
 
 // ── VIC writeups ──────────────────────────────────────────────────────────────
