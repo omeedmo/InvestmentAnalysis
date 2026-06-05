@@ -2408,19 +2408,33 @@ def analyze():
     years = get_display_years(financials)
 
     # ── Post-annual quarterly data ────────────────────────────────────────────
-    # Anchor quarter discovery on the last display year (latY) so labels and
-    # data are always consistent.  We look for an annual date whose year matches
-    # latY in any series; fall back to latY-12-31 if none is found.
+    # Anchor quarter discovery on the true period-end date of the most recent
+    # annual filing.  Using the FY-adjusted financial series dates is wrong for
+    # non-December fiscal years (e.g. Salesforce's Jan 31 year-end): the
+    # FY-adjustment maps "2026-01-31" → "2025-01-31", making the anchor a full
+    # year too early and causing the most-recent quarters to be missed.
+    # Priority: (1) report_date from the most recent 10-K filing in submissions,
+    #           (2) FY-adjusted series date (existing logic), (3) Dec-31 fallback.
     _last_annual_date = ""
     _lat_y = years[-1] if years else ""
+
+    # (1) True period-end from the most recent 10-K filing
+    if all_10k_filings and all_10k_filings[0].get("report_date"):
+        _last_annual_date = all_10k_filings[0]["report_date"]
+
+    # (2) FY-adjusted series date — use if it's *newer* than the 10-K report_date
+    #     (guards against stale 10-K lists) or if no 10-K date was found
     for _ref_series in (financials.get("revenue", {}), financials.get("net_income", {}),
                         financials.get("equity", {}), financials.get("total_assets", {})):
         _annual_dates = [d for d in _ref_series if not d.startswith("Q") and d[:4] == _lat_y]
         if _annual_dates:
-            _last_annual_date = max(_annual_dates)
+            _candidate = max(_annual_dates)
+            if not _last_annual_date or _candidate > _last_annual_date:
+                _last_annual_date = _candidate
             break
+
     if not _last_annual_date and _lat_y:
-        # Fall back: construct a Dec-31 anchor from the display year
+        # (3) Fall back: construct a Dec-31 anchor from the display year
         _last_annual_date = f"{_lat_y}-12-31"
 
     # Metrics to extract for quarterly view
