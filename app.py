@@ -1502,18 +1502,21 @@ def build_financials(facts: dict) -> dict[str, dict[str, float]]:
                 ebitda[d] = oi[d] + da
         raw["ebitda"] = ebitda if ebitda else None
 
-    # Gross Profit = Revenue - Cost of Revenue (when not directly tagged in XBRL)
-    if not gp and rev:
+    # Gross Profit = Revenue - Cost of Revenue for years not directly tagged.
+    # Some filers switch away from GrossProfit while still reporting revenue/cost.
+    if rev:
         cogs = raw.get("cost_of_revenue", {})
         if cogs:
-            gp_derived = {}
+            gp_filled = dict(gp or {})
             for d in rev:
+                if fy_get(gp_filled, d[:4]) is not None:
+                    continue
                 c = fy_get(cogs, d[:4])
                 if c is not None:
-                    gp_derived[d] = rev[d] - abs(c)
-            if gp_derived:
-                raw["gross_profit"] = gp_derived
-                gp = gp_derived
+                    gp_filled[d] = rev[d] - abs(c)
+            if gp_filled:
+                raw["gross_profit"] = gp_filled
+                gp = gp_filled
 
     # Total Cash = Cash + ST Investments
     if cash or st:
@@ -2442,7 +2445,7 @@ def analyze():
         "revenue", "gross_profit", "cost_of_revenue", "operating_income", "net_income",
         "operating_cash_flow", "capex", "depreciation", "stock_based_compensation",
         "income_tax", "interest_expense", "investment_gains",
-        "dividends_paid", "buybacks_value",
+        "dividends_paid", "buybacks_value", "dividends_per_share",
         # BDC flow metrics
         "net_investment_income", "gross_investment_income", "nii_per_share",
         # Bank flow metrics
