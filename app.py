@@ -869,6 +869,10 @@ METRIC_TAGS: dict[str, list[str]] = {
         "CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization",  # AMR and similar mining/industrial
     ],
     "gross_profit": ["GrossProfit"],
+    # Split cost-of-revenue components: some filers (e.g. INTU pre-2018) tag
+    # CostOfGoodsSold and CostOfServices separately with no consolidated total.
+    "cost_of_goods_component":    ["CostOfGoodsSold"],
+    "cost_of_services_component": ["CostOfServices"],
     "rd_expense": ["ResearchAndDevelopmentExpense"],
     "sga_expense": ["SellingGeneralAndAdministrativeExpense"],
     # G&A as a separate line (useful for REIT NOI derivation: NOI = EBITDA + G&A)
@@ -881,6 +885,10 @@ METRIC_TAGS: dict[str, list[str]] = {
         "SellingAndMarketingExpense",
         "SellingExpense",
     ],
+    # Operating expense lines used for the gross-profit add-back fallback
+    # (GP = OI + S&M + R&D + G&A + amortization + restructuring; e.g. INTU post-2018)
+    "amortization_of_intangibles": ["AmortizationOfIntangibleAssets"],
+    "restructuring_charges": ["RestructuringCharges", "RestructuringCosts"],
     "operating_income": [
         "OperatingIncomeLoss",
         # Fallback for companies (e.g. BRK) that don't separately file OperatingIncomeLoss
@@ -1502,6 +1510,27 @@ def build_financials(facts: dict) -> dict[str, dict[str, float]]:
                 ebitda[d] = oi[d] + da
         raw["ebitda"] = ebitda if ebitda else None
 
+    # Combine split cost-of-revenue components (goods + services) per year.
+    # The tag merge keeps the max single value, so a filer tagging both
+    # CostOfGoodsSold and CostOfServices (e.g. INTU pre-2018) ends up with
+    # only one component. The true total is the sum; a genuine total tag
+    # always equals or exceeds the sum, so taking the max is safe.
+    _cos_comp = raw.get("cost_of_services_component", {})
+    if _cos_comp:
+        _cog_comp = raw.get("cost_of_goods_component", {})
+        _cogs_combined = dict(raw.get("cost_of_revenue", {}))
+        for d, sv in _cos_comp.items():
+            y = d[:4]
+            combined = abs(sv) + abs(fy_get(_cog_comp, y) or 0)
+            existing = fy_get(_cogs_combined, y)
+            if existing is None:
+                _cogs_combined[d] = combined
+            elif combined > abs(existing):
+                for k in list(_cogs_combined):
+                    if k[:4] == y:
+                        _cogs_combined[k] = combined
+        raw["cost_of_revenue"] = _cogs_combined
+
     # Gross Profit = Revenue - Cost of Revenue for years not directly tagged.
     # Some filers switch away from GrossProfit while still reporting revenue/cost.
     if rev:
@@ -1517,6 +1546,45 @@ def build_financials(facts: dict) -> dict[str, dict[str, float]]:
             if gp_filled:
                 raw["gross_profit"] = gp_filled
                 gp = gp_filled
+
+    # Gross Profit fallback #2: opex add-back, for filers that tag neither
+    # GrossProfit nor a consolidated cost-of-revenue (e.g. INTU post-2018).
+    # GP = OI + S&M + R&D + G&A (+ amortization of intangibles + restructuring),
+    # i.e. add back every operating expense below the gross-profit line.
+    # Requires SGA (or S&M + G&A) so we don't fabricate GP from OI alone.
+    if rev and oi:
+        _sga_gp = raw.get("sga_expense", {})
+        _sm_gp  = raw.get("selling_marketing_expense", {})
+        _ga_gp  = raw.get("general_admin_expense", {})
+        _rd_gp  = raw.get("rd_expense", {})
+        _am_gp  = raw.get("amortization_of_intangibles", {})
+        _rst_gp = raw.get("restructuring_charges", {})
+        gp_fill2 = dict(gp or {})
+        _added = False
+        for d in rev:
+            y = d[:4]
+            if fy_get(gp_fill2, y) is not None:
+                continue
+            o = fy_get(oi, y)
+            if o is None:
+                continue
+            sm_v  = fy_get(_sm_gp, y)
+            ga_v  = fy_get(_ga_gp, y)
+            sga_v = fy_get(_sga_gp, y)
+            if sm_v is not None and ga_v is not None:
+                opex = abs(sm_v) + abs(ga_v)
+            elif sga_v is not None:
+                opex = abs(sga_v)
+            else:
+                continue
+            opex += abs(fy_get(_rd_gp,  y) or 0)
+            opex += abs(fy_get(_am_gp,  y) or 0)
+            opex += abs(fy_get(_rst_gp, y) or 0)
+            gp_fill2[d] = o + opex
+            _added = True
+        if _added:
+            raw["gross_profit"] = gp_fill2
+            gp = gp_fill2
 
     # Total Cash = Cash + ST Investments
     if cash or st:
@@ -2454,6 +2522,8 @@ def analyze():
         # REIT flow metrics
         "gains_on_real_estate", "real_estate_depreciation", "straight_line_rent", "recurring_capex",
         "general_admin_expense", "selling_marketing_expense",
+        # Opex lines for the gross-profit add-back fallback (INTU and similar)
+        "sga_expense", "rd_expense", "amortization_of_intangibles", "restructuring_charges",
     }
     _quarterly_bs_keys = {
         "total_assets", "current_assets", "current_liabilities", "equity",
@@ -2802,7 +2872,40 @@ def analyze():
                         _q_gp_derived[qk] = _q_rev_gp[qk] - abs(_q_cogs[qk])
                 if _q_gp_derived:
                     financials.setdefault("gross_profit", {}).update(_q_gp_derived)
+                    # Margin loop already ran above — fill gross_margin here too
+                    for qk, gv in _q_gp_derived.items():
+                        rv = rev_q.get(qk)
+                        if rv and rv > 0:
+                            financials.setdefault("gross_margin", {})[qk] = gv / rv
 
+        # Quarterly GP fallback #2: opex add-back (GP = OI + S&M + R&D + G&A + amort + restructuring)
+        _q_gp = {k: v for k, v in financials.get("gross_profit", {}).items() if k.startswith("Q")}
+        if not _q_gp:
+            _q_oi_gp  = {k: v for k, v in financials.get("operating_income",            {}).items() if k.startswith("Q")}
+            _q_rd_gp  = {k: v for k, v in financials.get("rd_expense",                  {}).items() if k.startswith("Q")}
+            _q_am_gp  = {k: v for k, v in financials.get("amortization_of_intangibles", {}).items() if k.startswith("Q")}
+            _q_rst_gp = {k: v for k, v in financials.get("restructuring_charges",       {}).items() if k.startswith("Q")}
+            _q_gp_fb2 = {}
+            for qk, o in _q_oi_gp.items():
+                sm_v  = _q_sm_oi.get(qk)
+                ga_v  = _q_ga_oi.get(qk)
+                sga_v = _q_sga_oi.get(qk)
+                if sm_v is not None and ga_v is not None:
+                    opex = abs(sm_v) + abs(ga_v)
+                elif sga_v is not None:
+                    opex = abs(sga_v)
+                else:
+                    continue
+                opex += abs(_q_rd_gp.get(qk)  or 0)
+                opex += abs(_q_am_gp.get(qk)  or 0)
+                opex += abs(_q_rst_gp.get(qk) or 0)
+                _q_gp_fb2[qk] = o + opex
+            if _q_gp_fb2:
+                financials.setdefault("gross_profit", {}).update(_q_gp_fb2)
+                for qk, gv in _q_gp_fb2.items():
+                    rv = rev_q.get(qk)
+                    if rv and rv > 0:
+                        financials.setdefault("gross_margin", {})[qk] = gv / rv
 
         # Quarterly buybacks fallback: delta between Q treasury stock and last year-end balance
         _q_bb = {k: v for k, v in financials.get("buybacks_value", {}).items() if k.startswith("Q")}
