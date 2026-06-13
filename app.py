@@ -897,7 +897,12 @@ METRIC_TAGS: dict[str, list[str]] = {
         "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
         "IncomeLossFromContinuingOperationsBeforeIncomeTaxesDomestic",
     ],
-    "interest_expense": ["InterestExpense", "InterestExpenseDebt"],
+    "interest_expense": [
+        "InterestExpense",
+        "InterestExpenseDebt",
+        "InterestExpenseNonoperating",   # MCK FY2025+ and similar
+        "InterestAndDebtExpense",
+    ],
     "income_tax": ["IncomeTaxExpenseBenefit"],
     "net_income": ["NetIncomeLoss", "NetIncomeLossAvailableToCommonStockholdersBasic"],
 
