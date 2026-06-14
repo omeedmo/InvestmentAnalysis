@@ -1928,11 +1928,13 @@ def build_financials(facts: dict) -> dict[str, dict[str, float]]:
     #    a single year — a hallmark of a wide-moat franchise.
     _unta  = raw.get("unta",  {})
     _nopat = raw.get("nopat", {})
+    # Skip years where UNTA is negative — dividing by negative tangible capital
+    # produces a misleading negative ratio (same rationale as ROIC's IC > 0 guard).
     if _unta and _nopat:
         eco_gw: dict[str, float] = {}
         for d in _nopat:
             u = fy_get(_unta, d[:4])
-            if u and u != 0:
+            if u and u > 0:
                 eco_gw[d] = _nopat[d] / u
         raw["economic_goodwill"] = eco_gw or None
 
@@ -1942,7 +1944,7 @@ def build_financials(facts: dict) -> dict[str, dict[str, float]]:
         pretax_eco_gw: dict[str, float] = {}
         for d in oi:
             u = fy_get(_unta, d[:4])
-            if u and u != 0:
+            if u and u > 0:
                 pretax_eco_gw[d] = oi[d] / u
         raw["pretax_economic_goodwill"] = pretax_eco_gw or None
 
@@ -3168,13 +3170,13 @@ def analyze():
             if _unta_vals:
                 _eco_q = financials.setdefault("economic_goodwill", {})
                 for qk in set(_nopat_q) & set(_unta_vals):
-                    if _unta_vals[qk] and _unta_vals[qk] != 0:
+                    if _unta_vals[qk] and _unta_vals[qk] > 0:
                         _eco_q[qk] = _nopat_q[qk] / _unta_vals[qk]
 
                 # Quarterly Pre-tax Economic Goodwill = EBIT / UNTA (annualised)
                 _pretax_eco_q = financials.setdefault("pretax_economic_goodwill", {})
                 for qk in set(_q_oi) & set(_unta_vals):
-                    if _unta_vals[qk] and _unta_vals[qk] != 0:
+                    if _unta_vals[qk] and _unta_vals[qk] > 0:
                         _pretax_eco_q[qk] = (_q_oi[qk] * 4) / _unta_vals[qk]
 
         # Quarterly BDC: NII per share (if not already from XBRL tag, compute from NII / shares)
