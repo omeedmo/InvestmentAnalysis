@@ -3239,6 +3239,14 @@ def analyze():
         "nopat_yield":  round(L("nopat") / ev, 4) if L("nopat") and ev else None,
         "earnings_yield": round(current_ni / mktcap, 4) if current_ni and mktcap else None,
         "fcf_yield":    round(current_fcf / mktcap, 4) if current_fcf and mktcap else None,
+        # Cash Yield = (FCF + Net Interest) / EV
+        # Adds net interest expense back to FCF so the numerator is capital-structure
+        # neutral, matching EV in the denominator. Net interest = interest expense −
+        # interest income (interest income is only present for some filers).
+        "cash_yield": (
+            round((current_fcf + (L("interest_expense") or 0) - (L("interest_income") or 0)) / ev, 4)
+            if current_fcf and ev else None
+        ),
         # REIT-specific multiples
         "p_ffo":        mult(mktcap, current_ffo),
         "p_affo":       mult(mktcap, current_affo),

@@ -524,6 +524,7 @@ function render(data){
     co.is_reit
       ? {l:'EV/FFO',      v: mk.ev_ffo ? mk.ev_ffo.toFixed(1)+'×' : '—'}
       : {l:'FCF Yield',   v: mk.fcf_yield ? F.pct(mk.fcf_yield) : '—', cls: mk.fcf_yield>0?'g':''},
+    {l:'Cash Yield',    v: mk.cash_yield!=null ? F.pct(mk.cash_yield) : '—', cls: mk.cash_yield>0?'g':''},
     co.is_reit
       ? {l:'Cap Rate',    v: mk.cap_rate ? F.pct(mk.cap_rate) : '—', cls: mk.cap_rate>0?'g':''}
       : null,
