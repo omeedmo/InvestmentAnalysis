@@ -1080,6 +1080,50 @@ METRIC_TAGS: dict[str, list[str]] = {
         "InvestmentCompanyInvestmentIncomeLossPerShare",
         "InvestmentCompanyInvestmentIncomeLossFromOperationsPerShare",
     ],
+
+    # ── Insurance (P&C / life) metrics ───────────────────────────────────────
+    # Net premiums earned — the insurer's top-line "revenue" for ratio math
+    "premiums_earned": [
+        "PremiumsEarnedNet",
+        "PremiumsEarnedNetPropertyAndCasualty",
+        "SupplementaryInsuranceInformationPremiumRevenue",
+    ],
+    # Net premiums written (leading indicator of earned premium growth)
+    "premiums_written": [
+        "PremiumsWrittenNet",
+        "SupplementaryInsuranceInformationPremiumsWritten",
+    ],
+    # Losses & loss-adjustment expenses incurred (numerator of the loss ratio)
+    "losses_incurred": [
+        "PolicyholderBenefitsAndClaimsIncurredNet",
+        "LiabilityForUnpaidClaimsAndClaimsAdjustmentExpenseIncurredClaims1",
+        "SupplementaryInsuranceInformationBenefitsClaimsLossesAndSettlementExpense",
+    ],
+    # Total benefits, losses & expenses (numerator of the combined ratio)
+    "benefits_losses_expenses": ["BenefitsLossesAndExpenses"],
+    # Loss & LAE reserves (largest float component)
+    "claims_reserve": [
+        "LiabilityForClaimsAndClaimsAdjustmentExpense",
+        "LiabilityForUnpaidClaimsAndClaimsAdjustmentExpenseNet",
+        "SupplementaryInsuranceInformationLiabilityForFuturePolicyBenefitsLossesClaimsAndLossExpenseReserves",
+    ],
+    # Unearned premium reserve (float component)
+    "unearned_premiums": [
+        "UnearnedPremiums",
+        "SupplementaryInsuranceInformationUnearnedPremiums",
+    ],
+    # Premiums receivable (offsets float — money not yet collected)
+    "premiums_receivable": ["PremiumsReceivableAtCarryingValue"],
+    # Deferred policy acquisition costs (offsets float)
+    "deferred_acquisition_costs": [
+        "DeferredPolicyAcquisitionCosts",
+        "SupplementaryInsuranceInformationDeferredPolicyAcquisitionCosts",
+    ],
+    # Reinsurance recoverables (offsets float)
+    "reinsurance_recoverable": [
+        "ReinsuranceRecoverablesOnPaidAndUnpaidLosses",
+        "ReinsuranceRecoverableForUnpaidClaimsAndClaimsAdjustments",
+    ],
 }
 
 
@@ -1394,6 +1438,12 @@ def build_financials(facts: dict) -> dict[str, dict[str, float]]:
         "nav_per_share",
         # REIT point-in-time
         "real_estate_assets",
+        # Insurance point-in-time (balance-sheet float components)
+        "claims_reserve",
+        "unearned_premiums",
+        "premiums_receivable",
+        "deferred_acquisition_costs",
+        "reinsurance_recoverable",
     }
     for key, tags in METRIC_TAGS.items():
         if not tags:
@@ -2043,6 +2093,75 @@ def build_financials(facts: dict) -> dict[str, dict[str, float]]:
                 ffo_payout[d] = abs(dv) / ffo_series[d]
         raw["ffo_payout_ratio"] = ffo_payout or None
 
+    # ── Insurance-specific derived metrics ────────────────────────────────────
+    prem_earned = raw.get("premiums_earned", {})
+    losses      = raw.get("losses_incurred", {})
+    ble         = raw.get("benefits_losses_expenses", {})
+    if prem_earned:
+        # Loss Ratio = Losses & LAE Incurred / Net Premiums Earned
+        if losses:
+            loss_ratio: dict[str, float] = {}
+            for d in prem_earned:
+                pe = prem_earned[d]
+                lo = fy_get(losses, d[:4])
+                if pe and pe > 0 and lo is not None:
+                    loss_ratio[d] = abs(lo) / pe
+            raw["loss_ratio"] = loss_ratio or None
+
+        # Combined Ratio = Total Benefits, Losses & Expenses / Net Premiums Earned
+        # (approximate — includes any non-underwriting expense lines; for a
+        # predominantly P&C insurer this tracks the reported combined ratio closely)
+        if ble:
+            combined_ratio: dict[str, float] = {}
+            for d in prem_earned:
+                pe = prem_earned[d]
+                be = fy_get(ble, d[:4])
+                if pe and pe > 0 and be is not None:
+                    combined_ratio[d] = abs(be) / pe
+            raw["combined_ratio"] = combined_ratio or None
+
+            # Expense Ratio = Combined − Loss (underwriting expenses / premiums earned)
+            _lr = raw.get("loss_ratio", {})
+            _cr = raw.get("combined_ratio", {})
+            if _lr and _cr:
+                expense_ratio: dict[str, float] = {}
+                for d in _cr:
+                    lr = fy_get(_lr, d[:4])
+                    if lr is not None:
+                        expense_ratio[d] = _cr[d] - lr
+                raw["expense_ratio"] = expense_ratio or None
+
+    # Insurance Float ≈ Loss & LAE Reserves + Unearned Premiums
+    #                   − Premiums Receivable − Deferred Acquisition Costs
+    #                   − Reinsurance Recoverables
+    # The pool of policyholder money the insurer holds and invests before paying claims.
+    _claims = raw.get("claims_reserve", {})
+    if _claims:
+        _unearn = raw.get("unearned_premiums", {})
+        _prem_r = raw.get("premiums_receivable", {})
+        _dac    = raw.get("deferred_acquisition_costs", {})
+        _reins  = raw.get("reinsurance_recoverable", {})
+        flo: dict[str, float] = {}
+        for d in _claims:
+            y = d[:4]
+            flo[d] = (
+                _claims[d]
+                + (fy_get(_unearn, y) or 0)
+                - (fy_get(_prem_r, y) or 0)
+                - (fy_get(_dac,    y) or 0)
+                - (fy_get(_reins,  y) or 0)
+            )
+        raw["insurance_float"] = flo or None
+
+        # Float per share
+        if share_base_for_per_share and raw.get("insurance_float"):
+            fps_i: dict[str, float] = {}
+            for d in raw["insurance_float"]:
+                s = fy_get(share_base_for_per_share, d[:4])
+                if s and s > 0:
+                    fps_i[d] = raw["insurance_float"][d] / s
+            raw["float_per_share"] = fps_i or None
+
     # Clean up None entries
     return {k: v for k, v in raw.items() if v}
 
@@ -2531,6 +2650,8 @@ def analyze():
         "general_admin_expense", "selling_marketing_expense",
         # Opex lines for the gross-profit add-back fallback (INTU and similar)
         "sga_expense", "rd_expense", "amortization_of_intangibles", "restructuring_charges",
+        # Insurance flow metrics
+        "premiums_earned", "premiums_written", "losses_incurred", "benefits_losses_expenses",
     }
     _quarterly_bs_keys = {
         "total_assets", "current_assets", "current_liabilities", "equity",
@@ -2541,6 +2662,9 @@ def analyze():
         "nav_per_share",
         # REIT point-in-time
         "real_estate_assets",
+        # Insurance point-in-time (float components)
+        "claims_reserve", "unearned_premiums", "premiums_receivable",
+        "deferred_acquisition_costs", "reinsurance_recoverable",
     }
     _point_in_time_metrics = {
         "total_assets", "current_assets", "current_liabilities", "total_liabilities",
@@ -2551,6 +2675,9 @@ def analyze():
         "nav_per_share",
         # REIT point-in-time
         "real_estate_assets",
+        # Insurance point-in-time (float components)
+        "claims_reserve", "unearned_premiums", "premiums_receivable",
+        "deferred_acquisition_costs", "reinsurance_recoverable",
     }
 
     # quarter_end_dates: {"Q1": "YYYY-MM-DD", ...}  for display labels
@@ -3179,6 +3306,42 @@ def analyze():
                     if _unta_vals[qk] and _unta_vals[qk] > 0:
                         _pretax_eco_q[qk] = (_q_oi[qk] * 4) / _unta_vals[qk]
 
+        # Quarterly insurance ratios + float
+        _q_pe   = {k: v for k, v in financials.get("premiums_earned",          {}).items() if k.startswith("Q")}
+        _q_loss = {k: v for k, v in financials.get("losses_incurred",          {}).items() if k.startswith("Q")}
+        _q_ble  = {k: v for k, v in financials.get("benefits_losses_expenses", {}).items() if k.startswith("Q")}
+        if _q_pe:
+            if _q_loss:
+                _lr_q = financials.setdefault("loss_ratio", {})
+                for qk in set(_q_pe) & set(_q_loss):
+                    if _q_pe[qk] and _q_pe[qk] > 0:
+                        _lr_q[qk] = abs(_q_loss[qk]) / _q_pe[qk]
+            if _q_ble:
+                _cr_q = financials.setdefault("combined_ratio", {})
+                for qk in set(_q_pe) & set(_q_ble):
+                    if _q_pe[qk] and _q_pe[qk] > 0:
+                        _cr_q[qk] = abs(_q_ble[qk]) / _q_pe[qk]
+                _exp_q = financials.setdefault("expense_ratio", {})
+                for qk in _cr_q:
+                    lr = financials.get("loss_ratio", {}).get(qk)
+                    if lr is not None:
+                        _exp_q[qk] = _cr_q[qk] - lr
+        _q_claims = {k: v for k, v in financials.get("claims_reserve", {}).items() if k.startswith("Q")}
+        if _q_claims:
+            _q_un  = {k: v for k, v in financials.get("unearned_premiums",          {}).items() if k.startswith("Q")}
+            _q_pr  = {k: v for k, v in financials.get("premiums_receivable",        {}).items() if k.startswith("Q")}
+            _q_dac = {k: v for k, v in financials.get("deferred_acquisition_costs", {}).items() if k.startswith("Q")}
+            _q_re  = {k: v for k, v in financials.get("reinsurance_recoverable",    {}).items() if k.startswith("Q")}
+            _flo_q = financials.setdefault("insurance_float", {})
+            for qk in _q_claims:
+                _flo_q[qk] = (_q_claims[qk] + (_q_un.get(qk) or 0) - (_q_pr.get(qk) or 0)
+                              - (_q_dac.get(qk) or 0) - (_q_re.get(qk) or 0))
+            if _q_sb:
+                _fps_q = financials.setdefault("float_per_share", {})
+                for qk in set(_flo_q) & set(_q_sb):
+                    if _q_sb[qk]:
+                        _fps_q[qk] = _flo_q[qk] / _q_sb[qk]
+
         # Quarterly BDC: NII per share (if not already from XBRL tag, compute from NII / shares)
         _q_nii = {k: v for k, v in financials.get("net_investment_income", {}).items() if k.startswith("Q")}
         _q_nii_ps = {k: v for k, v in financials.get("nii_per_share", {}).items() if k.startswith("Q")}
@@ -3302,8 +3465,13 @@ def analyze():
     _sic     = str(submissions.get("sic", "") or "")
     _sic_int = int(_sic) if _sic.isdigit() else 0
 
-    # BDC detection: true if XBRL data contains NetInvestmentIncome entries
-    is_bdc  = bool(financials.get("net_investment_income"))
+    # Insurance detection: SIC 6300-6399 (insurance carriers) or presence of
+    # net premiums earned in XBRL.
+    is_insurance = ((6300 <= _sic_int <= 6411) or
+                    bool(financials.get("premiums_earned")))
+    # BDC detection: NetInvestmentIncome present — but insurers also file that
+    # tag for their investment portfolios, so exclude anything flagged insurance.
+    is_bdc  = bool(financials.get("net_investment_income")) and not is_insurance
     # Bank detection: SIC 6000-6199 (depository institutions, credit agencies) OR
     # presence of NoninterestExpense (a tag essentially exclusive to bank filers).
     # We intentionally do NOT use net_interest_income alone — many non-banks (e.g.
@@ -3381,6 +3549,7 @@ def analyze():
             "is_bdc":           is_bdc,
             "is_bank":          is_bank,
             "is_reit":          is_reit,
+            "is_insurance":     is_insurance,
             "fiscal_year_end":  fy_month,
             "state":            submissions.get("stateOfIncorporation", ""),
             "latest_10k":       latest_10k,

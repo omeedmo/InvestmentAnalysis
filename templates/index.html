@@ -327,6 +327,17 @@ const ROWS = [
   {lbl:'FFO Payout Ratio',                      key:'ffo_payout_ratio', t:'%',  reit:true},
   {lbl:'Real Estate Assets (Net)',              key:'real_estate_assets',t:'$', reit:true},
 
+  // Insurance section
+  {sec:'INSURANCE METRICS  ($M)',                                        ins:true},
+  {lbl:'Net Premiums Earned',      key:'premiums_earned',     t:'$',    ins:true, bld:true},
+  {lbl:'Net Premiums Written',     key:'premiums_written',    t:'$',    ins:true},
+  {lbl:'Losses & LAE Incurred',    key:'losses_incurred',     t:'$',    ins:true},
+  {lbl:'  Loss Ratio',             key:'loss_ratio',          t:'%',    ins:true, hi:true, ind:true},
+  {lbl:'  Expense Ratio',          key:'expense_ratio',       t:'%',    ins:true, hi:true, ind:true},
+  {lbl:'Combined Ratio',           key:'combined_ratio',      t:'%',    ins:true, hi:true, bld:true},
+  {lbl:'Insurance Float',          key:'insurance_float',     t:'$',    ins:true, bld:true},
+  {lbl:'  Float / Share',          key:'float_per_share',     t:'ps',   ins:true, hi:true, ind:true},
+
   // BDC income
   // Bank income section
   {sec:'BANK INCOME  ($M)',                                              bank:true},
@@ -608,6 +619,7 @@ function render(data){
     if(row.bdc  && !co.is_bdc)  continue;
     if(row.bank && !co.is_bank) continue;
     if(row.reit && !co.is_reit) continue;
+    if(row.ins  && !co.is_insurance) continue;
     if(row.sec){
       h+=`<tr class="sh"><td colspan="${allCols.length+1}">${row.sec}</td></tr>`;
       continue;
