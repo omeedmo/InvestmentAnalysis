@@ -502,7 +502,11 @@ function drawCharts(years, fin){
 
 // ── Main render ───────────────────────────────────────────────────────────────
 function render(data){
-  const {company:co, market:mk, years, quarters:qtrs=[], quarter_dates:qd={}, quarter_links:ql={}, financials:fin, dcf, filing_links:fl={}, proxy:px={}} = data;
+  const {company:co, market:mk, financials:fin, dcf, filing_links:fl={}, proxy:px={}} = data;
+  // Guard against null (not just undefined) — a default only applies to undefined.
+  const years = Array.isArray(data.years) ? data.years : [];
+  const qtrs  = Array.isArray(data.quarters) ? data.quarters : [];
+  const qd = data.quarter_dates || {}, ql = data.quarter_links || {};
   const latY = years[years.length-1];
   const allCols = [...years, ...qtrs];   // annual + quarterly columns
 
@@ -991,8 +995,18 @@ async function runScreen(){
     if(maxcap)p.set('max_mktcap_b', maxcap);
     if(document.getElementById('scr-refresh').checked) p.set('refresh','1');
     if(universe==='custom') p.set('tickers', custom);
-    const d=await (await fetch('/api/screen?'+p.toString())).json();
-    if(d.error){ document.getElementById('scr-results').innerHTML=`<div class="error-box">⚠ ${d.error}</div>`; return; }
+    const res=await fetch('/api/screen?'+p.toString());
+    let d;
+    try{ d=await res.json(); }
+    catch(_){ d=null; }
+    if(!res.ok || !d || d.error || !Array.isArray(d.results)){
+      const msg = (d&&d.error) ? d.error
+        : (res.status>=502 || res.status===0)
+          ? `The screen timed out on the server (HTTP ${res.status}). Large universes like the Total US Market can exceed the host's request limit on a cold cache — try a smaller universe (S&P 500 / Dow 30) or a tighter market-cap range, then retry.`
+          : `Screen failed (HTTP ${res.status}).`;
+      document.getElementById('scr-results').innerHTML=`<div class="error-box">⚠ ${msg}</div>`;
+      return;
+    }
     SCREEN_DATA = d.results;
     SCREEN_SORT = {key:'p_fcf', dir:1};
     renderScreenTable(d.stats);
@@ -1012,7 +1026,7 @@ function renderScreenTable(stats){
   const st = renderScreenTable._stats || {};
   const {key,dir} = SCREEN_SORT;
   const big = 1e15;
-  const rows = [...SCREEN_DATA].sort((a,b)=>{
+  const rows = [...(Array.isArray(SCREEN_DATA)?SCREEN_DATA:[])].sort((a,b)=>{
     let av=a[key], bv=b[key];
     if(av==null) av = dir>0? big : -big;
     if(bv==null) bv = dir>0? big : -big;
