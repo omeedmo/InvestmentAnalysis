@@ -2371,6 +2371,11 @@ def screen_route():
             return None
     max_pfcf    = _f("max_pfcf")
     max_ev_ebit = _f("max_ev_ebit")
+    # Market-cap cutoffs arrive in $B from the UI; convert to dollars.
+    _min_b      = _f("min_mktcap_b")
+    _max_b      = _f("max_mktcap_b")
+    min_mktcap  = _min_b * 1e9 if _min_b is not None else None
+    max_mktcap  = _max_b * 1e9 if _max_b is not None else None
 
     if universe == "custom":
         raw = request.args.get("tickers", "")
@@ -2383,7 +2388,8 @@ def screen_route():
             return jsonify({"error": f"Unknown universe '{universe}'"}), 400
 
     try:
-        result = screener.screen(universe, tickers, max_pfcf, max_ev_ebit, fy)
+        result = screener.screen(universe, tickers, max_pfcf, max_ev_ebit, fy,
+                                 min_mktcap=min_mktcap, max_mktcap=max_mktcap)
     except Exception as e:
         return jsonify({"error": f"Screen failed: {e}"}), 500
 

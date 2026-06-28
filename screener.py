@@ -21,6 +21,7 @@ Then filter by the user's cutoffs and rank cheapest-first by P/FCF.
 
 import json
 import os
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
@@ -68,6 +69,7 @@ UNIVERSE_LABELS = {
     "sp500":     "S&P 500",
     "nasdaq100": "NASDAQ-100",
     "dow30":     "Dow 30",
+    "all":       "Total US Market",
 }
 
 
@@ -106,6 +108,9 @@ def _scrape_wiki_tickers(url: str, table_id: str) -> list[str]:
 def get_universe(name: str) -> list[str]:
     """Return the ticker list for a named universe (cached 24h)."""
     key = name.lower().strip()
+    # "Total US Market" = every ticker SEC tracks (operating companies that file XBRL)
+    if key in ("all", "total"):
+        return sorted(ticker_cik_map().keys())
     if key not in _WIKI:
         return []
     url, table_id = _WIKI[key]
@@ -190,7 +195,9 @@ def get_prices(tickers: list[str]) -> dict[str, float]:
         except Exception:
             pass
     out: dict[str, float] = {}
-    with ThreadPoolExecutor(max_workers=12) as ex:
+    # Scale workers up for large universes (total market) to keep wall time down.
+    workers = 24 if len(tickers) > 800 else 12
+    with ThreadPoolExecutor(max_workers=workers) as ex:
         for tk, px in zip(tickers, ex.map(_yahoo_price, tickers)):
             if px:
                 out[tk] = px
@@ -215,12 +222,34 @@ def _recent_periods(latest_fy: int):
     return annual, instants
 
 
+def _is_non_common(tk: str) -> bool:
+    """Heuristic: True for preferred shares, warrants, rights, and units —
+    securities that share a common stock's CIK but trade at their own price."""
+    t = tk.upper()
+    # Preferred series (RNR-PG), rights (CELG-RI), or dotted variants (RNR.PG)
+    if re.search(r"[-.]P[A-Z]?$", t) or re.search(r"[-.]R[A-Z]?$", t):
+        return True
+    # Warrants / units / when-issued: 5+ char tickers ending W, WS, U, Z, L
+    if len(t) >= 5 and (t.endswith(("WS", "WW")) or t[-1] in "WUZL"):
+        return True
+    return False
+
+
+def _ticker_score(tk: str) -> float:
+    """Lower = more likely the primary common listing (for dedupe by CIK)."""
+    s = len(tk) * 0.1
+    if "-" in tk or "." in tk:   # class/suffixed listings (BRK-B, GOOG vs GOOGL)
+        s += 3
+    return s
+
+
 def screen(universe: str, tickers: list[str],
            max_pfcf, max_ev_ebit,
-           latest_fy: int = 2025) -> dict:
+           latest_fy: int = 2025,
+           min_mktcap=None, max_mktcap=None) -> dict:
     """
     Run the valuation screen. Returns {results: [...], stats: {...}}.
-    Either cutoff may be None (no upper bound on that ratio).
+    Any cutoff may be None (no bound). min/max_mktcap are in dollars.
     """
     annual, instants = _recent_periods(latest_fy)
 
@@ -236,25 +265,52 @@ def screen(universe: str, tickers: list[str],
     shares = _merge_frames(["EntityCommonStockSharesOutstanding"], "shares", instants)
 
     cik_map = ticker_cik_map()
-    prices = get_prices(tickers)
 
-    results = []
-    missing = 0
+    def _cik_for(tk):
+        return (cik_map.get(tk.upper())
+                or cik_map.get(tk.replace("-", ".").upper())
+                or cik_map.get(tk.replace(".", "-").upper()))
+
+    # Pre-filter to names that actually have the financial data we need BEFORE
+    # fetching prices. On the total market this drops ~10k tickers to a few
+    # thousand, so we only pay the price-fetch cost for real candidates.
+    raw_candidates = []
+    no_cik = 0
     for tk in tickers:
-        cik = cik_map.get(tk.upper())
+        cik = _cik_for(tk)
         if cik is None:
-            cik = cik_map.get(tk.replace("-", ".").upper()) or cik_map.get(tk.replace(".", "-").upper())
-        if cik is None:
-            missing += 1
+            no_cik += 1
             continue
         c = str(cik)
+        if ocf.get(c) is not None and shares.get(c):
+            raw_candidates.append((tk, c))
+
+    # Drop non-common securities (preferred, warrants, rights, units) and dedupe
+    # by CIK. They share the common stock's CIK — and thus its financials — but
+    # have their own tiny prices, so market_cap = common_shares × preferred_price
+    # is garbage. Keep one "primary" common ticker per company.
+    best_per_cik: dict[str, str] = {}
+    for tk, c in raw_candidates:
+        if _is_non_common(tk):
+            continue
+        cur = best_per_cik.get(c)
+        if cur is None or _ticker_score(tk) < _ticker_score(cur):
+            best_per_cik[c] = tk
+    candidates = sorted(best_per_cik.values())
+
+    prices = get_prices(candidates)
+
+    results = []
+    no_price = 0
+    for tk in candidates:
+        c = str(_cik_for(tk))
         price = prices.get(tk)
         sh    = shares.get(c)
         o     = ocf.get(c)
         cx    = capex.get(c)
         eb    = ebit.get(c)
         if not (price and sh and o is not None):
-            missing += 1
+            no_price += 1
             continue
         mktcap = price * sh
         fcf    = o - abs(cx or 0)
@@ -275,13 +331,18 @@ def screen(universe: str, tickers: list[str],
 
     # Apply cutoffs: a name passes only if it has the ratio AND it's within bound.
     def passes(r):
+        mc = r["market_cap"]
+        if min_mktcap is not None and (mc is None or mc < min_mktcap):
+            return False
+        if max_mktcap is not None and (mc is None or mc > max_mktcap):
+            return False
         if max_pfcf is not None:
             if r["p_fcf"] is None or r["p_fcf"] > max_pfcf:
                 return False
         if max_ev_ebit is not None:
             if r["ev_ebit"] is None or r["ev_ebit"] > max_ev_ebit:
                 return False
-        # With no cutoffs, still require at least one valuation metric
+        # With no valuation cutoffs, still require at least one valuation metric
         if max_pfcf is None and max_ev_ebit is None:
             return r["p_fcf"] is not None or r["ev_ebit"] is not None
         return True
@@ -298,9 +359,10 @@ def screen(universe: str, tickers: list[str],
         "stats": {
             "universe":   universe,
             "total":      len(tickers),
+            "companies":  len(candidates),
             "evaluated":  len(results),
             "passed":     len(filtered),
-            "missing":    missing,
+            "missing":    no_price,
             "fiscal_year": latest_fy,
         },
     }

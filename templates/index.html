@@ -950,6 +950,14 @@ async function openScreener(){
           <input id="scr-evebit" type="number" placeholder="e.g. 15" min="0" step="1" style="width:110px">
         </div>
         <div class="scr-field">
+          <label>Min Mkt Cap ($B)</label>
+          <input id="scr-mincap" type="number" placeholder="e.g. 0.3" min="0" step="0.1" style="width:120px">
+        </div>
+        <div class="scr-field">
+          <label>Max Mkt Cap ($B)</label>
+          <input id="scr-maxcap" type="number" placeholder="e.g. 10" min="0" step="0.1" style="width:120px">
+        </div>
+        <div class="scr-field">
           <label>&nbsp;</label>
           <button class="btn" id="scr-go" onclick="runScreen()">Screen ▸</button>
         </div>
@@ -963,14 +971,19 @@ async function runScreen(){
   const universe = document.getElementById('scr-universe').value;
   const pfcf  = document.getElementById('scr-pfcf').value.trim();
   const evebit= document.getElementById('scr-evebit').value.trim();
+  const mincap= document.getElementById('scr-mincap').value.trim();
+  const maxcap= document.getElementById('scr-maxcap').value.trim();
   const custom= (document.getElementById('scr-tickers')||{}).value || '';
   const go=document.getElementById('scr-go'); go.disabled=true; go.textContent='Screening…';
+  const slowNote = universe==='all' ? ' First total-market run pulls thousands of prices — this can take a few minutes.' : '';
   document.getElementById('scr-results').innerHTML =
-    `<div class="spinner-wrap"><div class="spinner"></div><p>Screening ${universe==='custom'?'your list':universe.toUpperCase()}… pulling SEC frames + prices</p></div>`;
+    `<div class="spinner-wrap"><div class="spinner"></div><p>Screening ${universe==='custom'?'your list':universe.toUpperCase()}… pulling SEC frames + prices.${slowNote}</p></div>`;
   try{
     const p=new URLSearchParams({universe});
     if(pfcf)  p.set('max_pfcf', pfcf);
     if(evebit)p.set('max_ev_ebit', evebit);
+    if(mincap)p.set('min_mktcap_b', mincap);
+    if(maxcap)p.set('max_mktcap_b', maxcap);
     if(universe==='custom') p.set('tickers', custom);
     const d=await (await fetch('/api/screen?'+p.toString())).json();
     if(d.error){ document.getElementById('scr-results').innerHTML=`<div class="error-box">⚠ ${d.error}</div>`; return; }
@@ -1002,7 +1015,7 @@ function renderScreenTable(stats){
   });
   const arrow=k=> SCREEN_SORT.key===k ? (SCREEN_SORT.dir>0?' ▲':' ▼') : '';
   let h = `<div class="scr-hint" style="margin-bottom:8px">
-    <strong>${st.label||st.universe||''}</strong> · ${st.passed} of ${st.evaluated} evaluated pass${st.missing?` · ${st.missing} skipped (missing data / non-Dec FY)`:''} · FY${st.fiscal_year} · click a row to analyze</div>
+    <strong>${st.label||st.universe||''}</strong> · ${st.passed} passed of ${st.evaluated} companies valued${st.companies&&st.companies!==st.evaluated?` (${st.companies} with financials)`:''} · FY${st.fiscal_year} · click a row to analyze</div>
   <table class="scr-table">
     <thead><tr>
       <th onclick="sortScreen('rank')">#</th>
