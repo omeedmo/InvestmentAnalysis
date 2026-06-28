@@ -1048,10 +1048,18 @@ function renderScreenTable(stats){
 }
 
 function screenLoad(tk){
-  document.getElementById('inp-ticker').value = tk;
-  window.scrollTo(0,0);
-  doAnalyze();
+  // Open the full analysis in a new tab so the screener table is preserved.
+  window.open('/?ticker=' + encodeURIComponent(tk), '_blank');
 }
+
+// Auto-run analysis when the page is opened with ?ticker=XXX (new-tab from screener).
+(function(){
+  const tk = new URLSearchParams(window.location.search).get('ticker');
+  if(tk){
+    document.getElementById('inp-ticker').value = tk.toUpperCase();
+    doAnalyze();
+  }
+})();
 
 // ── Year range toggle ─────────────────────────────────────────────────────────
 function toggleYearRange(){
