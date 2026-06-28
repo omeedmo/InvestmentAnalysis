@@ -159,6 +159,25 @@ th.hidden-col{display:none}
 .sh-bar-wrap{width:100%;height:4px;background:#e2e8f0;border-radius:2px;margin-top:3px}
 .sh-bar{height:100%;background:var(--blue);border-radius:2px}
 
+/* ── Screener ────────────────────────────────────────────────────────── */
+.scr-panel{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:16px 18px;margin-bottom:18px}
+.scr-controls{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end}
+.scr-field{display:flex;flex-direction:column;gap:4px}
+.scr-field label{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+.scr-field select,.scr-field input{padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:var(--card);color:var(--text)}
+.scr-hint{font-size:11px;color:var(--muted);margin-top:10px}
+.scr-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:6px}
+.scr-table th{background:var(--navy);color:#e2e8f0;font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;padding:8px 10px;text-align:right;cursor:pointer;white-space:nowrap;user-select:none}
+.scr-table th:first-child,.scr-table th:nth-child(2){text-align:left}
+.scr-table th:hover{background:#1a2f5a}
+.scr-table td{padding:7px 10px;border-bottom:1px solid var(--border);text-align:right;font-variant-numeric:tabular-nums}
+.scr-table td:first-child,.scr-table td:nth-child(2){text-align:left}
+.scr-table tr.scr-row{cursor:pointer}
+.scr-table tr.scr-row:hover td{background:var(--row-hover)}
+.scr-tk{font-weight:700;color:var(--blue)}
+.scr-rank{color:var(--muted);font-weight:700}
+.scr-good{color:var(--green);font-weight:700}
+
 /* ── Recent Filings ──────────────────────────────────────────────────── */
 .rf-wrap{background:var(--card);border:1px solid var(--border);border-radius:8px;margin-bottom:22px;overflow:hidden}
 .rf-table{width:100%;border-collapse:collapse;font-size:12px}
@@ -250,6 +269,7 @@ th.hidden-col{display:none}
     <input id="inp-dr"      type="number" placeholder="Discount % (e.g. 10)"  value="10" min="1" max="30" step="0.5" style="width:130px">
     <input id="inp-tv"      type="number" placeholder="Terminal Value ($B)"    value=""   min="0" step="1"          style="width:150px">
     <button class="btn" id="btn" onclick="doAnalyze()">Analyze ▸</button>
+    <button class="btn" id="btn-screen" onclick="openScreener()" style="background:#0e7490">Screener ⌕</button>
   </div>
 </div>
 
@@ -899,6 +919,120 @@ async function doAnalyze(){
 }
 
 document.getElementById('inp-ticker').addEventListener('keydown',e=>{if(e.key==='Enter')doAnalyze()});
+
+// ── Screener ──────────────────────────────────────────────────────────────────
+let SCREEN_DATA = [];   // last results, for client-side re-sorting
+let SCREEN_SORT = {key:'p_fcf', dir:1};
+
+async function openScreener(){
+  let universes = [{key:'sp500',label:'S&P 500'},{key:'nasdaq100',label:'NASDAQ-100'},{key:'dow30',label:'Dow 30'}];
+  try{ const u=await (await fetch('/api/universes')).json(); if(u.universes) universes=u.universes; }catch(e){}
+  const opts = universes.map(u=>`<option value="${u.key}">${u.label}</option>`).join('')
+             + `<option value="custom">Custom list…</option>`;
+  document.getElementById('root').innerHTML = `
+    <div class="sec-title-row"><span class="sec-title">Valuation Screener</span></div>
+    <div class="scr-panel">
+      <div class="scr-controls">
+        <div class="scr-field">
+          <label>Universe</label>
+          <select id="scr-universe" onchange="document.getElementById('scr-custom-wrap').style.display=this.value==='custom'?'flex':'none'">${opts}</select>
+        </div>
+        <div class="scr-field" id="scr-custom-wrap" style="display:none">
+          <label>Tickers (comma/space separated)</label>
+          <input id="scr-tickers" type="text" placeholder="AAPL MSFT GOOGL…" style="width:280px;text-transform:uppercase">
+        </div>
+        <div class="scr-field">
+          <label>Max P/FCF</label>
+          <input id="scr-pfcf" type="number" placeholder="e.g. 20" min="0" step="1" style="width:110px">
+        </div>
+        <div class="scr-field">
+          <label>Max EV/EBIT</label>
+          <input id="scr-evebit" type="number" placeholder="e.g. 15" min="0" step="1" style="width:110px">
+        </div>
+        <div class="scr-field">
+          <label>&nbsp;</label>
+          <button class="btn" id="scr-go" onclick="runScreen()">Screen ▸</button>
+        </div>
+      </div>
+      <div class="scr-hint">Ranks cheapest-first by P/FCF. Leave a cutoff blank for no upper bound. Financials &amp; insurers often lack EV/EBIT (no Operating Income tag) — they still rank by P/FCF. First run on a large universe takes ~1 min; repeat runs are cached.</div>
+    </div>
+    <div id="scr-results"></div>`;
+}
+
+async function runScreen(){
+  const universe = document.getElementById('scr-universe').value;
+  const pfcf  = document.getElementById('scr-pfcf').value.trim();
+  const evebit= document.getElementById('scr-evebit').value.trim();
+  const custom= (document.getElementById('scr-tickers')||{}).value || '';
+  const go=document.getElementById('scr-go'); go.disabled=true; go.textContent='Screening…';
+  document.getElementById('scr-results').innerHTML =
+    `<div class="spinner-wrap"><div class="spinner"></div><p>Screening ${universe==='custom'?'your list':universe.toUpperCase()}… pulling SEC frames + prices</p></div>`;
+  try{
+    const p=new URLSearchParams({universe});
+    if(pfcf)  p.set('max_pfcf', pfcf);
+    if(evebit)p.set('max_ev_ebit', evebit);
+    if(universe==='custom') p.set('tickers', custom);
+    const d=await (await fetch('/api/screen?'+p.toString())).json();
+    if(d.error){ document.getElementById('scr-results').innerHTML=`<div class="error-box">⚠ ${d.error}</div>`; return; }
+    SCREEN_DATA = d.results;
+    SCREEN_SORT = {key:'p_fcf', dir:1};
+    renderScreenTable(d.stats);
+  }catch(e){
+    document.getElementById('scr-results').innerHTML=`<div class="error-box">⚠ Network error: ${e.message}</div>`;
+  }finally{ go.disabled=false; go.textContent='Screen ▸'; }
+}
+
+function sortScreen(key){
+  if(SCREEN_SORT.key===key) SCREEN_SORT.dir*=-1;
+  else SCREEN_SORT={key,dir:1};
+  renderScreenTable();
+}
+
+function renderScreenTable(stats){
+  if(stats) renderScreenTable._stats = stats;
+  const st = renderScreenTable._stats || {};
+  const {key,dir} = SCREEN_SORT;
+  const big = 1e15;
+  const rows = [...SCREEN_DATA].sort((a,b)=>{
+    let av=a[key], bv=b[key];
+    if(av==null) av = dir>0? big : -big;
+    if(bv==null) bv = dir>0? big : -big;
+    if(typeof av==='string') return dir*av.localeCompare(bv);
+    return dir*(av-bv);
+  });
+  const arrow=k=> SCREEN_SORT.key===k ? (SCREEN_SORT.dir>0?' ▲':' ▼') : '';
+  let h = `<div class="scr-hint" style="margin-bottom:8px">
+    <strong>${st.label||st.universe||''}</strong> · ${st.passed} of ${st.evaluated} evaluated pass${st.missing?` · ${st.missing} skipped (missing data / non-Dec FY)`:''} · FY${st.fiscal_year} · click a row to analyze</div>
+  <table class="scr-table">
+    <thead><tr>
+      <th onclick="sortScreen('rank')">#</th>
+      <th onclick="sortScreen('ticker')">Ticker${arrow('ticker')}</th>
+      <th onclick="sortScreen('p_fcf')">P/FCF${arrow('p_fcf')}</th>
+      <th onclick="sortScreen('ev_ebit')">EV/EBIT${arrow('ev_ebit')}</th>
+      <th onclick="sortScreen('fcf_yield')">FCF Yield${arrow('fcf_yield')}</th>
+      <th onclick="sortScreen('market_cap')">Mkt Cap${arrow('market_cap')}</th>
+      <th onclick="sortScreen('price')">Price${arrow('price')}</th>
+    </tr></thead><tbody>`;
+  rows.forEach((r,i)=>{
+    h += `<tr class="scr-row" onclick="screenLoad('${r.ticker}')">
+      <td class="scr-rank">${i+1}</td>
+      <td class="scr-tk">${r.ticker}</td>
+      <td>${r.p_fcf!=null?r.p_fcf.toFixed(1)+'×':'—'}</td>
+      <td>${r.ev_ebit!=null?r.ev_ebit.toFixed(1)+'×':'—'}</td>
+      <td class="${r.fcf_yield>0?'scr-good':''}">${r.fcf_yield!=null?F.pct(r.fcf_yield):'—'}</td>
+      <td>${F.$M(r.market_cap)}</td>
+      <td>$${r.price.toFixed(2)}</td>
+    </tr>`;
+  });
+  h+=`</tbody></table>`;
+  document.getElementById('scr-results').innerHTML=h;
+}
+
+function screenLoad(tk){
+  document.getElementById('inp-ticker').value = tk;
+  window.scrollTo(0,0);
+  doAnalyze();
+}
 
 // ── Year range toggle ─────────────────────────────────────────────────────────
 function toggleYearRange(){

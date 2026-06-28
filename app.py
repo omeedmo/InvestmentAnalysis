@@ -17,6 +17,8 @@ import requests
 from bs4 import BeautifulSoup
 from flask import Flask, jsonify, render_template, request
 
+import screener
+
 app = Flask(__name__)
 
 EDGAR_BASE = "https://data.sec.gov"
@@ -2338,6 +2340,56 @@ def index():
     resp.headers["Pragma"] = "no-cache"
     resp.headers["Expires"] = "0"
     return resp
+
+
+@app.route("/api/universes")
+def universes():
+    """Available named universes for the screener dropdown."""
+    return jsonify({"universes": [
+        {"key": k, "label": v} for k, v in screener.UNIVERSE_LABELS.items()
+    ]})
+
+
+@app.route("/api/screen")
+def screen_route():
+    """
+    Valuation screener. Params:
+      universe   — sp500 | nasdaq100 | dow30 | custom
+      tickers    — comma-separated list (used when universe=custom)
+      max_pfcf   — upper P/FCF cutoff (optional)
+      max_ev_ebit— upper EV/EBIT cutoff (optional)
+      fy         — fiscal year to value against (default: most recent complete)
+    """
+    universe = request.args.get("universe", "sp500").lower().strip()
+    fy       = int(request.args.get("fy", 2025))
+
+    def _f(name):
+        v = request.args.get(name, "").strip()
+        try:
+            return float(v) if v else None
+        except ValueError:
+            return None
+    max_pfcf    = _f("max_pfcf")
+    max_ev_ebit = _f("max_ev_ebit")
+
+    if universe == "custom":
+        raw = request.args.get("tickers", "")
+        tickers = [t.strip().upper() for t in re.split(r"[,\s]+", raw) if t.strip()]
+        if not tickers:
+            return jsonify({"error": "Provide tickers for a custom screen"}), 400
+    else:
+        tickers = screener.get_universe(universe)
+        if not tickers:
+            return jsonify({"error": f"Unknown universe '{universe}'"}), 400
+
+    try:
+        result = screener.screen(universe, tickers, max_pfcf, max_ev_ebit, fy)
+    except Exception as e:
+        return jsonify({"error": f"Screen failed: {e}"}), 500
+
+    # Attach company names from the SEC ticker map (cheap, already cached)
+    result["stats"]["label"] = screener.UNIVERSE_LABELS.get(universe, universe.upper())
+    return jsonify(result)
 
 
 @app.route("/api/vic")
