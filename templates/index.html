@@ -961,6 +961,11 @@ async function openScreener(){
           <label>&nbsp;</label>
           <button class="btn" id="scr-go" onclick="runScreen()">Screen ▸</button>
         </div>
+        <div class="scr-field" style="justify-content:flex-end">
+          <label style="display:flex;align-items:center;gap:5px;text-transform:none;font-weight:500;cursor:pointer">
+            <input id="scr-refresh" type="checkbox" style="cursor:pointer"> ↻ Refresh prices (ignore cache)
+          </label>
+        </div>
       </div>
       <div class="scr-hint">Ranks cheapest-first by P/FCF. Leave a cutoff blank for no upper bound. Financials &amp; insurers often lack EV/EBIT (no Operating Income tag) — they still rank by P/FCF. First run on a large universe takes ~1 min; repeat runs are cached.</div>
     </div>
@@ -984,6 +989,7 @@ async function runScreen(){
     if(evebit)p.set('max_ev_ebit', evebit);
     if(mincap)p.set('min_mktcap_b', mincap);
     if(maxcap)p.set('max_mktcap_b', maxcap);
+    if(document.getElementById('scr-refresh').checked) p.set('refresh','1');
     if(universe==='custom') p.set('tickers', custom);
     const d=await (await fetch('/api/screen?'+p.toString())).json();
     if(d.error){ document.getElementById('scr-results').innerHTML=`<div class="error-box">⚠ ${d.error}</div>`; return; }

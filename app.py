@@ -2387,9 +2387,12 @@ def screen_route():
         if not tickers:
             return jsonify({"error": f"Unknown universe '{universe}'"}), 400
 
+    refresh = request.args.get("refresh", "").strip() in ("1", "true", "yes")
+
     try:
         result = screener.screen(universe, tickers, max_pfcf, max_ev_ebit, fy,
-                                 min_mktcap=min_mktcap, max_mktcap=max_mktcap)
+                                 min_mktcap=min_mktcap, max_mktcap=max_mktcap,
+                                 refresh=refresh)
     except Exception as e:
         return jsonify({"error": f"Screen failed: {e}"}), 500
 

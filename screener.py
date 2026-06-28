@@ -184,6 +184,20 @@ def _yahoo_price(ticker: str) -> Optional[float]:
     return None
 
 
+def purge_price_cache() -> int:
+    """Delete all cached price files so the next screen refetches live prices.
+    Returns the number of cache files removed."""
+    removed = 0
+    for fn in os.listdir(CACHE_DIR):
+        if fn.startswith("prices_"):
+            try:
+                os.remove(os.path.join(CACHE_DIR, fn))
+                removed += 1
+            except OSError:
+                pass
+    return removed
+
+
 def get_prices(tickers: list[str]) -> dict[str, float]:
     """Threaded price fetch with a 1-hour disk cache keyed by the universe set."""
     cache_key = "prices_" + str(abs(hash(",".join(sorted(tickers))))) + ".json"
@@ -246,11 +260,15 @@ def _ticker_score(tk: str) -> float:
 def screen(universe: str, tickers: list[str],
            max_pfcf, max_ev_ebit,
            latest_fy: int = 2025,
-           min_mktcap=None, max_mktcap=None) -> dict:
+           min_mktcap=None, max_mktcap=None, refresh: bool = False) -> dict:
     """
     Run the valuation screen. Returns {results: [...], stats: {...}}.
     Any cutoff may be None (no bound). min/max_mktcap are in dollars.
+    refresh=True purges the cached prices first so fresh quotes are fetched.
     """
+    if refresh:
+        purge_price_cache()
+
     annual, instants = _recent_periods(latest_fy)
 
     ocf  = _merge_frames(["NetCashProvidedByUsedInOperatingActivities",
