@@ -32,6 +32,15 @@ from bs4 import BeautifulSoup
 SEC_BASE = "https://data.sec.gov"
 H_SEC = {"User-Agent": "InvestmentAnalysis research@example.com", "Accept": "application/json"}
 H_YH  = {"User-Agent": "Mozilla/5.0"}
+# Wikipedia blocks bare/generic User-Agents (403) from datacenter IPs; its policy
+# requires a descriptive UA with contact info. Used for constituent scraping.
+H_WIKI = {"User-Agent": "InvestmentAnalysisScreener/1.0 "
+                        "(https://github.com/omeedmo/InvestmentAnalysis; omid.mola@gmail.com)"}
+
+# Bundled constituent lists, used as a fallback when Wikipedia is unreachable
+# (e.g. blocked from the hosting provider's IP). Refreshed from Wikipedia when
+# reachable and cached; this file is the floor so the screener always works.
+_FALLBACK_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "universe_fallback.json")
 
 CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".screen_cache")
 os.makedirs(CACHE_DIR, exist_ok=True)
@@ -73,8 +82,17 @@ UNIVERSE_LABELS = {
 }
 
 
+def _load_fallback(key: str) -> list[str]:
+    """Return the bundled constituent list for a universe, or [] if unavailable."""
+    try:
+        with open(_FALLBACK_PATH) as f:
+            return json.load(f).get(key, [])
+    except Exception:
+        return []
+
+
 def _scrape_wiki_tickers(url: str, table_id: str) -> list[str]:
-    r = requests.get(url, headers=H_YH, timeout=20)
+    r = requests.get(url, headers=H_WIKI, timeout=20)
     r.raise_for_status()
     soup = BeautifulSoup(r.text, "html.parser")
     table = soup.find("table", {"id": table_id})
@@ -114,8 +132,21 @@ def get_universe(name: str) -> list[str]:
     if key not in _WIKI:
         return []
     url, table_id = _WIKI[key]
-    return _cached(f"universe_{key}.json", 86400,
-                   lambda: _scrape_wiki_tickers(url, table_id))
+
+    def fetch():
+        # Scrape Wikipedia; if it's blocked/unreachable (common from datacenter
+        # IPs), fall back to the bundled list so the screener still works.
+        try:
+            tickers = _scrape_wiki_tickers(url, table_id)
+            if tickers:
+                return tickers
+        except Exception:
+            pass
+        return _load_fallback(key)
+
+    result = _cached(f"universe_{key}.json", 86400, fetch)
+    # Last-resort guard: never return empty for a known universe.
+    return result or _load_fallback(key)
 
 
 # ─── Ticker → CIK map ─────────────────────────────────────────────────────────
@@ -168,19 +199,29 @@ def _merge_frames(tags: list[str], unit: str, periods: list[str]) -> dict[str, f
 
 # ─── Prices (threaded Yahoo v8) ───────────────────────────────────────────────
 
+# One pooled session shared across worker threads — keep-alive avoids a fresh
+# TLS handshake per request, which is the dominant cost when fetching thousands
+# of quotes. requests.Session is thread-safe for plain GETs.
+_PRICE_SESSION = requests.Session()
+_PRICE_SESSION.headers.update(H_YH)
+_PRICE_ADAPTER = requests.adapters.HTTPAdapter(pool_connections=64, pool_maxsize=64)
+_PRICE_SESSION.mount("https://", _PRICE_ADAPTER)
+
+
 def _yahoo_price(ticker: str) -> Optional[float]:
     sym = ticker.replace(".", "-")
-    for host in ("query1", "query2"):
-        try:
-            r = requests.get(f"https://{host}.finance.yahoo.com/v8/finance/chart/{sym}",
-                             params={"interval": "1d", "range": "1d"},
-                             headers=H_YH, timeout=8)
-            if r.status_code != 200:
-                continue
+    # Single host, short timeout. A hung/slow ticker shouldn't stall a worker —
+    # on a large universe one 8s×2-host straggler per thread multiplied out is
+    # what pushes the whole request past the host's gateway limit.
+    try:
+        r = _PRICE_SESSION.get(
+            f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}",
+            params={"interval": "1d", "range": "1d"}, timeout=5)
+        if r.status_code == 200:
             meta = r.json()["chart"]["result"][0]["meta"]
             return meta.get("regularMarketPrice") or meta.get("chartPreviousClose")
-        except Exception:
-            continue
+    except Exception:
+        pass
     return None
 
 
@@ -210,7 +251,7 @@ def get_prices(tickers: list[str]) -> dict[str, float]:
             pass
     out: dict[str, float] = {}
     # Scale workers up for large universes (total market) to keep wall time down.
-    workers = 24 if len(tickers) > 800 else 12
+    workers = 48 if len(tickers) > 800 else 16
     with ThreadPoolExecutor(max_workers=workers) as ex:
         for tk, px in zip(tickers, ex.map(_yahoo_price, tickers)):
             if px:

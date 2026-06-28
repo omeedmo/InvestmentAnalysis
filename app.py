@@ -2377,19 +2377,19 @@ def screen_route():
     min_mktcap  = _min_b * 1e9 if _min_b is not None else None
     max_mktcap  = _max_b * 1e9 if _max_b is not None else None
 
-    if universe == "custom":
-        raw = request.args.get("tickers", "")
-        tickers = [t.strip().upper() for t in re.split(r"[,\s]+", raw) if t.strip()]
-        if not tickers:
-            return jsonify({"error": "Provide tickers for a custom screen"}), 400
-    else:
-        tickers = screener.get_universe(universe)
-        if not tickers:
-            return jsonify({"error": f"Unknown universe '{universe}'"}), 400
-
     refresh = request.args.get("refresh", "").strip() in ("1", "true", "yes")
 
     try:
+        if universe == "custom":
+            raw = request.args.get("tickers", "")
+            tickers = [t.strip().upper() for t in re.split(r"[,\s]+", raw) if t.strip()]
+            if not tickers:
+                return jsonify({"error": "Provide tickers for a custom screen"}), 400
+        else:
+            tickers = screener.get_universe(universe)
+            if not tickers:
+                return jsonify({"error": f"Unknown universe '{universe}'"}), 400
+
         result = screener.screen(universe, tickers, max_pfcf, max_ev_ebit, fy,
                                  min_mktcap=min_mktcap, max_mktcap=max_mktcap,
                                  refresh=refresh)

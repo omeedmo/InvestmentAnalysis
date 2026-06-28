@@ -995,7 +995,11 @@ async function runScreen(){
     if(maxcap)p.set('max_mktcap_b', maxcap);
     if(document.getElementById('scr-refresh').checked) p.set('refresh','1');
     if(universe==='custom') p.set('tickers', custom);
-    const res=await fetch('/api/screen?'+p.toString());
+    // Abort after 5 min so a dropped connection surfaces as a clear message.
+    const ctrl=new AbortController();
+    const killer=setTimeout(()=>ctrl.abort(), 300000);
+    const res=await fetch('/api/screen?'+p.toString(), {signal:ctrl.signal});
+    clearTimeout(killer);
     let d;
     try{ d=await res.json(); }
     catch(_){ d=null; }
@@ -1011,7 +1015,13 @@ async function runScreen(){
     SCREEN_SORT = {key:'p_fcf', dir:1};
     renderScreenTable(d.stats);
   }catch(e){
-    document.getElementById('scr-results').innerHTML=`<div class="error-box">⚠ Network error: ${e.message}</div>`;
+    // "Load failed" / AbortError = the connection dropped, almost always because
+    // a cold Total US Market run outran the host's gateway timeout.
+    const dropped = e.name==='AbortError' || /load failed|fetch|network/i.test(e.message||'');
+    const msg = dropped
+      ? `The connection dropped before the screen finished${universe==='all'?' — the Total US Market scans thousands of names and can exceed the host\'s request limit on a cold cache':''}. The work keeps running server-side and warms the cache, so press <strong>Screen</strong> again in ~1–2 min and it should return quickly. For an immediate result, use a smaller universe (S&P 500 / Dow 30) or a custom ticker list.`
+      : `Network error: ${e.message}`;
+    document.getElementById('scr-results').innerHTML=`<div class="error-box">⚠ ${msg}</div>`;
   }finally{ go.disabled=false; go.textContent='Screen ▸'; }
 }
 
