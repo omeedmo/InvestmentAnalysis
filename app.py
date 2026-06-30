@@ -983,7 +983,8 @@ METRIC_TAGS: dict[str, list[str]] = {
         "DebtAndFinanceLeaseObligationsNoncurrent",
         "LongTermNotesPayable",                         # ORCL (annual 10-K noncurrent)
         "LongTermNotesAndLoans",                        # ORCL (quarterly 10-Q noncurrent)
-        "LongTermDebt",                                 # last: generic, may be partial (e.g. DPZ ~$14M only)
+        "LongTermDebt",                                 # generic, may be partial (e.g. DPZ ~$14M only)
+        "FinanceLeaseLiabilityNoncurrent",              # last: lease-financed cos (e.g. LIVE post-2022 sale-leasebacks)
     ],
     "current_debt": [
         "LongTermDebtAndCapitalLeaseObligationsCurrent",  # DPZ current portion of securitization
@@ -995,6 +996,7 @@ METRIC_TAGS: dict[str, list[str]] = {
         "LongTermDebtMaturitiesRepaymentsOfPrincipalInNextTwelveMonths",
         "CommercialPaper",
         "ShortTermDebt",
+        "FinanceLeaseLiabilityCurrent",                 # last: lease-financed cos (e.g. LIVE)
     ],
     "goodwill": ["Goodwill"],
     "intangibles": ["FiniteLivedIntangibleAssetsNet", "IntangibleAssetsNetExcludingGoodwill"],
