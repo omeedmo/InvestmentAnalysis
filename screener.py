@@ -19,6 +19,7 @@ Per company we compute:
 Then filter by the user's cutoffs and rank cheapest-first by P/FCF.
 """
 
+import concurrent.futures
 import json
 import os
 import re
@@ -239,8 +240,16 @@ def purge_price_cache() -> int:
     return removed
 
 
-def get_prices(tickers: list[str]) -> dict[str, float]:
-    """Threaded price fetch with a 1-hour disk cache keyed by the universe set."""
+def get_prices(tickers: list[str], deadline_s: float = 150.0) -> dict[str, float]:
+    """
+    Threaded price fetch with a 1-hour disk cache keyed by the universe set.
+
+    A hard wall-clock deadline bounds the total time: if the host's outbound
+    quotes are being throttled (common from datacenter IPs), we return whatever
+    we have rather than running for minutes and getting the gunicorn worker
+    killed (which surfaced as an HTTP 500 on the Total US Market). Names without
+    a price are simply skipped downstream.
+    """
     cache_key = "prices_" + str(abs(hash(",".join(sorted(tickers))))) + ".json"
     path = os.path.join(CACHE_DIR, cache_key)
     if os.path.exists(path) and (time.time() - os.path.getmtime(path)) < 3600:
@@ -253,14 +262,28 @@ def get_prices(tickers: list[str]) -> dict[str, float]:
     # Scale workers up for large universes (total market) to keep wall time down.
     workers = 48 if len(tickers) > 800 else 16
     with ThreadPoolExecutor(max_workers=workers) as ex:
-        for tk, px in zip(tickers, ex.map(_yahoo_price, tickers)):
-            if px:
-                out[tk] = px
-    try:
-        with open(path, "w") as f:
-            json.dump(out, f)
-    except Exception:
-        pass
+        futures = {ex.submit(_yahoo_price, tk): tk for tk in tickers}
+        try:
+            for fut in concurrent.futures.as_completed(futures, timeout=deadline_s):
+                try:
+                    px = fut.result()
+                except Exception:
+                    px = None
+                if px:
+                    out[futures[fut]] = px
+        except concurrent.futures.TimeoutError:
+            pass   # deadline hit — proceed with what completed
+        # Don't wait on stragglers; cancel anything not yet started.
+        for fut in futures:
+            fut.cancel()
+    # Only cache a reasonably complete fetch, so a throttled partial run doesn't
+    # get pinned for an hour — a retry should be free to try again.
+    if tickers and len(out) >= 0.8 * len(tickers):
+        try:
+            with open(path, "w") as f:
+                json.dump(out, f)
+        except Exception:
+            pass
     return out
 
 
