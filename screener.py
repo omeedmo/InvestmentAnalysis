@@ -79,6 +79,7 @@ UNIVERSE_LABELS = {
     "sp500":     "S&P 500",
     "nasdaq100": "NASDAQ-100",
     "dow30":     "Dow 30",
+    "russell2000": "Russell 2000",
     "all":       "Total US Market",
 }
 
@@ -124,12 +125,47 @@ def _scrape_wiki_tickers(url: str, table_id: str) -> list[str]:
     return tickers
 
 
+def _fetch_russell2000() -> list[str]:
+    """Russell 2000 constituents from Vanguard's VTWO ETF holdings (paginated)."""
+    base = ("https://investor.vanguard.com/investment-products/etfs/profile/"
+            "api/VTWO/portfolio-holding/stock")
+    syms: list[str] = []
+    for start in (1, 501, 1001, 1501, 2001):
+        r = requests.get(base, headers={**H_YH, "Accept": "application/json",
+                                        "Referer": "https://investor.vanguard.com/"},
+                         params={"start": start, "count": 500}, timeout=25)
+        if r.status_code != 200:
+            break
+        entity = (r.json().get("fund") or {}).get("entity") or []
+        for h in entity:
+            t = (h.get("ticker") or "").strip().upper()
+            if t and len(t) <= 6 and t.replace(".", "").replace("-", "").isalnum():
+                syms.append(t)
+        if len(entity) < 500:
+            break
+    return sorted(set(syms))
+
+
 def get_universe(name: str) -> list[str]:
     """Return the ticker list for a named universe (cached 24h)."""
     key = name.lower().strip()
     # "Total US Market" = every ticker SEC tracks (operating companies that file XBRL)
     if key in ("all", "total"):
         return sorted(ticker_cik_map().keys())
+
+    # Russell 2000 isn't on Wikipedia; source it from Vanguard's VTWO holdings,
+    # with the bundled list as the fallback when the API is blocked/unreachable.
+    if key == "russell2000":
+        def fetch_r2k():
+            try:
+                t = _fetch_russell2000()
+                if t:
+                    return t
+            except Exception:
+                pass
+            return _load_fallback("russell2000")
+        return _cached("universe_russell2000.json", 86400, fetch_r2k) or _load_fallback("russell2000")
+
     if key not in _WIKI:
         return []
     url, table_id = _WIKI[key]
