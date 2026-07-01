@@ -82,6 +82,7 @@ UNIVERSE_LABELS = {
     "russell1000": "Russell 1000",
     "russell2000": "Russell 2000",
     "nasdaq_all": "NASDAQ (All)",
+    "nyse_all":  "NYSE (All)",
     "all":       "Total US Market",
 }
 
@@ -170,6 +171,27 @@ def _fetch_nasdaq_listed() -> list[str]:
     return sorted(set(syms))
 
 
+def _fetch_nyse_listed() -> list[str]:
+    """All NYSE-listed symbols (exchange 'N') from NASDAQ Trader's otherlisted
+    directory, excl. test issues and ETFs. Non-common securities are collapsed
+    by screen()'s CIK dedup."""
+    r = requests.get("https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt",
+                     headers=H_YH, timeout=25)
+    r.raise_for_status()
+    syms: list[str] = []
+    for line in r.text.splitlines()[1:]:
+        if line.startswith("File Creation"):
+            continue
+        p = line.split("|")
+        # ACT Symbol|Security Name|Exchange|CQS Symbol|ETF|Round Lot|Test Issue|NASDAQ Symbol
+        if len(p) < 8 or p[2] != "N" or p[4] == "Y" or p[6] == "Y":
+            continue
+        s = p[0].strip().upper()
+        if s and len(s) <= 6 and s.replace(".", "").replace("-", "").isalnum():
+            syms.append(s)
+    return sorted(set(syms))
+
+
 def get_universe(name: str) -> list[str]:
     """Return the ticker list for a named universe (cached 24h)."""
     key = name.lower().strip()
@@ -177,17 +199,19 @@ def get_universe(name: str) -> list[str]:
     if key in ("all", "total"):
         return sorted(ticker_cik_map().keys())
 
-    # All NASDAQ-listed names from NASDAQ Trader, bundled fallback if unreachable.
-    if key == "nasdaq_all":
-        def fetch_nq():
+    # Exchange listings from NASDAQ Trader directories, bundled fallback if unreachable.
+    _exchange_fetchers = {"nasdaq_all": _fetch_nasdaq_listed, "nyse_all": _fetch_nyse_listed}
+    if key in _exchange_fetchers:
+        fn = _exchange_fetchers[key]
+        def fetch_ex():
             try:
-                t = _fetch_nasdaq_listed()
+                t = fn()
                 if t:
                     return t
             except Exception:
                 pass
-            return _load_fallback("nasdaq_all")
-        return _cached("universe_nasdaq_all.json", 86400, fetch_nq) or _load_fallback("nasdaq_all")
+            return _load_fallback(key)
+        return _cached(f"universe_{key}.json", 86400, fetch_ex) or _load_fallback(key)
 
     # Russell indices aren't on Wikipedia; source them from Vanguard ETF holdings,
     # with the bundled list as the fallback when the API is blocked/unreachable.
