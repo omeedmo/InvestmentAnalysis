@@ -3548,8 +3548,15 @@ def analyze():
     # or presence of real estate asset / straight-line rent XBRL data.
     # Note: we do NOT use ffo presence to detect REITs because FFO is derived
     # and would produce false positives for non-REITs with D&A and NI.
-    is_reit = (_sic in {"6798", "6500", "6512", "6552"} or
-               bool(financials.get("real_estate_assets") or financials.get("straight_line_rent")))
+    # REIT detection: a real-estate SIC is definitive; otherwise the real-estate
+    # data signals (RealEstateInvestmentPropertyNet / straight-line rent) only count
+    # for companies that aren't insurers/banks/BDCs — those hold real estate as
+    # investments (e.g. MetLife, a life insurer) without being REITs.
+    is_reit = (
+        _sic in {"6798", "6500", "6512", "6552"} or
+        (not is_insurance and not is_bank and not is_bdc and
+         bool(financials.get("real_estate_assets") or financials.get("straight_line_rent")))
+    )
 
     company_name = submissions.get("name", ticker)
 
