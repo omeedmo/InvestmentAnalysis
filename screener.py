@@ -81,6 +81,7 @@ UNIVERSE_LABELS = {
     "dow30":     "Dow 30",
     "russell1000": "Russell 1000",
     "russell2000": "Russell 2000",
+    "nasdaq_all": "NASDAQ (All)",
     "all":       "Total US Market",
 }
 
@@ -150,12 +151,43 @@ def _fetch_vanguard_holdings(etf: str) -> list[str]:
     return sorted(set(syms))
 
 
+def _fetch_nasdaq_listed() -> list[str]:
+    """All NASDAQ-listed symbols from NASDAQ Trader's directory (excl. test issues
+    and ETFs). Warrants/units/rights are left in; screen() dedupes them by CIK."""
+    r = requests.get("https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt",
+                     headers=H_YH, timeout=25)
+    r.raise_for_status()
+    syms: list[str] = []
+    for line in r.text.splitlines()[1:]:
+        if line.startswith("File Creation"):
+            continue
+        p = line.split("|")
+        if len(p) < 8 or p[3] == "Y" or p[6] == "Y":   # test issue or ETF
+            continue
+        s = p[0].strip().upper()
+        if s and len(s) <= 6 and s.replace(".", "").replace("-", "").isalnum():
+            syms.append(s)
+    return sorted(set(syms))
+
+
 def get_universe(name: str) -> list[str]:
     """Return the ticker list for a named universe (cached 24h)."""
     key = name.lower().strip()
     # "Total US Market" = every ticker SEC tracks (operating companies that file XBRL)
     if key in ("all", "total"):
         return sorted(ticker_cik_map().keys())
+
+    # All NASDAQ-listed names from NASDAQ Trader, bundled fallback if unreachable.
+    if key == "nasdaq_all":
+        def fetch_nq():
+            try:
+                t = _fetch_nasdaq_listed()
+                if t:
+                    return t
+            except Exception:
+                pass
+            return _load_fallback("nasdaq_all")
+        return _cached("universe_nasdaq_all.json", 86400, fetch_nq) or _load_fallback("nasdaq_all")
 
     # Russell indices aren't on Wikipedia; source them from Vanguard ETF holdings,
     # with the bundled list as the fallback when the API is blocked/unreachable.
