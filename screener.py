@@ -79,9 +79,13 @@ UNIVERSE_LABELS = {
     "sp500":     "S&P 500",
     "nasdaq100": "NASDAQ-100",
     "dow30":     "Dow 30",
+    "russell1000": "Russell 1000",
     "russell2000": "Russell 2000",
     "all":       "Total US Market",
 }
+
+# Russell indices aren't on Wikipedia; sourced from Vanguard ETF holdings.
+_VANGUARD_ETF = {"russell1000": "VONE", "russell2000": "VTWO"}
 
 
 def _load_fallback(key: str) -> list[str]:
@@ -125,12 +129,12 @@ def _scrape_wiki_tickers(url: str, table_id: str) -> list[str]:
     return tickers
 
 
-def _fetch_russell2000() -> list[str]:
-    """Russell 2000 constituents from Vanguard's VTWO ETF holdings (paginated)."""
+def _fetch_vanguard_holdings(etf: str) -> list[str]:
+    """Constituent tickers from a Vanguard ETF's holdings API (paginated)."""
     base = ("https://investor.vanguard.com/investment-products/etfs/profile/"
-            "api/VTWO/portfolio-holding/stock")
+            f"api/{etf}/portfolio-holding/stock")
     syms: list[str] = []
-    for start in (1, 501, 1001, 1501, 2001):
+    for start in range(1, 2502, 500):   # up to ~2500 holdings (covers R2000)
         r = requests.get(base, headers={**H_YH, "Accept": "application/json",
                                         "Referer": "https://investor.vanguard.com/"},
                          params={"start": start, "count": 500}, timeout=25)
@@ -153,18 +157,19 @@ def get_universe(name: str) -> list[str]:
     if key in ("all", "total"):
         return sorted(ticker_cik_map().keys())
 
-    # Russell 2000 isn't on Wikipedia; source it from Vanguard's VTWO holdings,
+    # Russell indices aren't on Wikipedia; source them from Vanguard ETF holdings,
     # with the bundled list as the fallback when the API is blocked/unreachable.
-    if key == "russell2000":
-        def fetch_r2k():
+    if key in _VANGUARD_ETF:
+        etf = _VANGUARD_ETF[key]
+        def fetch_vg():
             try:
-                t = _fetch_russell2000()
+                t = _fetch_vanguard_holdings(etf)
                 if t:
                     return t
             except Exception:
                 pass
-            return _load_fallback("russell2000")
-        return _cached("universe_russell2000.json", 86400, fetch_r2k) or _load_fallback("russell2000")
+            return _load_fallback(key)
+        return _cached(f"universe_{key}.json", 86400, fetch_vg) or _load_fallback(key)
 
     if key not in _WIKI:
         return []
