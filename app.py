@@ -963,6 +963,13 @@ METRIC_TAGS: dict[str, list[str]] = {
     "equity": [
         "StockholdersEquity",
         "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
+        # Limited partnerships / MLPs report partners' capital, not stockholders'
+        # equity (e.g. PAGP – Plains GP Holdings LP). Plain (parent) tag first,
+        # then the including-NCI total, then LLC members' equity.
+        "PartnersCapital",
+        "PartnersCapitalIncludingPortionAttributableToNoncontrollingInterest",
+        "MembersEquity",
+        "MembersEquityIncludingPortionAttributableToNoncontrollingInterest",
     ],
     "cash": [
         "CashAndCashEquivalentsAtCarryingValue",
