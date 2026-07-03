@@ -81,6 +81,7 @@ UNIVERSE_LABELS = {
     "dow30":     "Dow 30",
     "russell1000": "Russell 1000",
     "russell2000": "Russell 2000",
+    "fortune500": "Fortune 500",
     "nasdaq_all": "NASDAQ (All)",
     "nyse_all":  "NYSE (All)",
     "all":       "Total US Market",
@@ -192,12 +193,59 @@ def _fetch_nyse_listed() -> list[str]:
     return sorted(set(syms))
 
 
+def _fetch_fortune500() -> list[str]:
+    """
+    The 500 largest SEC-filing US companies by most-recent annual revenue — the
+    screenable (public-company) equivalent of the Fortune 500, which is ranked by
+    revenue. Derived from SEC revenue frames, so it self-maintains and needs no
+    scraping. (The true Fortune 500 also includes private companies, which can't
+    be screened, and uses Fortune's own fiscal-year methodology, so ordering near
+    the margins differs slightly.)
+    """
+    rev: dict[str, float] = {}
+    for tag in ("Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax",
+                "SalesRevenueNet"):
+        for period in ("CY2025", "CY2024"):
+            for cik, val in _frame(tag, "USD", period).items():
+                if val and (cik not in rev or val > rev[cik]):
+                    rev[cik] = val
+    # Best common ticker per CIK (drop preferred/warrants, prefer the primary).
+    by_cik: dict[str, str] = {}
+    for tk, cik in ticker_cik_map().items():
+        if _is_non_common(tk):
+            continue
+        c = str(cik)
+        cur = by_cik.get(c)
+        if cur is None or _ticker_score(tk) < _ticker_score(cur):
+            by_cik[c] = tk
+    out: list[str] = []
+    for cik, _ in sorted(rev.items(), key=lambda kv: -kv[1]):
+        tk = by_cik.get(cik)
+        if tk:
+            out.append(tk)
+        if len(out) >= 500:
+            break
+    return out
+
+
 def get_universe(name: str) -> list[str]:
     """Return the ticker list for a named universe (cached 24h)."""
     key = name.lower().strip()
     # "Total US Market" = every ticker SEC tracks (operating companies that file XBRL)
     if key in ("all", "total"):
         return sorted(ticker_cik_map().keys())
+
+    # Fortune 500 ≈ 500 largest SEC filers by revenue (derived; bundled fallback).
+    if key == "fortune500":
+        def fetch_f500():
+            try:
+                t = _fetch_fortune500()
+                if t:
+                    return t
+            except Exception:
+                pass
+            return _load_fallback("fortune500")
+        return _cached("universe_fortune500.json", 86400, fetch_f500) or _load_fallback("fortune500")
 
     # Exchange listings from NASDAQ Trader directories, bundled fallback if unreachable.
     _exchange_fetchers = {"nasdaq_all": _fetch_nasdaq_listed, "nyse_all": _fetch_nyse_listed}
