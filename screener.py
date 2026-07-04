@@ -445,6 +445,75 @@ def _recent_periods(latest_fy: int):
     return annual, instants
 
 
+# ─── Sector CIK sets (for exclusion filters) ──────────────────────────────────
+# These let the screener drop insurers / banks / REITs before the price fetch —
+# sectors where P/FCF and EV/EBIT are misleading (FFO, float, net interest, etc.).
+
+def _sic_ciks(sic: str) -> list[str]:
+    """All CIKs with a given SIC code, via EDGAR's browse-edgar company list."""
+    ciks: set = set()
+    start = 0
+    for _ in range(25):   # up to 2500 companies per SIC
+        r = requests.get("https://www.sec.gov/cgi-bin/browse-edgar", headers=H_SEC,
+                         params={"action": "getcompany", "SIC": sic, "type": "10-K",
+                                 "count": 100, "start": start, "output": "atom"}, timeout=25)
+        if r.status_code != 200:
+            break
+        found = re.findall(r"<cik>(\d+)</cik>", r.text)
+        if not found:
+            break
+        ciks |= {c.lstrip("0") for c in found}
+        start += 100
+        if len(found) < 100:
+            break
+    return sorted(ciks)
+
+
+def _frame_ciks(tag: str) -> list[str]:
+    """CIKs that report a given us-gaap concept in any recent annual period."""
+    s: set = set()
+    for period in ("CY2023", "CY2024", "CY2025"):
+        s |= set(_frame(tag, "USD", period).keys())
+    return sorted(s)
+
+
+def reit_ciks() -> set:
+    """REIT CIKs — real-estate SIC codes (matches the analyze REIT detection).
+    Cached 7 days; bundled fallback if browse-edgar is blocked (e.g. on Railway)."""
+    def fetch():
+        out: set = set()
+        for sic in ("6798", "6500", "6512", "6552"):
+            out |= set(_sic_ciks(sic))
+        return sorted(out) if out else _load_sector_fallback("reit")
+    return set(_cached("sector_reit_ciks.json", 7 * 86400, fetch) or _load_sector_fallback("reit"))
+
+
+def insurance_ciks() -> set:
+    """Insurer CIKs — companies reporting net premiums earned (cached 7 days)."""
+    def fetch():
+        return _frame_ciks("PremiumsEarnedNet") or _load_sector_fallback("insurance")
+    return set(_cached("sector_insurance_ciks.json", 7 * 86400, fetch) or _load_sector_fallback("insurance"))
+
+
+def bank_ciks() -> set:
+    """Bank CIKs — companies reporting non-interest expense (cached 7 days)."""
+    def fetch():
+        return _frame_ciks("NoninterestExpense") or _load_sector_fallback("bank")
+    return set(_cached("sector_bank_ciks.json", 7 * 86400, fetch) or _load_sector_fallback("bank"))
+
+
+_SECTOR_FALLBACK_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                     "sector_fallback.json")
+
+
+def _load_sector_fallback(sector: str) -> list:
+    try:
+        with open(_SECTOR_FALLBACK_PATH) as f:
+            return json.load(f).get(sector, [])
+    except Exception:
+        return []
+
+
 def _is_non_common(tk: str) -> bool:
     """Heuristic: True for preferred shares, warrants, rights, and units —
     securities that share a common stock's CIK but trade at their own price."""
@@ -469,11 +538,15 @@ def _ticker_score(tk: str) -> float:
 def screen(universe: str, tickers: list[str],
            max_pfcf, max_ev_ebit,
            latest_fy: int = 2025,
-           min_mktcap=None, max_mktcap=None, refresh: bool = False) -> dict:
+           min_mktcap=None, max_mktcap=None, refresh: bool = False,
+           remove_insurance: bool = True, remove_banks: bool = True,
+           remove_reits: bool = True) -> dict:
     """
     Run the valuation screen. Returns {results: [...], stats: {...}}.
     Any cutoff may be None (no bound). min/max_mktcap are in dollars.
     refresh=True purges the cached prices first so fresh quotes are fetched.
+    remove_insurance/banks/reits drop those sectors before the price fetch
+    (P/FCF and EV/EBIT are misleading for them).
     """
     if refresh:
         purge_price_cache()
@@ -523,6 +596,22 @@ def screen(universe: str, tickers: list[str],
         cur = best_per_cik.get(c)
         if cur is None or _ticker_score(tk) < _ticker_score(cur):
             best_per_cik[c] = tk
+
+    # Drop excluded sectors BEFORE pricing (insurers/banks/REITs — P/FCF & EV/EBIT
+    # don't describe them). Building the sector sets is a handful of cached calls.
+    excluded_ciks: set = set()
+    if remove_insurance:
+        excluded_ciks |= insurance_ciks()
+    if remove_banks:
+        excluded_ciks |= bank_ciks()
+    if remove_reits:
+        excluded_ciks |= reit_ciks()
+    removed_sectors = 0
+    if excluded_ciks:
+        kept = {c: tk for c, tk in best_per_cik.items() if c not in excluded_ciks}
+        removed_sectors = len(best_per_cik) - len(kept)
+        best_per_cik = kept
+
     candidates = sorted(best_per_cik.values())
 
     prices = get_prices(candidates)
@@ -590,6 +679,7 @@ def screen(universe: str, tickers: list[str],
             "evaluated":  len(results),
             "passed":     len(filtered),
             "missing":    no_price,
+            "excluded_sectors": removed_sectors,
             "fiscal_year": latest_fy,
         },
     }

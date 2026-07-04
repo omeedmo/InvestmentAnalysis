@@ -2388,6 +2388,13 @@ def screen_route():
 
     refresh = request.args.get("refresh", "").strip() in ("1", "true", "yes")
 
+    # Sector exclusions default to ON; pass "0"/"false" to include a sector.
+    def _flag(name):
+        return request.args.get(name, "1").strip() not in ("0", "false", "no")
+    remove_insurance = _flag("remove_insurance")
+    remove_banks     = _flag("remove_banks")
+    remove_reits     = _flag("remove_reits")
+
     try:
         if universe == "custom":
             raw = request.args.get("tickers", "")
@@ -2401,7 +2408,10 @@ def screen_route():
 
         result = screener.screen(universe, tickers, max_pfcf, max_ev_ebit, fy,
                                  min_mktcap=min_mktcap, max_mktcap=max_mktcap,
-                                 refresh=refresh)
+                                 refresh=refresh,
+                                 remove_insurance=remove_insurance,
+                                 remove_banks=remove_banks,
+                                 remove_reits=remove_reits)
     except Exception as e:
         return jsonify({"error": f"Screen failed: {e}"}), 500
 

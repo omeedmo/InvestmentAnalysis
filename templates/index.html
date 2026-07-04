@@ -971,6 +971,15 @@ async function openScreener(){
           </label>
         </div>
       </div>
+      <div class="scr-controls" style="margin-top:10px;gap:18px">
+        <span style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Exclude sectors (P/FCF &amp; EV/EBIT don't apply):</span>
+        <label style="display:flex;align-items:center;gap:5px;font-size:13px;cursor:pointer">
+          <input id="scr-rm-insurance" type="checkbox" checked style="cursor:pointer"> Remove Insurance</label>
+        <label style="display:flex;align-items:center;gap:5px;font-size:13px;cursor:pointer">
+          <input id="scr-rm-banks" type="checkbox" checked style="cursor:pointer"> Remove Banks</label>
+        <label style="display:flex;align-items:center;gap:5px;font-size:13px;cursor:pointer">
+          <input id="scr-rm-reits" type="checkbox" checked style="cursor:pointer"> Remove REITs</label>
+      </div>
       <div class="scr-hint">Ranks cheapest-first by P/FCF. Leave a cutoff blank for no upper bound. Financials &amp; insurers often lack EV/EBIT (no Operating Income tag) — they still rank by P/FCF. First run on a large universe takes ~1 min; repeat runs are cached.</div>
     </div>
     <div id="scr-results"></div>`;
@@ -994,6 +1003,10 @@ async function runScreen(){
     if(mincap)p.set('min_mktcap_b', mincap);
     if(maxcap)p.set('max_mktcap_b', maxcap);
     if(document.getElementById('scr-refresh').checked) p.set('refresh','1');
+    // Sector exclusions default ON; only send '0' when unchecked.
+    if(!document.getElementById('scr-rm-insurance').checked) p.set('remove_insurance','0');
+    if(!document.getElementById('scr-rm-banks').checked)     p.set('remove_banks','0');
+    if(!document.getElementById('scr-rm-reits').checked)     p.set('remove_reits','0');
     if(universe==='custom') p.set('tickers', custom);
     // Abort after 5 min so a dropped connection surfaces as a clear message.
     const ctrl=new AbortController();
@@ -1045,7 +1058,7 @@ function renderScreenTable(stats){
   });
   const arrow=k=> SCREEN_SORT.key===k ? (SCREEN_SORT.dir>0?' ▲':' ▼') : '';
   let h = `<div class="scr-hint" style="margin-bottom:8px">
-    <strong>${st.label||st.universe||''}</strong> · ${st.passed} passed of ${st.evaluated} companies valued${st.companies&&st.companies!==st.evaluated?` (${st.companies} with financials)`:''} · FY${st.fiscal_year} · click a row to analyze</div>
+    <strong>${st.label||st.universe||''}</strong> · ${st.passed} passed of ${st.evaluated} companies valued${st.excluded_sectors?` · ${st.excluded_sectors} insurers/banks/REITs excluded`:''} · FY${st.fiscal_year} · click a row to analyze</div>
   <table class="scr-table">
     <thead><tr>
       <th onclick="sortScreen('rank')">#</th>
