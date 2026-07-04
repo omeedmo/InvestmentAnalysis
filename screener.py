@@ -81,6 +81,7 @@ UNIVERSE_LABELS = {
     "dow30":     "Dow 30",
     "russell1000": "Russell 1000",
     "russell2000": "Russell 2000",
+    "russell3000": "Russell 3000",
     "fortune500": "Fortune 500",
     "nasdaq_all": "NASDAQ (All)",
     "nyse_all":  "NYSE (All)",
@@ -234,6 +235,10 @@ def get_universe(name: str) -> list[str]:
     # "Total US Market" = every ticker SEC tracks (operating companies that file XBRL)
     if key in ("all", "total"):
         return sorted(ticker_cik_map().keys())
+
+    # Russell 3000 = Russell 1000 (large/mid) + Russell 2000 (small), by definition.
+    if key == "russell3000":
+        return sorted(set(get_universe("russell1000")) | set(get_universe("russell2000")))
 
     # Fortune 500 ≈ 500 largest SEC filers by revenue (derived; bundled fallback).
     if key == "fortune500":
