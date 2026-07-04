@@ -932,6 +932,7 @@ METRIC_TAGS: dict[str, list[str]] = {
         "PaymentsToAcquireOtherPropertyPlantAndEquipment",
         "PaymentsToAcquireMachineryAndEquipment",       # Seadrill (SDRL) and similar
         "PaymentsToAcquireOilAndGasPropertyAndEquipment",
+        "PaymentsToExploreAndDevelopOilAndGasProperties",  # E&P drilling capex (CHRD, APA, and similar)
         "PaymentsToAcquirePropertyPlantEquipmentAndIntangibleAssets",
         "SegmentExpenditureAdditionToLongLivedAssets",
         "PaymentsForCapitalImprovements",               # Noble Corporation (NE) and similar
