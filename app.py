@@ -414,6 +414,22 @@ def get_insider_purchases(submissions: dict, months: int = 12,
     from datetime import timedelta
     horizon = (datetime.now() - timedelta(days=months * 31)).strftime("%Y-%m-%d")
     purchases = [p for p in purchases if p["date"] >= horizon]
+
+    # Combine one insider's multiple lots on the same day into a single entry
+    # (Form 4s often split a day's buying across several price lines). Shares and
+    # value are summed; price is the volume-weighted average.
+    grouped: dict[tuple, dict] = {}
+    for p in purchases:
+        key = (p["owner"], p["date"])
+        g = grouped.get(key)
+        if g is None:
+            grouped[key] = dict(p)
+        else:
+            g["shares"] += p["shares"]
+            g["value"]  += p["value"]
+    purchases = list(grouped.values())
+    for g in purchases:
+        g["price"] = (g["value"] / g["shares"]) if g["shares"] else 0.0
     purchases.sort(key=lambda p: p["date"], reverse=True)
 
     # Per-year trend: total value, shares, transaction count, unique buyers.
