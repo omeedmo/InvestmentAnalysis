@@ -883,7 +883,7 @@ function renderInsiderBuys(ib, ticker){
   for(const p of buys){
     h += `<tr>
       <td>${p.date}</td>
-      <td style="font-weight:600">${p.owner||'—'}</td>
+      <td style="font-weight:600">${p.owner||'—'}${p.security && !/^common stock$/i.test(p.security) ? ` <span style="font-weight:400;color:var(--muted);font-size:11px">· ${p.security}</span>` : ''}</td>
       <td style="color:var(--muted)">${p.title||'—'}</td>
       <td>${Math.round(p.shares).toLocaleString()}</td>
       <td>$${p.price.toFixed(2)}</td>

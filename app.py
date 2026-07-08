@@ -335,6 +335,14 @@ def _parse_form4_purchases(cik_no_zero: str, accession_no_dash: str,
         x = el.find(path)
         return x.text if x is not None else None
 
+    # Only count filings where THIS company is the issuer. An entity that also
+    # invests (e.g. Berkshire) files Form 4s as the reporting owner of OTHER
+    # companies; those appear in its submissions feed but are purchases of other
+    # stocks, not of this company — skip them.
+    issuer_cik = _t(root, ".//issuer/issuerCik")
+    if issuer_cik and issuer_cik.lstrip("0") != str(cik_no_zero).lstrip("0"):
+        return []
+
     owner = _t(root, ".//reportingOwner/reportingOwnerId/rptOwnerName") or ""
     rel   = root.find(".//reportingOwner/reportingOwnerRelationship")
     title = ""
@@ -347,7 +355,12 @@ def _parse_form4_purchases(cik_no_zero: str, accession_no_dash: str,
             title = "10% Owner"
 
     out = []
-    for tx in root.findall(".//nonDerivativeTransaction"):
+    # Parse both non-derivative and derivative code-P purchases. Some issuers file
+    # convertible common (e.g. Berkshire Class A, convertible to Class B) as a
+    # DERIVATIVE security, so an open-market buy like Greg Abel's shows up only in
+    # <derivativeTransaction>. Both are own-money purchases when the code is 'P'.
+    for tx in (root.findall(".//nonDerivativeTransaction")
+               + root.findall(".//derivativeTransaction")):
         if _t(tx, "transactionCoding/transactionCode") != "P":
             continue
         try:
@@ -364,6 +377,7 @@ def _parse_form4_purchases(cik_no_zero: str, accession_no_dash: str,
             "shares": shares,
             "price":  price,
             "value":  shares * price,
+            "security": _t(tx, "securityTitle/value") or "Common Stock",
             "url":    view_url,
         })
     return out
@@ -420,7 +434,7 @@ def get_insider_purchases(submissions: dict, months: int = 12,
     # value are summed; price is the volume-weighted average.
     grouped: dict[tuple, dict] = {}
     for p in purchases:
-        key = (p["owner"], p["date"])
+        key = (p["owner"], p["date"], p.get("security", ""))
         g = grouped.get(key)
         if g is None:
             grouped[key] = dict(p)
