@@ -885,7 +885,7 @@ function renderInsiderBuys(ib, ticker){
       <td>${p.date}</td>
       <td style="font-weight:600">${p.owner||'—'}</td>
       <td style="color:var(--muted)">${p.title||'—'}</td>
-      <td>${F.sh(p.shares)}</td>
+      <td>${Math.round(p.shares).toLocaleString()}</td>
       <td>$${p.price.toFixed(2)}</td>
       <td class="g" style="color:var(--green);font-weight:600">${F.$M(p.value)}</td>
       <td><a class="rf-link" href="${p.url}" target="_blank" rel="noreferrer">View ↗</a></td>

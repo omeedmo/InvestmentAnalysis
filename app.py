@@ -8,6 +8,7 @@ import json
 import math
 import os
 import re
+import time
 import xml.etree.ElementTree as ET
 
 from collections import Counter
@@ -325,10 +326,10 @@ def _parse_form4_purchases(cik_no_zero: str, accession_no_dash: str,
     try:
         r = requests.get(xml_url, headers=HEADERS, timeout=15)
         if r.status_code != 200:
-            return []
+            return None   # fetch failed (e.g. 429) — signal so we don't cache empties
         root = ET.fromstring(r.text)
     except Exception:
-        return []
+        return None
 
     def _t(el, path):
         x = el.find(path)
@@ -399,11 +400,15 @@ def get_insider_purchases(submissions: dict, months: int = 12,
             break
 
     purchases: list[dict] = []
+    failures = 0
     if jobs:
         # Keep concurrency modest — SEC rate-limits at ~10 requests/second.
         with ThreadPoolExecutor(max_workers=4) as ex:
             for res in ex.map(lambda j: _parse_form4_purchases(cik_no_zero, *j), jobs):
-                purchases.extend(res)
+                if res is None:
+                    failures += 1      # a Form 4 fetch failed (rate limit / network)
+                else:
+                    purchases.extend(res)
 
     # Keep only purchases within the exact month window.
     from datetime import timedelta
@@ -430,6 +435,9 @@ def get_insider_purchases(submissions: dict, months: int = 12,
         "total_value": round(sum(p["value"] for p in purchases)),
         "total_count": len(purchases),
         "months": months,
+        # True only if every Form 4 was fetched successfully — the caller uses
+        # this to avoid caching a rate-limited/partial (falsely empty) result.
+        "complete": failures == 0,
     }
 
 
@@ -3728,13 +3736,21 @@ def analyze():
 
     # ── Insider open-market purchases (Form 4, code P) ────────────────────────
     # Cached 6h per CIK — parsing Form 4 XMLs is many SEC calls; don't repeat
-    # them on every analyze (and stay under SEC's rate limit).
+    # them on every analyze. Only cache a COMPLETE fetch, so a rate-limited run
+    # (which returns falsely-empty results) isn't pinned for 6 hours.
+    insider_buys = {"purchases": [], "trend": {}, "total_value": 0, "total_count": 0}
+    _ib_cache = os.path.join(screener.CACHE_DIR, f"insider_{cik}.json")
     try:
-        insider_buys = screener._cached(
-            f"insider_{cik}.json", 21600,
-            lambda: get_insider_purchases(submissions))
+        if os.path.exists(_ib_cache) and (time.time() - os.path.getmtime(_ib_cache)) < 21600:
+            with open(_ib_cache) as _f:
+                insider_buys = json.load(_f)
+        else:
+            insider_buys = get_insider_purchases(submissions)
+            if insider_buys.get("complete"):
+                with open(_ib_cache, "w") as _f:
+                    json.dump(insider_buys, _f)
     except Exception:
-        insider_buys = {"purchases": [], "trend": {}, "total_value": 0, "total_count": 0}
+        pass
 
     # ── Recent SEC filings (last 10, all form types) ──────────────────────────
     _recent_f   = submissions.get("filings", {}).get("recent", {})
