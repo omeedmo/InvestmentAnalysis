@@ -368,7 +368,7 @@ def _parse_form4_purchases(cik_no_zero: str, accession_no_dash: str,
     return out
 
 
-def get_insider_purchases(submissions: dict, months: int = 36,
+def get_insider_purchases(submissions: dict, months: int = 12,
                           max_filings: int = 120) -> dict:
     """
     Collect insider open-market purchases (Form 4, code 'P') over the last

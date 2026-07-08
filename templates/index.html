@@ -846,16 +846,18 @@ function renderEarningsMaterials(materials, qDates, ticker, irUrl){
 // ── Insider Open-Market Purchases (Form 4, code P) ─────────────────────────────
 function renderInsiderBuys(ib, ticker){
   const buys = ib.purchases || [];
-  const months = ib.months || 36;
+  const months = ib.months || 12;
+  const per = months<=12 ? `${months}m` : `${Math.round(months/12)}y`;
+  const perWords = months<=12 ? `${months} months` : `${Math.round(months/12)} years`;
   let h = `<div class="sec-title-row"><span class="sec-title">Insider Open-Market Purchases — ${ticker}</span>
-    <span style="font-size:11px;color:var(--muted)">Form 4 · code P · own-money buys · last ${Math.round(months/12)}y</span></div>
+    <span style="font-size:11px;color:var(--muted)">Form 4 · code P · own-money buys · last ${per}</span></div>
   <div class="ib-wrap">`;
   if(!buys.length){
-    h += `<div class="ib-none">No open-market insider purchases (Form 4 code P) in the last ${Math.round(months/12)} years. Insiders may still have received grants or exercised options — those aren't purchases with their own money.</div></div>`;
+    h += `<div class="ib-none">No open-market insider purchases (Form 4 code P) in the last ${perWords}. Insiders may still have received grants or exercised options — those aren't purchases with their own money.</div></div>`;
     return h;
   }
   h += `<div class="ib-summary">
-    <div class="ib-stat"><div class="ib-sl">Total Bought (${Math.round(months/12)}y)</div><div class="ib-sv g">${F.$M(ib.total_value)}</div></div>
+    <div class="ib-stat"><div class="ib-sl">Total Bought (${per})</div><div class="ib-sv g">${F.$M(ib.total_value)}</div></div>
     <div class="ib-stat"><div class="ib-sl">Purchases</div><div class="ib-sv">${ib.total_count}</div></div>
   </div>`;
   // Per-year trend bars (scaled to the largest year)
