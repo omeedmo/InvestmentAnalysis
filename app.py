@@ -8,8 +8,10 @@ import json
 import math
 import os
 import re
+import xml.etree.ElementTree as ET
 
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Optional
 
@@ -301,6 +303,134 @@ def filing_info_from_submissions(submissions: dict, forms: set[str]) -> Optional
     """Return the single most-recent matching filing."""
     hits = all_filing_infos_from_submissions(submissions, forms, max_count=1)
     return hits[0] if hits else None
+
+
+def _parse_form4_purchases(cik_no_zero: str, accession_no_dash: str,
+                           primary_doc: str, filing_date: str) -> list[dict]:
+    """
+    Fetch and parse one Form 4 XML, returning only open-market PURCHASES
+    (non-derivative transaction code 'P' = bought with the insider's own money).
+    Each purchase: owner, title, date, shares, price, value, and Form 4 URL.
+    """
+    # primaryDocument is the XSL-rendered path (e.g. "xslF345X06/wk-form4_*.xml");
+    # the raw XML is the same filename without that prefix.
+    raw_doc = primary_doc.split("/")[-1]
+    if not raw_doc.lower().endswith(".xml"):
+        return []
+    xml_url = SEC_ARCHIVES.format(cik_no_zero=cik_no_zero,
+                                  accession_no_dash=accession_no_dash, document=raw_doc)
+    # Human-readable rendered Form 4 (nice link for the user)
+    view_url = SEC_ARCHIVES.format(cik_no_zero=cik_no_zero,
+                                   accession_no_dash=accession_no_dash, document=primary_doc)
+    try:
+        r = requests.get(xml_url, headers=HEADERS, timeout=15)
+        if r.status_code != 200:
+            return []
+        root = ET.fromstring(r.text)
+    except Exception:
+        return []
+
+    def _t(el, path):
+        x = el.find(path)
+        return x.text if x is not None else None
+
+    owner = _t(root, ".//reportingOwner/reportingOwnerId/rptOwnerName") or ""
+    rel   = root.find(".//reportingOwner/reportingOwnerRelationship")
+    title = ""
+    if rel is not None:
+        if (_t(rel, "isDirector") or "") in ("1", "true"):
+            title = "Director"
+        if (_t(rel, "isOfficer") or "") in ("1", "true"):
+            title = _t(rel, "officerTitle") or "Officer"
+        if (_t(rel, "isTenPercentOwner") or "") in ("1", "true") and not title:
+            title = "10% Owner"
+
+    out = []
+    for tx in root.findall(".//nonDerivativeTransaction"):
+        if _t(tx, "transactionCoding/transactionCode") != "P":
+            continue
+        try:
+            shares = float(_t(tx, "transactionAmounts/transactionShares/value") or 0)
+            price  = float(_t(tx, "transactionAmounts/transactionPricePerShare/value") or 0)
+        except (TypeError, ValueError):
+            continue
+        if shares <= 0:
+            continue
+        out.append({
+            "owner":  owner.title() if owner.isupper() else owner,
+            "title":  title,
+            "date":   _t(tx, "transactionDate/value") or filing_date,
+            "shares": shares,
+            "price":  price,
+            "value":  shares * price,
+            "url":    view_url,
+        })
+    return out
+
+
+def get_insider_purchases(submissions: dict, months: int = 36,
+                          max_filings: int = 120) -> dict:
+    """
+    Collect insider open-market purchases (Form 4, code 'P') over the last
+    `months`, plus a per-year trend. Form 4 XMLs are fetched concurrently.
+    """
+    recent = submissions.get("filings", {}).get("recent", {})
+    forms  = recent.get("form", [])
+    accns  = recent.get("accessionNumber", [])
+    docs   = recent.get("primaryDocument", [])
+    dates  = recent.get("filingDate", [])
+    cik_no_zero = str(int(submissions.get("cik", "0")))
+
+    cutoff = ""
+    try:
+        cutoff = f"{int(datetime.now().year) - (months // 12) - 1}"
+    except Exception:
+        pass
+
+    jobs = []
+    for i, f in enumerate(forms):
+        if f not in ("4", "4/A"):
+            continue
+        fdate = dates[i] if i < len(dates) else ""
+        if cutoff and fdate and fdate[:4] < cutoff:
+            continue
+        jobs.append((accns[i].replace("-", ""), docs[i], fdate))
+        if len(jobs) >= max_filings:
+            break
+
+    purchases: list[dict] = []
+    if jobs:
+        # Keep concurrency modest — SEC rate-limits at ~10 requests/second.
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            for res in ex.map(lambda j: _parse_form4_purchases(cik_no_zero, *j), jobs):
+                purchases.extend(res)
+
+    # Keep only purchases within the exact month window.
+    from datetime import timedelta
+    horizon = (datetime.now() - timedelta(days=months * 31)).strftime("%Y-%m-%d")
+    purchases = [p for p in purchases if p["date"] >= horizon]
+    purchases.sort(key=lambda p: p["date"], reverse=True)
+
+    # Per-year trend: total value, shares, transaction count, unique buyers.
+    trend: dict[str, dict] = {}
+    for p in purchases:
+        y = p["date"][:4]
+        t = trend.setdefault(y, {"value": 0.0, "shares": 0.0, "count": 0, "buyers": set()})
+        t["value"]  += p["value"]
+        t["shares"] += p["shares"]
+        t["count"]  += 1
+        t["buyers"].add(p["owner"])
+    trend_out = {y: {"value": round(v["value"]), "shares": round(v["shares"]),
+                     "count": v["count"], "buyers": len(v["buyers"])}
+                 for y, v in trend.items()}
+
+    return {
+        "purchases": purchases[:60],   # cap the table
+        "trend": trend_out,
+        "total_value": round(sum(p["value"] for p in purchases)),
+        "total_count": len(purchases),
+        "months": months,
+    }
 
 
 def extract_berkshire_equivalent_b_shares(text: str, filing_date: str = "") -> dict[str, float]:
@@ -3596,6 +3726,16 @@ def analyze():
     # ── Earnings materials (8-Ks + Seeking Alpha links) per quarter ───────────
     earnings_materials = get_earnings_materials(submissions, quarter_end_dates, ticker)
 
+    # ── Insider open-market purchases (Form 4, code P) ────────────────────────
+    # Cached 6h per CIK — parsing Form 4 XMLs is many SEC calls; don't repeat
+    # them on every analyze (and stay under SEC's rate limit).
+    try:
+        insider_buys = screener._cached(
+            f"insider_{cik}.json", 21600,
+            lambda: get_insider_purchases(submissions))
+    except Exception:
+        insider_buys = {"purchases": [], "trend": {}, "total_value": 0, "total_count": 0}
+
     # ── Recent SEC filings (last 10, all form types) ──────────────────────────
     _recent_f   = submissions.get("filings", {}).get("recent", {})
     _f_forms    = _recent_f.get("form", [])
@@ -3663,6 +3803,7 @@ def analyze():
         "earnings_materials": earnings_materials,
         "recent_filings":     recent_filings,
         "all_filings_url":    all_filings_url,
+        "insider_buys":       insider_buys,
         "ir_url":             ir_url,
         "financials":         fin_data,
         "filing_links":       filing_links,
