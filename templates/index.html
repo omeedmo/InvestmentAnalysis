@@ -866,12 +866,16 @@ function renderInsiderBuys(ib, ticker){
       </div></div>`;
     if(!buys.length){ return h + `</div>`; }
   } else if(!buys.length){
-    h += `<div class="ib-none">No open-market insider purchases (Form 4 code P) in the last ${perWords}. Insiders may still have received grants or exercised options — those aren't purchases with their own money.</div></div>`;
+    h += `<div class="ib-none">No open-market insider purchases (Form 4 code P) in the last ${perWords}${ib.filings_total?` — scanned <strong>${ib.filings_total}</strong> Form 4 filing${ib.filings_total!==1?'s':''}`:''}. Insiders may still have received grants or exercised options — those aren't purchases with their own money.</div></div>`;
     return h;
   }
+  const scanned = ib.filings_total==null ? '' : (ib.complete
+    ? `${ib.filings_total}`
+    : `${ib.filings_processed} of ${ib.filings_total}`);
   h += `<div class="ib-summary">
     <div class="ib-stat"><div class="ib-sl">Total Bought (${per})</div><div class="ib-sv g">${F.$M(ib.total_value)}</div></div>
     <div class="ib-stat"><div class="ib-sl">Purchases</div><div class="ib-sv">${ib.total_count}</div></div>
+    ${scanned?`<div class="ib-stat"><div class="ib-sl">Form 4s ${ib.complete?'Scanned':'Loaded'}</div><div class="ib-sv">${scanned}</div></div>`:''}
   </div>`;
   // Per-year trend bars (scaled to the largest year)
   const trend = ib.trend || {};

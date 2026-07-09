@@ -490,16 +490,20 @@ def get_insider_purchases(submissions: dict, months: int = 12,
                  for y, v in trend.items()}
 
     fetched_all = all(a in cache for a in window_accns)
+    processed = len([a for a in window_accns if a in cache])
     return {
         "purchases": purchases[:60],   # cap the table
         "trend": trend_out,
         "total_value": round(sum(p["value"] for p in purchases)),
         "total_count": len(purchases),
         "months": months,
+        # How many Form 4 filings were scanned to produce these results.
+        "filings_processed": processed,
+        "filings_total": len(window_accns),
         # True once every in-window Form 4 has been fetched and cached.
         "complete": fetched_all,
         # How many filings still need fetching (rate-limited/failed this run).
-        "pending": len(window_accns) - len([a for a in window_accns if a in cache]),
+        "pending": len(window_accns) - processed,
         # Some Form 4 fetches failed — the UI shows a retry notice (with the
         # already-fetched purchases) rather than implying there were none.
         "rate_limited": not fetched_all,
