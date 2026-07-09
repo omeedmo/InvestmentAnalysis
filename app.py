@@ -59,33 +59,34 @@ def resolve_cik(ticker: str) -> Optional[str]:
         normalized.replace("-", ""),
     }
 
-    # Strategy 1: bulk tickers file (~10K most active filers)
+    # Strategy 1: cached bulk ticker→CIK map (shared with the screener; disk-cached
+    # 24h with a bundled fallback). Avoids a fresh SEC fetch on every lookup, which
+    # gets rate-limited from datacenter IPs (e.g. Railway) and made dotted symbols
+    # like BRK.B fail there.
     try:
-        r = requests.get("https://www.sec.gov/files/company_tickers.json",
-                         headers=HEADERS, timeout=15)
-        r.raise_for_status()
-        for entry in r.json().values():
-            if entry["ticker"].upper() in candidates:
-                return str(entry["cik_str"]).zfill(10)
+        cik_map = screener.ticker_cik_map()
+        for c in candidates:
+            if c in cik_map:
+                return str(cik_map[c]).zfill(10)
     except Exception:
         pass
 
-    # Strategy 2: EDGAR company search — accepts ticker symbols directly and
+    # Strategy 2: EDGAR company search — try each symbol variant (e.g. BRK-B),
     # returns a page whose URL contains the CIK (works for any SEC registrant)
-    try:
-        search_url = (
-            "https://www.sec.gov/cgi-bin/browse-edgar"
-            f"?action=getcompany&CIK={normalized}&type=10-K"
-            "&dateb=&owner=include&count=1&search_text="
-        )
-        r = requests.get(search_url, headers=HEADERS, timeout=15, allow_redirects=True)
-        # The CIK appears in the response URL or body as a 10-digit string
-        import re as _re
-        m = _re.search(r"CIK=?(\d{7,10})", r.url + r.text)
-        if m:
-            return m.group(1).zfill(10)
-    except Exception:
-        pass
+    import re as _re
+    for cand in (normalized, normalized.replace(".", "-"), normalized.replace(".", "")):
+        try:
+            search_url = (
+                "https://www.sec.gov/cgi-bin/browse-edgar"
+                f"?action=getcompany&CIK={cand}&type=10-K"
+                "&dateb=&owner=include&count=1&search_text="
+            )
+            r = requests.get(search_url, headers=HEADERS, timeout=15, allow_redirects=True)
+            m = _re.search(r"CIK=?(\d{7,10})", r.url + r.text)
+            if m:
+                return m.group(1).zfill(10)
+        except Exception:
+            continue
 
     # Strategy 3: EDGAR full-text search index
     try:
