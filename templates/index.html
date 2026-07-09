@@ -766,8 +766,8 @@ function render(data){
   // Earnings materials section
   h+=renderEarningsMaterials(data.earnings_materials||{}, data.quarter_dates||{}, co.ticker, data.ir_url||'');
 
-  // Recent SEC filings section
-  h+=renderInsiderBuys(data.insider_buys||{}, co.ticker);
+  // Insider purchases placeholder — filled asynchronously (Form 4 fetches are slow)
+  h+=`<div id="insider-section"></div>`;
 
   h+=renderRecentFilings(data.recent_filings||[], data.all_filings_url||'', co.ticker);
 
@@ -901,6 +901,18 @@ function renderInsiderBuys(ib, ticker){
   return h;
 }
 
+// Async loader — Form 4 XML fetches are slow, so this runs after the main render.
+function loadInsiderBuys(ticker){
+  const wrap = document.getElementById('insider-section');
+  if(!wrap) return;
+  wrap.innerHTML = `<div class="sec-title-row"><span class="sec-title">Insider Open-Market Purchases — ${ticker}</span></div>
+    <div class="ib-wrap"><div class="ib-none">⏳ Loading insider Form 4 purchases…</div></div>`;
+  fetch(`/api/insider?ticker=${encodeURIComponent(ticker)}`)
+    .then(r=>r.json())
+    .then(ib=>{ wrap.innerHTML = renderInsiderBuys(ib||{}, ticker); })
+    .catch(()=>{ wrap.innerHTML = renderInsiderBuys({rate_limited:true}, ticker); });
+}
+
 function renderRecentFilings(filings, allUrl, ticker){
   if(!filings || !filings.length) return '';
   function badgeCls(form){
@@ -988,6 +1000,8 @@ async function doAnalyze(){
       return;
     }
     render(d);
+    // Load insider Form 4 purchases in the background (slow SEC fetches)
+    loadInsiderBuys(tk);
     // Fetch VIC ideas in background after main render
     const vicWrap = document.getElementById('vic-section');
     if(vicWrap) vicWrap.innerHTML=`<div class="sec-title-row"><span class="sec-title">Value Investors Club — ${tk}</span></div><div class="vic-wrap"><div class="vic-spinner">⏳ Loading VIC writeups…</div></div>`;

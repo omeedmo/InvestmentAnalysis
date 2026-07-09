@@ -2612,6 +2612,42 @@ def vic():
     return jsonify({"ticker": ticker, "ideas": ideas})
 
 
+@app.route("/api/insider")
+def insider():
+    """Insider open-market purchases (Form 4, code P). Loaded asynchronously by
+    the frontend so the many Form 4 XML fetches don't slow the main analyze
+    response. Cached 6h per CIK; a cache hit skips even the submissions fetch."""
+    ticker = request.args.get("ticker", "").upper().strip()
+    if not ticker:
+        return jsonify({"error": "ticker required"}), 400
+    cik = resolve_cik(ticker)
+    if not cik:
+        return jsonify({"error": f"Ticker '{ticker}' not found"}), 404
+
+    cache_path = os.path.join(screener.CACHE_DIR, f"insider_{cik}.json")
+    try:
+        if os.path.exists(cache_path) and (time.time() - os.path.getmtime(cache_path)) < 21600:
+            with open(cache_path) as f:
+                return jsonify(json.load(f))
+    except Exception:
+        pass
+
+    try:
+        submissions = fetch_submissions(cik)
+        result = get_insider_purchases(submissions)
+        if result.get("complete"):
+            try:
+                with open(cache_path, "w") as f:
+                    json.dump(result, f)
+            except Exception:
+                pass
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": f"Insider fetch failed: {e}",
+                        "purchases": [], "trend": {}, "total_value": 0,
+                        "total_count": 0, "rate_limited": True}), 200
+
+
 @app.route("/api/analyze")
 def analyze():
     ticker        = request.args.get("ticker", "").upper().strip()
@@ -3778,23 +3814,9 @@ def analyze():
     # ── Earnings materials (8-Ks + Seeking Alpha links) per quarter ───────────
     earnings_materials = get_earnings_materials(submissions, quarter_end_dates, ticker)
 
-    # ── Insider open-market purchases (Form 4, code P) ────────────────────────
-    # Cached 6h per CIK — parsing Form 4 XMLs is many SEC calls; don't repeat
-    # them on every analyze. Only cache a COMPLETE fetch, so a rate-limited run
-    # (which returns falsely-empty results) isn't pinned for 6 hours.
-    insider_buys = {"purchases": [], "trend": {}, "total_value": 0, "total_count": 0}
-    _ib_cache = os.path.join(screener.CACHE_DIR, f"insider_{cik}.json")
-    try:
-        if os.path.exists(_ib_cache) and (time.time() - os.path.getmtime(_ib_cache)) < 21600:
-            with open(_ib_cache) as _f:
-                insider_buys = json.load(_f)
-        else:
-            insider_buys = get_insider_purchases(submissions)
-            if insider_buys.get("complete"):
-                with open(_ib_cache, "w") as _f:
-                    json.dump(insider_buys, _f)
-    except Exception:
-        pass
+    # Insider open-market purchases (Form 4) are fetched separately by the
+    # frontend via /api/insider — those Form 4 XML fetches are slow and would
+    # otherwise inflate this response's latency.
 
     # ── Recent SEC filings (last 10, all form types) ──────────────────────────
     _recent_f   = submissions.get("filings", {}).get("recent", {})
@@ -3863,7 +3885,6 @@ def analyze():
         "earnings_materials": earnings_materials,
         "recent_filings":     recent_filings,
         "all_filings_url":    all_filings_url,
-        "insider_buys":       insider_buys,
         "ir_url":             ir_url,
         "financials":         fin_data,
         "filing_links":       filing_links,
