@@ -856,7 +856,11 @@ function renderInsiderBuys(ib, ticker){
   if(ib.rate_limited){
     h += `<div class="ib-none" style="color:#b45309;background:#fffbeb">
       ⚠ SEC rate limit reached while loading Form 4 filings${buys.length?' — the purchases below may be incomplete':''}.
-      This is common right after several lookups; please reload in a minute to see the full insider data.</div>`;
+      This is common right after several lookups.
+      <div style="margin-top:9px">
+        <button class="btn" id="ib-retry" disabled style="opacity:.55;cursor:default">
+          Reload available in <span id="ib-count">${INSIDER_COOLDOWN}</span>s</button>
+      </div></div>`;
     if(!buys.length){ return h + `</div>`; }
   } else if(!buys.length){
     h += `<div class="ib-none">No open-market insider purchases (Form 4 code P) in the last ${perWords}. Insiders may still have received grants or exercised options — those aren't purchases with their own money.</div></div>`;
@@ -902,15 +906,36 @@ function renderInsiderBuys(ib, ticker){
 }
 
 // Async loader — Form 4 XML fetches are slow, so this runs after the main render.
+const INSIDER_COOLDOWN = 60;   // seconds to wait before a rate-limited retry
 function loadInsiderBuys(ticker){
   const wrap = document.getElementById('insider-section');
   if(!wrap) return;
+  if(window._ibTimer){ clearInterval(window._ibTimer); window._ibTimer=null; }
   wrap.innerHTML = `<div class="sec-title-row"><span class="sec-title">Insider Open-Market Purchases — ${ticker}</span></div>
     <div class="ib-wrap"><div class="ib-none">⏳ Loading insider Form 4 purchases…</div></div>`;
   fetch(`/api/insider?ticker=${encodeURIComponent(ticker)}`)
     .then(r=>r.json())
-    .then(ib=>{ wrap.innerHTML = renderInsiderBuys(ib||{}, ticker); })
-    .catch(()=>{ wrap.innerHTML = renderInsiderBuys({rate_limited:true}, ticker); });
+    .then(ib=>finishInsider(wrap, ib||{}, ticker))
+    .catch(()=>finishInsider(wrap, {rate_limited:true}, ticker));
+}
+
+function finishInsider(wrap, ib, ticker){
+  wrap.innerHTML = renderInsiderBuys(ib, ticker);
+  if(!ib.rate_limited) return;
+  // Count down, then enable the Reload button.
+  let n = INSIDER_COOLDOWN;
+  const btn = document.getElementById('ib-retry');
+  const c   = document.getElementById('ib-count');
+  if(!btn) return;
+  window._ibTimer = setInterval(()=>{
+    n--; if(c) c.textContent = n;
+    if(n<=0){
+      clearInterval(window._ibTimer); window._ibTimer=null;
+      btn.disabled=false; btn.style.opacity=1; btn.style.cursor='pointer';
+      btn.textContent='↻ Reload insider data';
+      btn.onclick=()=>loadInsiderBuys(ticker);
+    }
+  }, 1000);
 }
 
 function renderRecentFilings(filings, allUrl, ticker){
