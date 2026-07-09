@@ -852,7 +852,13 @@ function renderInsiderBuys(ib, ticker){
   let h = `<div class="sec-title-row"><span class="sec-title">Insider Open-Market Purchases — ${ticker}</span>
     <span style="font-size:11px;color:var(--muted)">Form 4 · code P · own-money buys · last ${per}</span></div>
   <div class="ib-wrap">`;
-  if(!buys.length){
+  // SEC rate-limited the Form 4 fetch — don't imply "no buys"; ask for a retry.
+  if(ib.rate_limited){
+    h += `<div class="ib-none" style="color:#b45309;background:#fffbeb">
+      ⚠ SEC rate limit reached while loading Form 4 filings${buys.length?' — the purchases below may be incomplete':''}.
+      This is common right after several lookups; please reload in a minute to see the full insider data.</div>`;
+    if(!buys.length){ return h + `</div>`; }
+  } else if(!buys.length){
     h += `<div class="ib-none">No open-market insider purchases (Form 4 code P) in the last ${perWords}. Insiders may still have received grants or exercised options — those aren't purchases with their own money.</div></div>`;
     return h;
   }

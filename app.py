@@ -323,12 +323,23 @@ def _parse_form4_purchases(cik_no_zero: str, accession_no_dash: str,
     # Human-readable rendered Form 4 (nice link for the user)
     view_url = SEC_ARCHIVES.format(cik_no_zero=cik_no_zero,
                                    accession_no_dash=accession_no_dash, document=primary_doc)
-    try:
-        r = requests.get(xml_url, headers=HEADERS, timeout=15)
-        if r.status_code != 200:
-            return None   # fetch failed (e.g. 429) — signal so we don't cache empties
-        root = ET.fromstring(r.text)
-    except Exception:
+    # Retry on 429 (SEC rate limit) with backoff — common from datacenter IPs
+    # (e.g. Railway). Returning None signals a failed fetch so the caller can tell
+    # the user to retry instead of showing a falsely-empty table.
+    root = None
+    for attempt in range(3):
+        try:
+            r = requests.get(xml_url, headers=HEADERS, timeout=15)
+            if r.status_code == 429:
+                time.sleep(0.6 * (attempt + 1))
+                continue
+            if r.status_code != 200:
+                return None
+            root = ET.fromstring(r.text)
+            break
+        except Exception:
+            time.sleep(0.4 * (attempt + 1))
+    if root is None:
         return None
 
     def _t(el, path):
@@ -468,6 +479,9 @@ def get_insider_purchases(submissions: dict, months: int = 12,
         # True only if every Form 4 was fetched successfully — the caller uses
         # this to avoid caching a rate-limited/partial (falsely empty) result.
         "complete": failures == 0,
+        # Some Form 4 fetches were rate-limited/failed — the UI shows a retry
+        # notice instead of a (possibly incomplete) empty table.
+        "rate_limited": failures > 0,
     }
 
 
