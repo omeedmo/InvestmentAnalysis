@@ -2666,6 +2666,13 @@ def insider():
     if not cik:
         return jsonify({"error": f"Ticker '{ticker}' not found"}), 404
 
+    # refresh=1 purges this company's per-filing cache so everything is re-fetched.
+    if request.args.get("refresh", "").strip() in ("1", "true", "yes"):
+        try:
+            os.remove(_filing_cache_path(str(int(cik))))
+        except OSError:
+            pass
+
     # get_insider_purchases caches each Form 4 individually (immutable filings)
     # and only fetches what's still missing, so repeat calls are cheap and a
     # rate-limited run resumes cumulatively on the next call.

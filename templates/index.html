@@ -850,7 +850,10 @@ function renderInsiderBuys(ib, ticker){
   const per = months<=12 ? `${months}m` : `${Math.round(months/12)}y`;
   const perWords = months<=12 ? `${months} months` : `${Math.round(months/12)} years`;
   let h = `<div class="sec-title-row"><span class="sec-title">Insider Open-Market Purchases — ${ticker}</span>
-    <span style="font-size:11px;color:var(--muted)">Form 4 · code P · own-money buys · last ${per}</span></div>
+    <span style="display:flex;align-items:center;gap:10px">
+      <span style="font-size:11px;color:var(--muted)">Form 4 · code P · own-money buys · last ${per}</span>
+      <button class="btn" style="font-size:11px;padding:3px 9px" title="Clear the cached Form 4 data and re-fetch from SEC" onclick="loadInsiderBuys('${ticker}', true)">↻ Purge &amp; Reload</button>
+    </span></div>
   <div class="ib-wrap">`;
   // SEC rate-limited the Form 4 fetch — don't imply "no buys"; ask for a retry.
   if(ib.rate_limited){
@@ -907,13 +910,13 @@ function renderInsiderBuys(ib, ticker){
 
 // Async loader — Form 4 XML fetches are slow, so this runs after the main render.
 const INSIDER_COOLDOWN = 60;   // seconds to wait before a rate-limited retry
-function loadInsiderBuys(ticker){
+function loadInsiderBuys(ticker, refresh){
   const wrap = document.getElementById('insider-section');
   if(!wrap) return;
   if(window._ibTimer){ clearInterval(window._ibTimer); window._ibTimer=null; }
   wrap.innerHTML = `<div class="sec-title-row"><span class="sec-title">Insider Open-Market Purchases — ${ticker}</span></div>
-    <div class="ib-wrap"><div class="ib-none">⏳ Loading insider Form 4 purchases…</div></div>`;
-  fetch(`/api/insider?ticker=${encodeURIComponent(ticker)}`)
+    <div class="ib-wrap"><div class="ib-none">${refresh?'⏳ Purging cache and reloading insider Form 4 filings…':'⏳ Loading insider Form 4 purchases…'}</div></div>`;
+  fetch(`/api/insider?ticker=${encodeURIComponent(ticker)}${refresh?'&refresh=1':''}`)
     .then(r=>r.json())
     .then(ib=>finishInsider(wrap, ib||{}, ticker))
     .catch(()=>finishInsider(wrap, {rate_limited:true}, ticker));
