@@ -395,7 +395,7 @@ def _parse_form4_purchases(cik_no_zero: str, accession_no_dash: str,
 
 
 def get_insider_purchases(submissions: dict, months: int = 12,
-                          max_filings: int = 120) -> dict:
+                          max_filings: int = 300) -> dict:
     """
     Collect insider open-market purchases (Form 4, code 'P') over the last
     `months`, plus a per-year trend. Form 4 XMLs are fetched concurrently.
@@ -407,18 +407,18 @@ def get_insider_purchases(submissions: dict, months: int = 12,
     dates  = recent.get("filingDate", [])
     cik_no_zero = str(int(submissions.get("cik", "0")))
 
-    cutoff = ""
-    try:
-        cutoff = f"{int(datetime.now().year) - (months // 12) - 1}"
-    except Exception:
-        pass
+    # Only Form 4s FILED within the window. Filing date >= transaction date, so
+    # this captures every in-window purchase without pulling years of extra
+    # filings (which made the "scanned" count meaningless — it just hit the cap).
+    from datetime import timedelta
+    horizon = (datetime.now() - timedelta(days=months * 31)).strftime("%Y-%m-%d")
 
     jobs = []
     for i, f in enumerate(forms):
         if f not in ("4", "4/A"):
             continue
         fdate = dates[i] if i < len(dates) else ""
-        if cutoff and fdate and fdate[:4] < cutoff:
+        if fdate and fdate < horizon:
             continue
         jobs.append((accns[i].replace("-", ""), docs[i], fdate))
         if len(jobs) >= max_filings:
@@ -454,9 +454,7 @@ def get_insider_purchases(submissions: dict, months: int = 12,
         if a in cache:
             purchases.extend(cache[a])
 
-    # Keep only purchases within the exact month window.
-    from datetime import timedelta
-    horizon = (datetime.now() - timedelta(days=months * 31)).strftime("%Y-%m-%d")
+    # Keep only purchases whose transaction date is within the exact window.
     purchases = [p for p in purchases if p["date"] >= horizon]
 
     # Combine one insider's multiple lots on the same day into a single entry
