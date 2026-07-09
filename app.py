@@ -424,16 +424,35 @@ def get_insider_purchases(submissions: dict, months: int = 12,
         if len(jobs) >= max_filings:
             break
 
-    purchases: list[dict] = []
+    # Per-filing cache: a Form 4 is immutable once filed, so its parsed result
+    # never changes. We cache each successfully-parsed filing by accession and
+    # only fetch the ones we don't have yet. If a run is rate-limited partway,
+    # the filings we DID get are kept, and the next run resumes from there
+    # (fetching only what's still missing) instead of starting over.
+    cache = _load_filing_cache(cik_no_zero)          # {accession: [purchase dicts]}
+    window_accns = {j[0] for j in jobs}
+    to_fetch = [j for j in jobs if j[0] not in cache]
+
     failures = 0
-    if jobs:
+    if to_fetch:
         # Keep concurrency modest — SEC rate-limits at ~10 requests/second.
         with ThreadPoolExecutor(max_workers=4) as ex:
-            for res in ex.map(lambda j: _parse_form4_purchases(cik_no_zero, *j), jobs):
-                if res is None:
-                    failures += 1      # a Form 4 fetch failed (rate limit / network)
-                else:
-                    purchases.extend(res)
+            results = list(ex.map(lambda j: _parse_form4_purchases(cik_no_zero, *j), to_fetch))
+        for j, res in zip(to_fetch, results):
+            if res is None:
+                failures += 1          # fetch failed (rate limit / network) — retry next time
+            else:
+                cache[j[0]] = res      # parsed OK (may be [] — no P in this filing)
+
+    # Prune to the current window and persist the accumulated progress.
+    cache = {a: v for a, v in cache.items() if a in window_accns}
+    _save_filing_cache(cik_no_zero, cache)
+
+    # Aggregate purchases from every cached filing in the window.
+    purchases: list[dict] = []
+    for a in window_accns:
+        if a in cache:
+            purchases.extend(cache[a])
 
     # Keep only purchases within the exact month window.
     from datetime import timedelta
@@ -470,19 +489,42 @@ def get_insider_purchases(submissions: dict, months: int = 12,
                      "count": v["count"], "buyers": len(v["buyers"])}
                  for y, v in trend.items()}
 
+    fetched_all = all(a in cache for a in window_accns)
     return {
         "purchases": purchases[:60],   # cap the table
         "trend": trend_out,
         "total_value": round(sum(p["value"] for p in purchases)),
         "total_count": len(purchases),
         "months": months,
-        # True only if every Form 4 was fetched successfully — the caller uses
-        # this to avoid caching a rate-limited/partial (falsely empty) result.
-        "complete": failures == 0,
-        # Some Form 4 fetches were rate-limited/failed — the UI shows a retry
-        # notice instead of a (possibly incomplete) empty table.
-        "rate_limited": failures > 0,
+        # True once every in-window Form 4 has been fetched and cached.
+        "complete": fetched_all,
+        # How many filings still need fetching (rate-limited/failed this run).
+        "pending": len(window_accns) - len([a for a in window_accns if a in cache]),
+        # Some Form 4 fetches failed — the UI shows a retry notice (with the
+        # already-fetched purchases) rather than implying there were none.
+        "rate_limited": not fetched_all,
     }
+
+
+def _filing_cache_path(cik_no_zero: str) -> str:
+    return os.path.join(screener.CACHE_DIR, f"insider_filings_{cik_no_zero}.json")
+
+
+def _load_filing_cache(cik_no_zero: str) -> dict:
+    """Load the per-accession Form 4 parse cache for a company (immutable data)."""
+    try:
+        with open(_filing_cache_path(cik_no_zero)) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_filing_cache(cik_no_zero: str, data: dict) -> None:
+    try:
+        with open(_filing_cache_path(cik_no_zero), "w") as f:
+            json.dump(data, f)
+    except Exception:
+        pass
 
 
 def extract_berkshire_equivalent_b_shares(text: str, filing_date: str = "") -> dict[str, float]:
@@ -2624,24 +2666,12 @@ def insider():
     if not cik:
         return jsonify({"error": f"Ticker '{ticker}' not found"}), 404
 
-    cache_path = os.path.join(screener.CACHE_DIR, f"insider_{cik}.json")
-    try:
-        if os.path.exists(cache_path) and (time.time() - os.path.getmtime(cache_path)) < 21600:
-            with open(cache_path) as f:
-                return jsonify(json.load(f))
-    except Exception:
-        pass
-
+    # get_insider_purchases caches each Form 4 individually (immutable filings)
+    # and only fetches what's still missing, so repeat calls are cheap and a
+    # rate-limited run resumes cumulatively on the next call.
     try:
         submissions = fetch_submissions(cik)
-        result = get_insider_purchases(submissions)
-        if result.get("complete"):
-            try:
-                with open(cache_path, "w") as f:
-                    json.dump(result, f)
-            except Exception:
-                pass
-        return jsonify(result)
+        return jsonify(get_insider_purchases(submissions))
     except Exception as e:
         return jsonify({"error": f"Insider fetch failed: {e}",
                         "purchases": [], "trend": {}, "total_value": 0,

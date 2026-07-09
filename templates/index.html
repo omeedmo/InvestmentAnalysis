@@ -856,7 +856,7 @@ function renderInsiderBuys(ib, ticker){
   if(ib.rate_limited){
     h += `<div class="ib-none" style="color:#b45309;background:#fffbeb">
       ⚠ SEC rate limit reached while loading Form 4 filings${buys.length?' — the purchases below may be incomplete':''}.
-      This is common right after several lookups.
+      ${ib.pending?`<strong>${ib.pending}</strong> filing${ib.pending!==1?'s':''} still to load — progress is saved, so reloading resumes where it left off.`:'This is common right after several lookups.'}
       <div style="margin-top:9px">
         <button class="btn" id="ib-retry" disabled style="opacity:.55;cursor:default">
           Reload available in <span id="ib-count">${INSIDER_COOLDOWN}</span>s</button>
