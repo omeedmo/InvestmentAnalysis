@@ -776,6 +776,9 @@ function render(data){
   // VIC section placeholder — filled asynchronously after main render
   h+=`<div id="vic-section"></div>`;
 
+  // Institutional 13F holders placeholder — filled asynchronously (at the end)
+  h+=`<div id="holders-section"></div>`;
+
   document.getElementById('root').innerHTML=h;
   drawCharts(years,fin);
 }
@@ -941,6 +944,71 @@ function finishInsider(wrap, ib, ticker){
   }, 1000);
 }
 
+// ── Institutional 13F holders ─────────────────────────────────────────────────
+function loadHolders(ticker, refresh){
+  const wrap = document.getElementById('holders-section');
+  if(!wrap) return;
+  if(window._hldTimer){ clearInterval(window._hldTimer); window._hldTimer=null; }
+  wrap.innerHTML = `<div class="sec-title-row"><span class="sec-title">Institutional 13F Holders — ${ticker}</span></div>
+    <div class="ib-wrap"><div class="ib-none">${refresh?'⏳ Purging cache and reloading 13F holders…':'⏳ Loading 13F holders (scanning recent institutional filings)…'}</div></div>`;
+  fetch(`/api/holders?ticker=${encodeURIComponent(ticker)}${refresh?'&refresh=1':''}`)
+    .then(r=>r.json())
+    .then(hd=>finishHolders(wrap, hd||{}, ticker))
+    .catch(()=>finishHolders(wrap, {rate_limited:true}, ticker));
+}
+
+function finishHolders(wrap, hd, ticker){
+  wrap.innerHTML = renderHolders(hd, ticker);
+  if(!hd.rate_limited) return;
+  let n = INSIDER_COOLDOWN;
+  const c = document.getElementById('hld-count');
+  window._hldTimer = setInterval(()=>{
+    n--; if(c) c.textContent = n;
+    if(n<=0){ clearInterval(window._hldTimer); window._hldTimer=null; loadHolders(ticker); }
+  }, 1000);
+}
+
+function renderHolders(hd, ticker){
+  const list = hd.holders || [];
+  let h = `<div class="sec-title-row"><span class="sec-title">Institutional 13F Holders — ${ticker}</span>
+    <span style="display:flex;align-items:center;gap:10px">
+      <span style="font-size:11px;color:var(--muted)">Latest quarter · 45-day-lagged snapshot</span>
+      <button class="btn" style="font-size:11px;padding:3px 9px" title="Clear cached 13F data and re-fetch" onclick="loadHolders('${ticker}', true)">↻ Purge &amp; Reload</button>
+    </span></div>
+  <div class="ib-wrap">`;
+  if(hd.rate_limited){
+    h += `<div class="ib-none" style="color:#b45309;background:#fffbeb">
+      ⚠ SEC rate limit reached while scanning 13F filings${list.length?' — the list below may be incomplete':''}.
+      ${hd.pending?`<strong>${hd.pending}</strong> filing${hd.pending!==1?'s':''} still to scan — progress is saved.`:''}
+      <div style="margin-top:6px">⏳ Retrying automatically in <span id="hld-count">${INSIDER_COOLDOWN}</span>s…</div></div>`;
+    if(!list.length){ return h + `</div>`; }
+  } else if(!list.length){
+    h += `<div class="ib-none">No institutional 13F holders found for ${ticker} in the most recent quarter${hd.funds_total?` (scanned ${hd.funds_total} filings)`:''}. Smaller or recently-listed companies may have little 13F coverage.</div></div>`;
+    return h;
+  }
+  h += `<div class="ib-summary">
+    <div class="ib-stat"><div class="ib-sl">Reported 13F Value</div><div class="ib-sv g">${F.$M(hd.total_value)}</div></div>
+    <div class="ib-stat"><div class="ib-sl">Holders Shown</div><div class="ib-sv">${list.length}</div></div>
+    ${hd.funds_total?`<div class="ib-stat"><div class="ib-sl">Filings ${hd.complete?'Scanned':'Loaded'}</div><div class="ib-sv">${hd.complete?hd.funds_total:hd.funds_scanned+' of '+hd.funds_total}</div></div>`:''}
+  </div>
+  <div class="ib-none" style="padding-top:0;font-size:11px">Largest positions among the recent institutional 13F filers scanned — not an exhaustive holder list.</div>
+  <div class="tbl-scroll"><table class="ib-table"><thead><tr>
+    <th>#</th><th>Institution</th><th>Reported Value</th><th>Shares</th><th>Filed</th><th>13F</th>
+  </tr></thead><tbody>`;
+  list.forEach((v,i)=>{
+    h += `<tr>
+      <td class="scr-rank">${i+1}</td>
+      <td style="font-weight:600">${v.fund||'—'}</td>
+      <td class="g" style="color:var(--green);font-weight:600">${F.$M(v.value)}</td>
+      <td>${Math.round(v.shares).toLocaleString()}</td>
+      <td>${v.date||'—'}</td>
+      <td><a class="rf-link" href="${v.link}" target="_blank" rel="noreferrer">View ↗</a></td>
+    </tr>`;
+  });
+  h += `</tbody></table></div></div>`;
+  return h;
+}
+
 function renderRecentFilings(filings, allUrl, ticker){
   if(!filings || !filings.length) return '';
   function badgeCls(form){
@@ -1030,6 +1098,8 @@ async function doAnalyze(){
     render(d);
     // Load insider Form 4 purchases in the background (slow SEC fetches)
     loadInsiderBuys(tk);
+    // Load institutional 13F holders in the background
+    loadHolders(tk);
     // Fetch VIC ideas in background after main render
     const vicWrap = document.getElementById('vic-section');
     if(vicWrap) vicWrap.innerHTML=`<div class="sec-title-row"><span class="sec-title">Value Investors Club — ${tk}</span></div><div class="vic-wrap"><div class="vic-spinner">⏳ Loading VIC writeups…</div></div>`;

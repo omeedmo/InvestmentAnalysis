@@ -530,6 +530,180 @@ def _save_filing_cache(cik_no_zero: str, data: dict) -> None:
         pass
 
 
+# ─── Institutional (13F) holders ──────────────────────────────────────────────
+
+def _xml_tag(block: str, tag: str) -> Optional[str]:
+    """Namespace-agnostic single-value extract from a 13F info-table block."""
+    m = re.search(r"<(?:\w+:)?" + tag + r">\s*([^<]+?)\s*</(?:\w+:)?" + tag + ">", block)
+    return m.group(1).strip() if m else None
+
+
+def _holder_cache_path(cik_no_zero: str) -> str:
+    return os.path.join(screener.CACHE_DIR, f"holders_{cik_no_zero}.json")
+
+
+def _load_holder_cache(cik_no_zero: str) -> dict:
+    try:
+        with open(_holder_cache_path(cik_no_zero)) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_holder_cache(cik_no_zero: str, data: dict) -> None:
+    try:
+        with open(_holder_cache_path(cik_no_zero), "w") as f:
+            json.dump(data, f)
+    except Exception:
+        pass
+
+
+def _parse_13f_holding(fund_cik: str, accn_nodash: str, doc: str, name_kw: str) -> Optional[dict]:
+    """
+    Fetch one fund's 13F information table and return its position in the target
+    issuer (rows whose nameOfIssuer starts with name_kw — covers multiple share
+    classes/options, summed). Value is in whole USD (post-2023 13F rule).
+    Returns {held, value, shares, cusip} or None on a failed fetch.
+    """
+    raw_doc = doc.split("/")[-1]
+    if not raw_doc.lower().endswith(".xml"):
+        return {"held": False}
+    url = f"https://www.sec.gov/Archives/edgar/data/{int(fund_cik)}/{accn_nodash}/{raw_doc}"
+    for attempt in range(2):
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=20)
+            if r.status_code == 429:
+                time.sleep(0.5 * (attempt + 1))
+                continue
+            if r.status_code != 200:
+                return None
+            text = r.text
+            break
+        except Exception:
+            if attempt == 1:
+                return None
+            time.sleep(0.4)
+    else:
+        return None
+
+    total_val = 0.0
+    total_sh  = 0.0
+    cusip = None
+    held = False
+    for block in re.split(r"</(?:\w+:)?infoTable>", text):
+        nm = (_xml_tag(block, "nameOfIssuer") or "").upper()
+        if not nm or not nm.startswith(name_kw):
+            continue
+        held = True
+        cusip = cusip or _xml_tag(block, "cusip")
+        try:
+            total_val += float(_xml_tag(block, "value") or 0)
+        except ValueError:
+            pass
+        try:
+            total_sh += float(_xml_tag(block, "sshPrnamt") or 0)
+        except ValueError:
+            pass
+    return {"held": held, "value": total_val, "shares": total_sh, "cusip": cusip}
+
+
+def get_institutional_holders(submissions: dict, max_funds: int = 100) -> dict:
+    """
+    Institutional 13F holders of this stock, from the most recent quarter's
+    13F-HR filings (EDGAR full-text search), with each fund's position value/
+    shares parsed from its information table. Sorted by position value.
+    Per-filing cache (immutable) → rate-limited runs resume cumulatively.
+    """
+    cik_no_zero = str(int(submissions.get("cik", "0")))
+    name = submissions.get("name", "") or ""
+    words = [w for w in re.sub(r"[.,/&]", " ", name.upper()).split() if w not in ("THE", "A")]
+    name_kw = " ".join(words[:2])           # e.g. "APPLE INC", "DXC TECHNOLOGY"
+    empty = {"holders": [], "total_value": 0, "total_count": 0,
+             "complete": True, "rate_limited": False, "pending": 0,
+             "funds_scanned": 0, "funds_total": 0}
+    if not name_kw:
+        return empty
+
+    from datetime import timedelta
+    start = (datetime.now() - timedelta(days=150)).strftime("%Y-%m-%d")
+    end   = datetime.now().strftime("%Y-%m-%d")
+
+    # Discover recent 13F filers mentioning the issuer; keep the latest per fund.
+    funds: dict[str, tuple] = {}          # fund_cik -> (name, accn_nodash, doc, date)
+    for frm in range(0, 500, 100):
+        try:
+            r = requests.get("https://efts.sec.gov/LATEST/search-index",
+                             params={"q": f'"{name_kw}"', "forms": "13F-HR",
+                                     "startdt": start, "enddt": end, "from": frm},
+                             headers=HEADERS, timeout=20)
+            hits = r.json().get("hits", {}).get("hits", []) if r.status_code == 200 else []
+        except Exception:
+            hits = []
+        if not hits:
+            break
+        for x in hits:
+            _id = x.get("_id", "")
+            accn = _id.split(":")[0].replace("-", "")
+            doc  = _id.split(":")[1] if ":" in _id else ""
+            src  = x.get("_source", {})
+            dn   = " ".join(src.get("display_names", []))
+            m    = re.search(r"CIK (\d+)", dn)
+            if not m or not doc:
+                continue
+            fcik  = m.group(1)
+            fname = src.get("display_names", [""])[0].split("  (CIK")[0].strip()
+            date  = src.get("file_date", "")
+            if fcik not in funds or date > funds[fcik][3]:
+                funds[fcik] = (fname, accn, doc, date)
+        if len(funds) >= max_funds:
+            break
+
+    fund_ids = list(funds.keys())[:max_funds]
+
+    # Per-filing cache keyed by accession (13F info tables are immutable).
+    cache = _load_holder_cache(cik_no_zero)
+    to_fetch = [fc for fc in fund_ids if funds[fc][1] not in cache]
+
+    failures = 0
+    if to_fetch:
+        def _job(fc):
+            fname, accn, doc, date = funds[fc]
+            res = _parse_13f_holding(fc, accn, doc, name_kw)
+            return fc, res
+        with ThreadPoolExecutor(max_workers=6) as ex:
+            for fc, res in ex.map(_job, to_fetch):
+                fname, accn, doc, date = funds[fc]
+                if res is None:
+                    failures += 1
+                elif res.get("held"):
+                    cache[accn] = {
+                        "fund": fname, "cik": int(fc), "date": date,
+                        "value": res["value"], "shares": res["shares"],
+                        "link": f"https://www.sec.gov/Archives/edgar/data/{int(fc)}/{accn}/",
+                    }
+                else:
+                    cache[accn] = None      # scanned, doesn't hold — cache the negative
+
+    # Prune to the current window and persist.
+    window_accns = {funds[fc][1] for fc in fund_ids}
+    cache = {a: v for a, v in cache.items() if a in window_accns}
+    _save_holder_cache(cik_no_zero, cache)
+
+    holders = [v for v in cache.values() if v]
+    holders.sort(key=lambda h: h["value"], reverse=True)
+    scanned = len([a for a in window_accns if a in cache])
+    return {
+        "holders": holders[:50],
+        "total_value": round(sum(h["value"] for h in holders)),
+        "total_count": len(holders),
+        "funds_scanned": scanned,
+        "funds_total": len(window_accns),
+        "complete": failures == 0 and scanned == len(window_accns),
+        "pending": len(window_accns) - scanned,
+        "rate_limited": failures > 0,
+    }
+
+
 def extract_berkshire_equivalent_b_shares(text: str, filing_date: str = "") -> dict[str, float]:
     """
     Extract class-A-equivalent share counts from BRK 10-K text.
@@ -2686,6 +2860,31 @@ def insider():
         return jsonify({"error": f"Insider fetch failed: {e}",
                         "purchases": [], "trend": {}, "total_value": 0,
                         "total_count": 0, "rate_limited": True}), 200
+
+
+@app.route("/api/holders")
+def holders():
+    """Institutional 13F holders of the stock (latest quarter). Loaded async by
+    the frontend; per-filing cache resumes cumulatively if rate-limited."""
+    ticker = request.args.get("ticker", "").upper().strip()
+    if not ticker:
+        return jsonify({"error": "ticker required"}), 400
+    cik = resolve_cik(ticker)
+    if not cik:
+        return jsonify({"error": f"Ticker '{ticker}' not found"}), 404
+
+    if request.args.get("refresh", "").strip() in ("1", "true", "yes"):
+        try:
+            os.remove(_holder_cache_path(str(int(cik))))
+        except OSError:
+            pass
+
+    try:
+        submissions = fetch_submissions(cik)
+        return jsonify(get_institutional_holders(submissions))
+    except Exception as e:
+        return jsonify({"error": f"13F fetch failed: {e}", "holders": [],
+                        "total_value": 0, "total_count": 0, "rate_limited": True}), 200
 
 
 @app.route("/api/analyze")
