@@ -1,0 +1,9 @@
+.git
+.gitignore
+.pycache
+__pycache__
+*.pyc
+.screen_cache
+.claude
+.DS_Store
+*.md
