@@ -1,0 +1,17 @@
+# Render Blueprint — one-click deploy of the Flask app on the free tier.
+# In Render: New → Blueprint → connect this repo. Render reads this file.
+services:
+  - type: web
+    name: investment-analysis
+    runtime: python
+    plan: free
+    # Free instances spin down after ~15 min idle; the first request after that
+    # cold-starts (~30-60s). That's expected on the free tier.
+    buildCommand: pip install -r requirements.txt
+    # 1 worker keeps memory under the 512MB free cap; 8 threads keep the UI
+    # responsive while a screen runs. 300s timeout covers long screener requests.
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --timeout 300 --workers 1 --threads 8
+    healthCheckPath: /
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
