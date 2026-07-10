@@ -189,7 +189,9 @@ th.hidden-col{display:none}
 .ib-trow .ib-yr{font-weight:700;color:var(--navy)}
 .ib-bar{height:16px;border-radius:3px;background:linear-gradient(90deg,#16a34a,#22c55e);min-width:2px}
 .ib-tval{text-align:right;font-variant-numeric:tabular-nums;color:var(--muted)}
+.tbl-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
 .ib-table{width:100%;border-collapse:collapse;font-size:12px}
+.ib-table td,.ib-table th{white-space:nowrap}
 .ib-table th{background:var(--navy);color:#e2e8f0;font-size:10px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;padding:7px 11px;text-align:right;white-space:nowrap}
 .ib-table th:first-child,.ib-table th:nth-child(2),.ib-table th:nth-child(3){text-align:left}
 .ib-table td{padding:7px 11px;border-bottom:1px solid var(--border);text-align:right;font-variant-numeric:tabular-nums}
@@ -202,7 +204,7 @@ th.hidden-col{display:none}
 .rf-wrap{background:var(--card);border:1px solid var(--border);border-radius:8px;margin-bottom:22px;overflow:hidden}
 .rf-table{width:100%;border-collapse:collapse;font-size:12px}
 .rf-table th{background:var(--section-bg);color:var(--navy);font-size:10px;font-weight:800;letter-spacing:.7px;text-transform:uppercase;padding:7px 13px;text-align:left;border-bottom:2px solid var(--navy)}
-.rf-table td{padding:7px 13px;border-bottom:1px solid var(--border);vertical-align:middle}
+.rf-table td{padding:7px 13px;border-bottom:1px solid var(--border);vertical-align:middle;white-space:nowrap}
 .rf-table tr:last-child td{border-bottom:none}
 .rf-table tr:hover td{background:var(--row-hover)}
 .rf-badge{display:inline-block;padding:2px 7px;border-radius:4px;font-size:10px;font-weight:700;background:#e0e7ff;color:#3730a3;border:1px solid #c7d2fe;white-space:nowrap}
@@ -891,7 +893,7 @@ function renderInsiderBuys(ib, ticker){
     h += `</div>`;
   }
   // Transactions table
-  h += `<table class="ib-table"><thead><tr>
+  h += `<div class="tbl-scroll"><table class="ib-table"><thead><tr>
     <th>Date</th><th>Insider</th><th>Role</th><th>Shares</th><th>Price</th><th>Value</th><th>Form 4</th>
     </tr></thead><tbody>`;
   for(const p of buys){
@@ -905,7 +907,7 @@ function renderInsiderBuys(ib, ticker){
       <td><a class="rf-link" href="${p.url}" target="_blank" rel="noreferrer">View ↗</a></td>
     </tr>`;
   }
-  h += `</tbody></table></div>`;
+  h += `</tbody></table></div></div>`;
   return h;
 }
 
@@ -964,12 +966,12 @@ function renderRecentFilings(filings, allUrl, ticker){
   }).join('');
   return `<div class="sec-title-row"><span class="sec-title">Recent SEC Filings — ${ticker}</span></div>
   <div class="rf-wrap">
-    <table class="rf-table">
+    <div class="tbl-scroll"><table class="rf-table">
       <thead><tr>
         <th>Form</th><th>Filed</th><th>Period</th><th>Document</th><th style="text-align:right">Size</th>
       </tr></thead>
       <tbody>${rows}</tbody>
-    </table>
+    </table></div>
     <div class="rf-footer">
       <a class="rf-link" href="${allUrl}" target="_blank" rel="noreferrer">View all SEC filings for ${ticker} on EDGAR ↗</a>
     </div>
