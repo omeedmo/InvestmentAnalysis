@@ -620,7 +620,7 @@ def _parse_13f_holding(fund_cik: str, accn_nodash: str, doc: str, name_kw: str) 
             "cusip": cusip}
 
 
-def get_institutional_holders(submissions: dict, max_funds: int = 100) -> dict:
+def get_institutional_holders(submissions: dict, max_funds: int = 200) -> dict:
     """
     Institutional 13F holders of this stock, from the most recent quarter's
     13F-HR filings (EDGAR full-text search), with each fund's position value/
@@ -633,17 +633,20 @@ def get_institutional_holders(submissions: dict, max_funds: int = 100) -> dict:
     name_kw = " ".join(words[:2])           # e.g. "APPLE INC", "DXC TECHNOLOGY"
     empty = {"holders": [], "total_value": 0, "total_count": 0,
              "complete": True, "rate_limited": False, "pending": 0,
-             "funds_scanned": 0, "funds_total": 0}
+             "funds_scanned": 0, "funds_total": 0, "period": ""}
     if not name_kw:
         return empty
 
     from datetime import timedelta
-    start = (datetime.now() - timedelta(days=150)).strftime("%Y-%m-%d")
+    # Look back ~200 days so we always capture the full most-recent 13F season
+    # (13Fs are due 45 days after quarter-end) plus the prior one for comparison.
+    start = (datetime.now() - timedelta(days=200)).strftime("%Y-%m-%d")
     end   = datetime.now().strftime("%Y-%m-%d")
 
-    # Discover recent 13F filers mentioning the issuer; keep the latest per fund.
-    funds: dict[str, tuple] = {}          # fund_cik -> (name, accn_nodash, doc, date)
-    for frm in range(0, 500, 100):
+    # Collect all 13F-HR filings mentioning the issuer, tagging each with its
+    # reporting quarter (period_ending). We'll then keep only the latest quarter.
+    raw: list[dict] = []
+    for frm in range(0, 1000, 100):
         try:
             r = requests.get("https://efts.sec.gov/LATEST/search-index",
                              params={"q": f'"{name_kw}"', "forms": "13F-HR",
@@ -656,20 +659,40 @@ def get_institutional_holders(submissions: dict, max_funds: int = 100) -> dict:
             break
         for x in hits:
             _id = x.get("_id", "")
-            accn = _id.split(":")[0].replace("-", "")
-            doc  = _id.split(":")[1] if ":" in _id else ""
-            src  = x.get("_source", {})
-            dn   = " ".join(src.get("display_names", []))
-            m    = re.search(r"CIK (\d+)", dn)
+            doc = _id.split(":")[1] if ":" in _id else ""
+            src = x.get("_source", {})
+            m   = re.search(r"CIK (\d+)", " ".join(src.get("display_names", [])))
             if not m or not doc:
                 continue
-            fcik  = m.group(1)
-            fname = src.get("display_names", [""])[0].split("  (CIK")[0].strip()
-            date  = src.get("file_date", "")
-            if fcik not in funds or date > funds[fcik][3]:
-                funds[fcik] = (fname, accn, doc, date)
-        if len(funds) >= max_funds:
+            raw.append({
+                "cik":  m.group(1),
+                "name": src.get("display_names", [""])[0].split("  (CIK")[0].strip(),
+                "accn": _id.split(":")[0].replace("-", ""),
+                "doc":  doc,
+                "date": src.get("file_date", ""),
+                "period": src.get("period_ending", ""),
+            })
+        if len(hits) < 100:
             break
+
+    # Target the latest FULLY-reported quarter. 13Fs are due 45 days after
+    # quarter-end, so the just-started next quarter has only a handful of early
+    # filers while the most-recent complete quarter has hundreds. Picking the
+    # period with the most filings (the mode) selects that complete quarter and
+    # auto-rolls forward once the next quarter's deadline passes. Funds whose
+    # only recent filing is an older quarter (they didn't refile → likely sold)
+    # are then excluded.
+    _period_counts = Counter(h["period"] for h in raw if h["period"])
+    latest_period = _period_counts.most_common(1)[0][0] if _period_counts else ""
+    funds: dict[str, tuple] = {}          # fund_cik -> (name, accn_nodash, doc, date)
+    for h in raw:
+        if latest_period and h["period"] != latest_period:
+            continue
+        fc = h["cik"]
+        if fc not in funds or h["date"] > funds[fc][3]:
+            funds[fc] = (h["name"], h["accn"], h["doc"], h["date"])
+
+    discovered = len(funds)              # true count of latest-quarter filers
 
     fund_ids = list(funds.keys())[:max_funds]
 
@@ -722,8 +745,11 @@ def get_institutional_holders(submissions: dict, max_funds: int = 100) -> dict:
         "holders": holders[:50],
         "total_value": round(sum(h["value"] for h in holders)),
         "total_count": len(holders),
-        "funds_scanned": scanned,
-        "funds_total": len(window_accns),
+        "funds_scanned": scanned,            # 13F filings we've parsed
+        "funds_window": len(window_accns),   # filings in the parse set (capped)
+        "funds_total": discovered,           # true count of latest-quarter filers
+        "period": latest_period,             # reporting quarter these holdings are as of
+        "sampled": discovered > len(window_accns),
         "complete": failures == 0 and scanned == len(window_accns),
         "pending": len(window_accns) - scanned,
         "rate_limited": failures > 0,

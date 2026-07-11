@@ -970,9 +970,10 @@ function finishHolders(wrap, hd, ticker){
 
 function renderHolders(hd, ticker){
   const list = hd.holders || [];
+  const asOf = hd.period ? `as of ${hd.period} (latest 13F quarter)` : 'latest 13F quarter';
   let h = `<div class="sec-title-row"><span class="sec-title">Institutional 13F Holders — ${ticker}</span>
     <span style="display:flex;align-items:center;gap:10px">
-      <span style="font-size:11px;color:var(--muted)">Latest quarter · 45-day-lagged snapshot</span>
+      <span style="font-size:11px;color:var(--muted)">${asOf}</span>
       <button class="btn" style="font-size:11px;padding:3px 9px" title="Clear cached 13F data and re-fetch" onclick="loadHolders('${ticker}', true)">↻ Purge &amp; Reload</button>
     </span></div>
   <div class="ib-wrap">`;
@@ -989,7 +990,7 @@ function renderHolders(hd, ticker){
   h += `<div class="ib-summary">
     <div class="ib-stat"><div class="ib-sl">Reported 13F Value</div><div class="ib-sv g">${F.$M(hd.total_value)}</div></div>
     <div class="ib-stat"><div class="ib-sl">Holders Shown</div><div class="ib-sv">${list.length}</div></div>
-    ${hd.funds_total?`<div class="ib-stat"><div class="ib-sl">Filings ${hd.complete?'Scanned':'Loaded'}</div><div class="ib-sv">${hd.complete?hd.funds_total:hd.funds_scanned+' of '+hd.funds_total}</div></div>`:''}
+    ${hd.funds_total?`<div class="ib-stat"><div class="ib-sl">Filers ${hd.sampled?'Scanned':'Found'}</div><div class="ib-sv">${hd.sampled?(hd.funds_scanned||0)+' of '+hd.funds_total:hd.funds_total}</div></div>`:''}
   </div>
   <div class="ib-none" style="padding-top:0;font-size:11px">Ranked by conviction — % of the fund's 13F portfolio in this stock. A sample of recent institutional filers, not an exhaustive holder list.</div>
   <div class="tbl-scroll"><table class="ib-table"><thead><tr>
