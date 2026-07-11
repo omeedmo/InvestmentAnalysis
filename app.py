@@ -1033,6 +1033,204 @@ def _resolve_cusips_edgar(cusips: list, time_budget_s: float = 90.0) -> dict:
     return out
 
 
+def _norm_issuer_name(s: str) -> list:
+    """Normalize an issuer/company name for matching: uppercase, split hyphens
+    and punctuation into word boundaries, drop generic corporate-suffix words."""
+    s = re.sub(r"[.,/&\-']", " ", s.upper())
+    stop = {"THE", "A", "INC", "CORP", "CO", "LTD", "LP", "PLC", "SA", "NV", "LLC", "NEW"}
+    return [w for w in s.split() if w not in stop]
+
+
+def _squish(words: list) -> str:
+    """Concatenate normalized words with no separator, for matching name
+    variants that differ only in where SEC's two datasets put a space or
+    punctuation (e.g. 13(f) list "OREILLY AUTOMOTIVE" vs ticker registry
+    "O REILLY AUTOMOTIVE"; "EXXON MOBIL" vs "EXXONMOBIL HOLDINGS")."""
+    return "".join(words)
+
+
+def _load_13f_official_list() -> dict:
+    """
+    SEC's own quarterly "Official List of Section 13(f) Securities" — every
+    CUSIP currently reportable on a 13F filing, with its authoritative issuer
+    name. By definition this covers every CUSIP our guru funds' CURRENT
+    holdings could report, so it's ground truth for CUSIP -> name, unlike
+    free-text 13F filer name variants ("INTUIT" vs "INTUIT COM"). SEC only
+    publishes the machine-readable .txt for the CURRENT quarter (older
+    quarters are PDF-only), so we just try current-then-previous quarter
+    (the latter covers the narrow window right after a quarter rolls before
+    SEC has published the new list yet).
+    """
+    cache_path = os.path.join(screener.CACHE_DIR, "13f_official_list.json")
+    try:
+        if os.path.exists(cache_path) and (time.time() - os.path.getmtime(cache_path)) < 30 * 86400:
+            with open(cache_path) as f:
+                return json.load(f)
+    except Exception:
+        pass
+
+    d = datetime.now().date()
+    y, q = d.year, (d.month - 1) // 3 + 1
+    prev_q, prev_y = (q - 1, y) if q > 1 else (4, y - 1)
+    quarters = [f"{y}q{q}", f"{prev_y}q{prev_q}"]
+
+    cusip_name: dict = {}
+    for qtag in quarters:
+        try:
+            r = requests.get(f"https://www.sec.gov/files/investment/13flist{qtag}-txt.txt",
+                             headers=HEADERS, timeout=30)
+            if r.status_code != 200:
+                continue
+            for line in r.text.splitlines():
+                if len(line) < 12:
+                    continue
+                cusip = line[:9].strip()
+                name = line[10:40].strip()
+                if cusip and name and cusip not in cusip_name:
+                    cusip_name[cusip] = name
+            break   # got a usable list — no need to also fetch the prior quarter
+        except Exception:
+            continue
+    try:
+        with open(cache_path, "w") as f:
+            json.dump(cusip_name, f)
+    except Exception:
+        pass
+    return cusip_name
+
+
+def _load_ticker_name_index() -> dict:
+    """
+    Name -> best ticker index, built from SEC's bulk ticker file. Two lookup
+    structures: an exact word-key index (fast dict lookup, handles the common
+    case), and a squished (no-space) name list for prefix fallback matching —
+    SEC's own ticker registry and its 13(f) securities list sometimes format
+    the same company differently (e.g. "ExxonMobil Holdings Corp" vs the
+    13(f) list's "EXXON MOBIL CORP"; "O REILLY" vs "OREILLY").
+    """
+    cache_path = os.path.join(screener.CACHE_DIR, "ticker_name_index.json")
+    try:
+        if os.path.exists(cache_path) and (time.time() - os.path.getmtime(cache_path)) < 86400:
+            with open(cache_path) as f:
+                return json.load(f)
+    except Exception:
+        pass
+
+    try:
+        r = requests.get("https://www.sec.gov/files/company_tickers.json", headers=HEADERS, timeout=20)
+        entries = list(r.json().values())
+    except Exception:
+        entries = []
+
+    word_idx: dict = {}
+    squish_idx: dict = {}
+    anyword_idx: dict = {}   # last-resort: any single distinctive word -> ticker
+    for e in entries:
+        tk = e.get("ticker", "")
+        title = e.get("title", "")
+        if not tk or not title or screener._is_non_common(tk):
+            continue
+        words = _norm_issuer_name(title)
+        if not words:
+            continue
+        for key in (" ".join(words[:2]), words[0]):
+            cur = word_idx.get(key)
+            if cur is None or screener._ticker_score(tk) < screener._ticker_score(cur):
+                word_idx[key] = tk
+        sq = _squish(words)
+        cur = squish_idx.get(sq)
+        if cur is None or screener._ticker_score(tk) < screener._ticker_score(cur):
+            squish_idx[sq] = tk
+        # Some registry titles lead with a brand name before the formal name
+        # ("PETROBRAS - PETROLEO BRASILEIRO SA"), so the 13(f) list's name
+        # ("PETROLEO BRASILEIRO S A") never lines up on word #1. Index every
+        # sufficiently distinctive word (not just the first two) as a fallback.
+        # Same score-based conflict resolution as word_idx/squish_idx — this is
+        # what correctly picks PBR over PBR-A when both share "PETROLEO" (two
+        # share classes of the same company), rather than treating any repeat
+        # as an unresolvable ambiguity.
+        for w in words:
+            if len(w) < 5:
+                continue
+            cur = anyword_idx.get(w)
+            if cur is None or screener._ticker_score(tk) < screener._ticker_score(cur):
+                anyword_idx[w] = tk
+
+    result = {"word_idx": word_idx, "squish_list": sorted(squish_idx.items()),
+             "anyword_idx": anyword_idx}
+    try:
+        with open(cache_path, "w") as f:
+            json.dump(result, f)
+    except Exception:
+        pass
+    return result
+
+
+def _squish_prefix_lookup(squish_list: list, target: str) -> Optional[str]:
+    """
+    Find a ticker whose squished registry name is a prefix of `target` (or
+    vice versa) — catches cases where SEC's two datasets tokenize the same
+    name differently ("EXXON MOBIL CORP" vs "ExxonMobil Holdings Corp" both
+    squish to strings sharing the "EXXONMOBIL" prefix). squish_list is sorted,
+    so this is a linear scan bounded to the handful of CUSIPs that miss the
+    exact-match tier — fine at this scale (thousands of entries, dozens of
+    lookups).
+    """
+    if not target:
+        return None
+    for name, ticker in squish_list:
+        if not name:
+            continue
+        if name.startswith(target) or target.startswith(name):
+            # Require the shorter side to be a meaningfully long, specific
+            # prefix (not just "A" or "CO") to avoid spurious collisions.
+            if min(len(name), len(target)) >= 5:
+                return ticker
+    return None
+
+
+def _resolve_cusips_13flist(cusips: list) -> dict:
+    """
+    Fast, in-memory, no-network CUSIP resolution: SEC's official 13(f)
+    CUSIP->name list, cross-referenced against SEC's own ticker->name registry.
+    Tried first since it resolves nearly everything in milliseconds; only
+    genuine misses fall through to the slower per-CUSIP EDGAR full-text search.
+    """
+    cusip_name = _load_13f_official_list()          # keys are uppercase (SEC's own casing)
+    idx = _load_ticker_name_index()
+    word_idx = idx["word_idx"]
+    squish_list = idx["squish_list"]
+    anyword_idx = idx["anyword_idx"]
+    out: dict = {}
+    for c in cusips:
+        # Some 13F filers write CUSIPs lowercase in their XML; the official
+        # list and our lookups are case-normalized, so match case-insensitively
+        # while still caching under the ORIGINAL casing (matches how the
+        # CUSIP is recorded in the fund holdings we're resolving for).
+        official_name = cusip_name.get(c.upper())
+        if not official_name:
+            continue
+        words = _norm_issuer_name(official_name)
+        if not words:
+            continue
+        ticker = word_idx.get(" ".join(words[:2])) or word_idx.get(words[0])
+        if not ticker:
+            ticker = _squish_prefix_lookup(squish_list, _squish(words))
+        if not ticker:
+            # Last resort: any single unambiguous distinctive word shared
+            # between the two names (catches brand-name-first registry titles
+            # like "PETROBRAS - PETROLEO BRASILEIRO SA" vs the 13(f) list's
+            # "PETROLEO BRASILEIRO S A" — no word-#1 alignment, but "PETROLEO"
+            # and "BRASILEIRO" both appear and are unambiguous).
+            for w in sorted(words, key=len, reverse=True):
+                if w in anyword_idx:
+                    ticker = anyword_idx[w]
+                    break
+        if ticker:
+            out[c] = ticker
+    return out
+
+
 def get_guru_holdings_tickers(refresh: bool = False, time_budget_s: float = 90.0) -> dict:
     """Union of every stock held by any tracked guru fund, as resolved tickers."""
     universe = get_guru_universe()
@@ -1047,9 +1245,20 @@ def get_guru_holdings_tickers(refresh: bool = False, time_budget_s: float = 90.0
     cache = {} if refresh else _load_cusip_ticker_cache()
     missing = [c for c in cusips if c not in cache]
     if missing:
-        resolved = _resolve_cusips_edgar(missing, time_budget_s=time_budget_s)
+        # Tier 1: fast, in-memory, no-network lookup via SEC's official 13(f)
+        # securities list cross-referenced against SEC's ticker registry.
+        # Resolves nearly everything instantly regardless of list size.
+        resolved = _resolve_cusips_13flist(missing)
         cache.update(resolved)
         _save_cusip_ticker_cache(cache)
+
+        # Tier 2: whatever that couldn't resolve (name variant SEC's registry
+        # doesn't recognize) falls through to per-CUSIP EDGAR full-text search.
+        still_missing = [c for c in missing if c not in resolved]
+        if still_missing:
+            resolved2 = _resolve_cusips_edgar(still_missing, time_budget_s=time_budget_s)
+            cache.update(resolved2)
+            _save_cusip_ticker_cache(cache)
 
     # Keep only plain equity-ticker-shaped strings — some CUSIPs resolve to
     # bond/note identifiers when a fund holds fixed income; those can't be
