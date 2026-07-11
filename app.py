@@ -958,6 +958,116 @@ def get_institutional_holders(submissions: dict, shares_out: Optional[float] = N
     }
 
 
+# ─── Guru Holdings universe (screener) ─────────────────────────────────────────
+# Compile the union of every stock currently held by any of the ~92 tracked
+# value-investor funds, so the screener can rank them by P/FCF / EV/EBIT like
+# any other universe. 13F info tables identify securities by CUSIP, not ticker,
+# so each CUSIP is resolved to a ticker via SEC EDGAR full-text search (no
+# third party) and cached long-term — the mapping is effectively permanent, so
+# this is a one-time cost amortized across quarters, same spirit as the
+# guru-fund 13F cache itself.
+
+def _cusip_ticker_cache_path() -> str:
+    return os.path.join(screener.CACHE_DIR, "cusip_ticker_map.json")
+
+
+def _load_cusip_ticker_cache() -> dict:
+    try:
+        with open(_cusip_ticker_cache_path()) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_cusip_ticker_cache(data: dict) -> None:
+    try:
+        with open(_cusip_ticker_cache_path(), "w") as f:
+            json.dump(data, f)
+    except Exception:
+        pass
+
+
+_CUSIP_DISPLAY_NAME_RE = re.compile(
+    r"^(.*?)\s+\(([A-Z0-9.\-]+(?:,\s*[A-Z0-9.\-]+)*)\)\s+\(CIK (\d+)\)$")
+
+
+def _resolve_cusip_edgar(cusip: str) -> Optional[str]:
+    """
+    Resolve a CUSIP to a ticker using SEC's own EDGAR full-text search — no
+    third party involved. Ownership-disclosure filings (SC 13D/13G, N-PX, etc.)
+    are indexed by CUSIP, and the subject company's entry in the hit's
+    display_names is formatted "NAME (TICKER) (CIK NNNNNNNNNN)" when SEC has a
+    ticker on file for it — we just parse that.
+    """
+    try:
+        r = requests.get("https://efts.sec.gov/LATEST/search-index",
+                         params={"q": cusip}, headers=HEADERS, timeout=15)
+        if r.status_code != 200:
+            return None
+        hits = r.json().get("hits", {}).get("hits", [])
+    except Exception:
+        return None
+    for h in hits[:5]:
+        dn = h.get("_source", {}).get("display_names", [])
+        if not dn:
+            continue
+        m = _CUSIP_DISPLAY_NAME_RE.match(dn[0])
+        if m:
+            return m.group(2).split(",")[0].strip()
+    return None
+
+
+def _resolve_cusips_edgar(cusips: list, time_budget_s: float = 90.0) -> dict:
+    """Resolve a batch of CUSIPs via EDGAR full-text search (one request per
+    CUSIP — SEC has no bulk CUSIP-lookup endpoint). Time-budgeted and
+    resumable like every other SEC-fetch loop in this app."""
+    out: dict = {}
+    start = time.time()
+    for cusip in cusips:
+        if time.time() - start > time_budget_s:
+            break
+        ticker = _resolve_cusip_edgar(cusip)
+        if ticker:
+            out[cusip] = ticker
+        time.sleep(0.15)   # EDGAR full-text search rate limit is generous but not unlimited
+    return out
+
+
+def get_guru_holdings_tickers(refresh: bool = False, time_budget_s: float = 90.0) -> dict:
+    """Union of every stock held by any tracked guru fund, as resolved tickers."""
+    universe = get_guru_universe()
+    cusips: set = set()
+    for data in universe["funds"].values():
+        if not data:
+            continue
+        for h in data.get("holdings", []):
+            if h.get("cusip") and (h.get("value") or 0) > 0:
+                cusips.add(h["cusip"])
+
+    cache = {} if refresh else _load_cusip_ticker_cache()
+    missing = [c for c in cusips if c not in cache]
+    if missing:
+        resolved = _resolve_cusips_edgar(missing, time_budget_s=time_budget_s)
+        cache.update(resolved)
+        _save_cusip_ticker_cache(cache)
+
+    # Keep only plain equity-ticker-shaped strings — some CUSIPs resolve to
+    # bond/note identifiers when a fund holds fixed income; those can't be
+    # screened as stocks anyway.
+    def _looks_like_ticker(t: str) -> bool:
+        return bool(t) and len(t) <= 6 and t.replace(".", "").replace("-", "").isalnum()
+
+    tickers = sorted({cache[c] for c in cusips if cache.get(c) and _looks_like_ticker(cache[c])})
+    scanned = len([c for c in cusips if c in cache])
+    return {
+        "tickers": tickers,
+        "total_cusips": len(cusips),
+        "resolved_cusips": scanned,
+        "pending_cusips": len(cusips) - scanned,
+        "complete": scanned == len(cusips),
+    }
+
+
 
 def extract_berkshire_equivalent_b_shares(text: str, filing_date: str = "") -> dict[str, float]:
     """
@@ -3042,9 +3152,10 @@ def index():
 @app.route("/api/universes")
 def universes():
     """Available named universes for the screener dropdown."""
-    return jsonify({"universes": [
-        {"key": k, "label": v} for k, v in screener.UNIVERSE_LABELS.items()
-    ]})
+    out = [{"key": "guru_holdings",
+           "label": f"Guru Holdings ({len(_unique_guru_ciks())} Funds)"}]
+    out += [{"key": k, "label": v} for k, v in screener.UNIVERSE_LABELS.items()]
+    return jsonify({"universes": out})
 
 
 @app.route("/api/screen")
@@ -3083,12 +3194,23 @@ def screen_route():
     remove_banks     = _flag("remove_banks")
     remove_reits     = _flag("remove_reits")
 
+    guru_progress = None
     try:
         if universe == "custom":
             raw = request.args.get("tickers", "")
             tickers = [t.strip().upper() for t in re.split(r"[,\s]+", raw) if t.strip()]
             if not tickers:
                 return jsonify({"error": "Provide tickers for a custom screen"}), 400
+        elif universe == "guru_holdings":
+            gh = get_guru_holdings_tickers(refresh=refresh)
+            tickers = gh["tickers"]
+            guru_progress = gh
+            if not tickers:
+                return jsonify({
+                    "error": "Still resolving the guru holdings universe (CUSIP → ticker lookups) "
+                             "— this can take a couple of minutes on a cold cache. Try again shortly.",
+                    "results": [], "stats": {"pending": True},
+                }), 200
         else:
             tickers = screener.get_universe(universe)
             if not tickers:
@@ -3104,7 +3226,15 @@ def screen_route():
         return jsonify({"error": f"Screen failed: {e}"}), 500
 
     # Attach company names from the SEC ticker map (cheap, already cached)
-    result["stats"]["label"] = screener.UNIVERSE_LABELS.get(universe, universe.upper())
+    if universe == "guru_holdings":
+        result["stats"]["label"] = f"Guru Holdings ({len(_unique_guru_ciks())} Funds)"
+        if guru_progress and not guru_progress["complete"]:
+            result["stats"]["guru_note"] = (
+                f"{guru_progress['resolved_cusips']} of {guru_progress['total_cusips']} "
+                f"holdings resolved to tickers so far — reload to pick up more."
+            )
+    else:
+        result["stats"]["label"] = screener.UNIVERSE_LABELS.get(universe, universe.upper())
     return jsonify(result)
 
 

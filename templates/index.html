@@ -1194,7 +1194,9 @@ async function runScreen(){
   const maxcap= document.getElementById('scr-maxcap').value.trim();
   const custom= (document.getElementById('scr-tickers')||{}).value || '';
   const go=document.getElementById('scr-go'); go.disabled=true; go.textContent='Screening…';
-  const slowNote = universe==='all' ? ' First total-market run pulls thousands of prices — this can take a few minutes.' : '';
+  const slowNote = universe==='all' ? ' First total-market run pulls thousands of prices — this can take a few minutes.'
+    : universe==='guru_holdings' ? ' First run resolves each fund holding\'s CUSIP to a ticker — may take a couple minutes and need a reload to finish.'
+    : '';
   document.getElementById('scr-results').innerHTML =
     `<div class="spinner-wrap"><div class="spinner"></div><p>Screening ${universe==='custom'?'your list':universe.toUpperCase()}… pulling SEC frames + prices.${slowNote}</p></div>`;
   try{
@@ -1260,6 +1262,7 @@ function renderScreenTable(stats){
   const arrow=k=> SCREEN_SORT.key===k ? (SCREEN_SORT.dir>0?' ▲':' ▼') : '';
   let h = `<div class="scr-hint" style="margin-bottom:8px">
     <strong>${st.label||st.universe||''}</strong> · ${st.passed} passed of ${st.evaluated} companies valued${st.excluded_sectors?` · ${st.excluded_sectors} insurers/banks/REITs excluded`:''} · FY${st.fiscal_year} · click a row to analyze</div>
+  ${st.guru_note?`<div class="scr-hint" style="margin-bottom:8px;color:#b45309">⚠ ${st.guru_note}</div>`:''}
   <table class="scr-table">
     <thead><tr>
       <th onclick="sortScreen('rank')">#</th>
