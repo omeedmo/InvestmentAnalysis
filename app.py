@@ -873,7 +873,7 @@ def get_institutional_holders(submissions: dict, shares_out: Optional[float] = N
     if not name_kw:
         return empty
 
-    def _matches_issuer(holding_name: str) -> bool:
+    def _matches_issuer_name(holding_name: str) -> bool:
         # Primary: precise two-word prefix match (e.g. "APPLE INC..." — avoids
         # false positives like "APPLE HOSPITALITY REIT").
         if holding_name.startswith(name_kw):
@@ -886,6 +886,24 @@ def get_institutional_holders(submissions: dict, shares_out: Optional[float] = N
         return bool(first_word) and holding_name == first_word
 
     universe = get_guru_universe(refresh=refresh)
+
+    # CUSIP is the standardized security identifier — far more reliable than
+    # issuer-name text, which different filers format wildly differently (e.g.
+    # "INTUIT INC", "INTUIT", "INTUIT COM" all refer to the same CUSIP
+    # 461202103). Bootstrap the target's CUSIP(s) from whichever holdings match
+    # by name, then do the real pass matching by CUSIP OR name — this catches
+    # filers whose name text doesn't match any of our name heuristics as long
+    # as at least one fund in the roster used a recognizable name.
+    bootstrap_cusips: set = set()
+    for data in universe["funds"].values():
+        if not data:
+            continue
+        for h in data.get("holdings", []):
+            if _matches_issuer_name(h["name"]) and h.get("cusip"):
+                bootstrap_cusips.add(h["cusip"])
+
+    def _matches(h: dict) -> bool:
+        return _matches_issuer_name(h["name"]) or (h.get("cusip") in bootstrap_cusips)
 
     # Guru/fund display label per CIK (first entry wins if a manager runs >1 fund).
     label_by_cik: dict = {}
@@ -902,7 +920,7 @@ def get_institutional_holders(submissions: dict, shares_out: Optional[float] = N
         val = 0.0
         sh  = 0.0
         for h in data["holdings"]:
-            if _matches_issuer(h["name"]):
+            if _matches(h):
                 val += h["value"]
                 sh  += h["shares"]
         if val <= 0:
