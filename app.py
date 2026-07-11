@@ -539,6 +539,7 @@ def _save_filing_cache(cik_no_zero: str, data: dict) -> None:
 # scan of the cached holdings data, no SEC calls at all.
 GURUS: list[dict] = [
     {"guru": "Guy Spier", "fund": "Aquamarine Capital", "manager": "Aquamarine Capital Management, LLC", "cik": 1404599},
+    {"guru": "Vitaliy Katsenelson", "fund": "IMA", "manager": "Investment Management Associates Inc /ADV", "cik": 52024},
     {"guru": "V. D. Dodge, E. M. Cox", "fund": "Dodge & Cox Stock Fund", "manager": "Dodge & Cox", "cik": 200217},
     {"guru": "Mark A. Hillman", "fund": "Hillman Value Fund", "manager": "Hillman Capital Management, Inc.", "cik": 1314620},
     {"guru": "Mason Hawkins", "fund": "Longleaf Partners", "manager": "Southeastern Asset Management Inc", "cik": 807985},
