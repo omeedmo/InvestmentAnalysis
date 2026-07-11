@@ -866,11 +866,24 @@ def get_institutional_holders(submissions: dict, shares_out: Optional[float] = N
     name = submissions.get("name", "") or ""
     words = [w for w in re.sub(r"[.,/&]", " ", name.upper()).split() if w not in ("THE", "A")]
     name_kw = " ".join(words[:2])
+    first_word = words[0] if words else ""
     empty = {"holders": [], "total_value": 0, "total_count": 0,
              "complete": True, "rate_limited": False, "pending": 0,
              "funds_scanned": 0, "funds_total": len(_unique_guru_ciks()), "period": ""}
     if not name_kw:
         return empty
+
+    def _matches_issuer(holding_name: str) -> bool:
+        # Primary: precise two-word prefix match (e.g. "APPLE INC..." — avoids
+        # false positives like "APPLE HOSPITALITY REIT").
+        if holding_name.startswith(name_kw):
+            return True
+        # Fallback: some 13F filers drop the corporate suffix entirely and tag
+        # just the first word (e.g. Lindsell Train tags Intuit as "INTUIT", not
+        # "INTUIT INC"). An exact match on the first word alone is still safe —
+        # it won't accidentally catch "APPLE HOSPITALITY" since that isn't an
+        # exact match to "APPLE".
+        return bool(first_word) and holding_name == first_word
 
     universe = get_guru_universe(refresh=refresh)
 
@@ -889,7 +902,7 @@ def get_institutional_holders(submissions: dict, shares_out: Optional[float] = N
         val = 0.0
         sh  = 0.0
         for h in data["holdings"]:
-            if h["name"].startswith(name_kw):
+            if _matches_issuer(h["name"]):
                 val += h["value"]
                 sh  += h["shares"]
         if val <= 0:
