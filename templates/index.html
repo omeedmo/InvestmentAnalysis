@@ -993,7 +993,7 @@ function renderHolders(hd, ticker){
   </div>
   <div class="ib-none" style="padding-top:0;font-size:11px">Ranked by conviction — % of the fund's 13F portfolio in this stock. A sample of recent institutional filers, not an exhaustive holder list.</div>
   <div class="tbl-scroll"><table class="ib-table"><thead><tr>
-    <th>#</th><th>Institution</th><th>Reported Value</th><th>% of Portfolio</th><th>Fund 13F Total</th><th>Shares</th><th>Filed</th><th>13F</th>
+    <th>#</th><th>Institution</th><th>Reported Value</th><th>% of Portfolio</th><th>Fund 13F Total</th><th>Holdings</th><th>Shares</th><th>Filed</th><th>13F</th>
   </tr></thead><tbody>`;
   list.forEach((v,i)=>{
     h += `<tr>
@@ -1002,6 +1002,7 @@ function renderHolders(hd, ticker){
       <td class="g" style="color:var(--green);font-weight:600">${F.$M(v.value)}</td>
       <td class="${v.pct>=0.05?'scr-good':''}" style="${v.pct>=0.05?'color:var(--green);font-weight:700':''}">${v.pct!=null?(v.pct*100).toFixed(1)+'%':'—'}</td>
       <td style="color:var(--muted)">${F.$M(v.portfolio_value)}</td>
+      <td>${v.portfolio_positions!=null?v.portfolio_positions.toLocaleString():'—'}</td>
       <td>${Math.round(v.shares).toLocaleString()}</td>
       <td>${v.date||'—'}</td>
       <td><a class="rf-link" href="${v.link}" target="_blank" rel="noreferrer">View ↗</a></td>

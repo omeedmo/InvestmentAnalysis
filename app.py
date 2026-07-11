@@ -589,20 +589,24 @@ def _parse_13f_holding(fund_cik: str, accn_nodash: str, doc: str, name_kw: str) 
     total_val = 0.0
     total_sh  = 0.0
     portfolio_val = 0.0     # sum of ALL positions → used for % of portfolio
+    port_cusips: set = set()   # distinct securities held → portfolio size
     cusip = None
     held = False
     for block in re.split(r"</(?:\w+:)?infoTable>", text):
         val_raw = _xml_tag(block, "value")
+        row_cusip = _xml_tag(block, "cusip")
         if val_raw:
             try:
                 portfolio_val += float(val_raw)
             except ValueError:
                 pass
+            if row_cusip:
+                port_cusips.add(row_cusip.upper())
         nm = (_xml_tag(block, "nameOfIssuer") or "").upper()
         if not nm or not nm.startswith(name_kw):
             continue
         held = True
-        cusip = cusip or _xml_tag(block, "cusip")
+        cusip = cusip or row_cusip
         try:
             total_val += float(val_raw or 0)
         except ValueError:
@@ -612,7 +616,8 @@ def _parse_13f_holding(fund_cik: str, accn_nodash: str, doc: str, name_kw: str) 
         except ValueError:
             pass
     return {"held": held, "value": total_val, "shares": total_sh,
-            "portfolio_value": portfolio_val, "cusip": cusip}
+            "portfolio_value": portfolio_val, "portfolio_positions": len(port_cusips),
+            "cusip": cusip}
 
 
 def get_institutional_holders(submissions: dict, max_funds: int = 100) -> dict:
@@ -676,7 +681,7 @@ def get_institutional_holders(submissions: dict, max_funds: int = 100) -> dict:
         if accn not in cache:
             return False
         v = cache[accn]
-        return v is None or "portfolio_value" in v   # None = negative; dict must be new format
+        return v is None or "portfolio_positions" in v   # None = negative; dict must be newest format
 
     to_fetch = [fc for fc in fund_ids if not _cached_ok(funds[fc][1])]
 
@@ -697,6 +702,7 @@ def get_institutional_holders(submissions: dict, max_funds: int = 100) -> dict:
                         "fund": fname, "cik": int(fc), "date": date,
                         "value": res["value"], "shares": res["shares"],
                         "portfolio_value": pv,
+                        "portfolio_positions": res.get("portfolio_positions") or 0,
                         "pct": (res["value"] / pv) if pv > 0 else 0.0,
                         "link": f"https://www.sec.gov/Archives/edgar/data/{int(fc)}/{accn}/",
                     }
