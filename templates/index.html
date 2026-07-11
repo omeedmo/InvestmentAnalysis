@@ -777,6 +777,7 @@ function render(data){
   h+=`<div id="vic-section"></div>`;
 
   // Institutional 13F holders placeholder — filled asynchronously (at the end)
+  window._sharesOut = mk.shares_outstanding || null;   // reuse for 13F ownership %
   h+=`<div id="holders-section"></div>`;
 
   document.getElementById('root').innerHTML=h;
@@ -951,7 +952,8 @@ function loadHolders(ticker, refresh){
   if(window._hldTimer){ clearInterval(window._hldTimer); window._hldTimer=null; }
   wrap.innerHTML = `<div class="sec-title-row"><span class="sec-title">Institutional 13F Holders — ${ticker}</span></div>
     <div class="ib-wrap"><div class="ib-none">${refresh?'⏳ Purging cache and reloading 13F holders…':'⏳ Loading 13F holders (scanning recent institutional filings)…'}</div></div>`;
-  fetch(`/api/holders?ticker=${encodeURIComponent(ticker)}${refresh?'&refresh=1':''}`)
+  const soParam = window._sharesOut ? `&shares_out=${window._sharesOut}` : '';
+  fetch(`/api/holders?ticker=${encodeURIComponent(ticker)}${refresh?'&refresh=1':''}${soParam}`)
     .then(r=>r.json())
     .then(hd=>finishHolders(wrap, hd||{}, ticker))
     .catch(()=>finishHolders(wrap, {rate_limited:true}, ticker));
@@ -994,7 +996,7 @@ function renderHolders(hd, ticker){
   </div>
   <div class="ib-none" style="padding-top:0;font-size:11px">Ranked by conviction — % of the fund's 13F portfolio in this stock. A sample of recent institutional filers, not an exhaustive holder list.</div>
   <div class="tbl-scroll"><table class="ib-table"><thead><tr>
-    <th>#</th><th>Institution</th><th>Reported Value</th><th>% of Portfolio</th><th>Fund 13F Total</th><th>Holdings</th><th>Shares</th><th>Filed</th><th>13F</th>
+    <th>#</th><th>Institution</th><th>Reported Value</th><th>% of Portfolio</th><th>Fund 13F Total</th><th>Holdings</th><th>Shares</th><th>% Shares Out</th><th>Filed</th><th>13F</th>
   </tr></thead><tbody>`;
   list.forEach((v,i)=>{
     h += `<tr>
@@ -1005,6 +1007,7 @@ function renderHolders(hd, ticker){
       <td style="color:var(--muted)">${F.$M(v.portfolio_value)}</td>
       <td>${v.portfolio_positions!=null?v.portfolio_positions.toLocaleString():'—'}</td>
       <td>${Math.round(v.shares).toLocaleString()}</td>
+      <td class="${v.own_pct>=0.05?'scr-good':''}" style="${v.own_pct>=0.05?'color:var(--green);font-weight:700':''}">${v.own_pct!=null?(v.own_pct*100).toFixed(2)+'%':'—'}</td>
       <td>${v.date||'—'}</td>
       <td><a class="rf-link" href="${v.link}" target="_blank" rel="noreferrer">View ↗</a></td>
     </tr>`;

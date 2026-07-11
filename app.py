@@ -558,6 +558,30 @@ def _save_holder_cache(cik_no_zero: str, data: dict) -> None:
         pass
 
 
+def _shares_outstanding(cik_no_zero: str) -> Optional[float]:
+    """Most recent shares-outstanding via SEC's single-concept API (lightweight,
+    unlike companyfacts). Used to express each 13F stake as % of shares out."""
+    for ns, tag in (("dei", "EntityCommonStockSharesOutstanding"),
+                    ("us-gaap", "CommonStockSharesOutstanding")):
+        url = f"https://data.sec.gov/api/xbrl/companyconcept/CIK{cik_no_zero.zfill(10)}/{ns}/{tag}.json"
+        for attempt in range(2):
+            try:
+                r = requests.get(url, headers=HEADERS, timeout=15)
+                if r.status_code == 429:
+                    time.sleep(0.5 * (attempt + 1))
+                    continue
+                if r.status_code != 200:
+                    break
+                entries = r.json().get("units", {}).get("shares", [])
+                entries = [e for e in entries if e.get("val") and e.get("end")]
+                if entries:
+                    return float(max(entries, key=lambda e: e["end"])["val"])
+                break
+            except Exception:
+                break
+    return None
+
+
 def _parse_13f_holding(fund_cik: str, accn_nodash: str, doc: str, name_kw: str) -> Optional[dict]:
     """
     Fetch one fund's 13F information table and return its position in the target
@@ -620,7 +644,8 @@ def _parse_13f_holding(fund_cik: str, accn_nodash: str, doc: str, name_kw: str) 
             "cusip": cusip}
 
 
-def get_institutional_holders(submissions: dict, max_funds: int = 200) -> dict:
+def get_institutional_holders(submissions: dict, max_funds: int = 200,
+                              shares_out: Optional[float] = None) -> dict:
     """
     Institutional 13F holders of this stock, from the most recent quarter's
     13F-HR filings (EDGAR full-text search), with each fund's position value/
@@ -737,7 +762,18 @@ def get_institutional_holders(submissions: dict, max_funds: int = 200) -> dict:
     cache = {a: v for a, v in cache.items() if a in window_accns}
     _save_holder_cache(cik_no_zero, cache)
 
-    holders = [v for v in cache.values() if v]
+    # Ownership as % of shares outstanding. The caller passes shares_out from the
+    # analyze flow (already computed there — no extra call); fall back to the
+    # single-concept API only if it wasn't provided.
+    if not shares_out:
+        shares_out = _shares_outstanding(cik_no_zero)
+    holders = []
+    for v in cache.values():
+        if not v:
+            continue
+        hv = dict(v)
+        hv["own_pct"] = (v["shares"] / shares_out) if shares_out else None
+        holders.append(hv)
     # Highest conviction first: rank by % of the fund's portfolio in this stock.
     holders.sort(key=lambda h: (h.get("pct") or 0, h.get("value") or 0), reverse=True)
     scanned = len([a for a in window_accns if a in cache])
@@ -749,6 +785,7 @@ def get_institutional_holders(submissions: dict, max_funds: int = 200) -> dict:
         "funds_window": len(window_accns),   # filings in the parse set (capped)
         "funds_total": discovered,           # true count of latest-quarter filers
         "period": latest_period,             # reporting quarter these holdings are as of
+        "shares_outstanding": shares_out,
         "sampled": discovered > len(window_accns),
         "complete": failures == 0 and scanned == len(window_accns),
         "pending": len(window_accns) - scanned,
@@ -2931,9 +2968,15 @@ def holders():
         except OSError:
             pass
 
+    # Shares outstanding comes from the analyze flow (avoids a redundant fetch).
+    try:
+        shares_out = float(request.args.get("shares_out", "") or 0) or None
+    except ValueError:
+        shares_out = None
+
     try:
         submissions = fetch_submissions(cik)
-        return jsonify(get_institutional_holders(submissions))
+        return jsonify(get_institutional_holders(submissions, shares_out=shares_out))
     except Exception as e:
         return jsonify({"error": f"13F fetch failed: {e}", "holders": [],
                         "total_value": 0, "total_count": 0, "rate_limited": True}), 200
