@@ -3129,6 +3129,28 @@ def insider():
                         "total_count": 0, "rate_limited": True}), 200
 
 
+def _cached_company_name(cik: str) -> str:
+    """Company name for issuer-matching, cached long-term (names essentially
+    never change) so /api/holders doesn't re-fetch the full submissions JSON
+    from SEC on every call — that was hitting SEC's rate limit and turning
+    transient throttling into a full request failure."""
+    cache_path = os.path.join(screener.CACHE_DIR, f"company_name_{cik}.json")
+    try:
+        if os.path.exists(cache_path) and (time.time() - os.path.getmtime(cache_path)) < 30 * 86400:
+            with open(cache_path) as f:
+                return json.load(f)["name"]
+    except Exception:
+        pass
+    submissions = fetch_submissions(cik)
+    name = submissions.get("name", "") or ""
+    try:
+        with open(cache_path, "w") as f:
+            json.dump({"name": name}, f)
+    except Exception:
+        pass
+    return name
+
+
 @app.route("/api/holders")
 def holders():
     """Institutional 13F holders of the stock, scanned from a curated ~92-fund
@@ -3153,9 +3175,9 @@ def holders():
         shares_out = None
 
     try:
-        submissions = fetch_submissions(cik)
-        return jsonify(get_institutional_holders(submissions, shares_out=shares_out,
-                                                   refresh=refresh))
+        name = _cached_company_name(cik)
+        return jsonify(get_institutional_holders({"cik": cik, "name": name},
+                                                   shares_out=shares_out, refresh=refresh))
     except Exception as e:
         return jsonify({"error": f"13F fetch failed: {e}", "holders": [],
                         "total_value": 0, "total_count": 0, "rate_limited": True}), 200
