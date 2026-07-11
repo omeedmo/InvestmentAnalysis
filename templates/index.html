@@ -991,15 +991,17 @@ function renderHolders(hd, ticker){
     <div class="ib-stat"><div class="ib-sl">Holders Shown</div><div class="ib-sv">${list.length}</div></div>
     ${hd.funds_total?`<div class="ib-stat"><div class="ib-sl">Filings ${hd.complete?'Scanned':'Loaded'}</div><div class="ib-sv">${hd.complete?hd.funds_total:hd.funds_scanned+' of '+hd.funds_total}</div></div>`:''}
   </div>
-  <div class="ib-none" style="padding-top:0;font-size:11px">Largest positions among the recent institutional 13F filers scanned — not an exhaustive holder list.</div>
+  <div class="ib-none" style="padding-top:0;font-size:11px">Ranked by conviction — % of the fund's 13F portfolio in this stock. A sample of recent institutional filers, not an exhaustive holder list.</div>
   <div class="tbl-scroll"><table class="ib-table"><thead><tr>
-    <th>#</th><th>Institution</th><th>Reported Value</th><th>Shares</th><th>Filed</th><th>13F</th>
+    <th>#</th><th>Institution</th><th>Reported Value</th><th>% of Portfolio</th><th>Fund 13F Total</th><th>Shares</th><th>Filed</th><th>13F</th>
   </tr></thead><tbody>`;
   list.forEach((v,i)=>{
     h += `<tr>
       <td class="scr-rank">${i+1}</td>
       <td style="font-weight:600">${v.fund||'—'}</td>
       <td class="g" style="color:var(--green);font-weight:600">${F.$M(v.value)}</td>
+      <td class="${v.pct>=0.05?'scr-good':''}" style="${v.pct>=0.05?'color:var(--green);font-weight:700':''}">${v.pct!=null?(v.pct*100).toFixed(1)+'%':'—'}</td>
+      <td style="color:var(--muted)">${F.$M(v.portfolio_value)}</td>
       <td>${Math.round(v.shares).toLocaleString()}</td>
       <td>${v.date||'—'}</td>
       <td><a class="rf-link" href="${v.link}" target="_blank" rel="noreferrer">View ↗</a></td>

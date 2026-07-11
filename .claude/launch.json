@@ -5,7 +5,8 @@
       "name": "InvestmentAnalysis",
       "runtimeExecutable": "python3",
       "runtimeArgs": ["/Users/omid/Documents/Workspace/InvestmentAnalysis/app.py"],
-      "port": 5050
+      "port": 5050,
+      "autoPort": false
     }
   ]
 }

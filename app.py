@@ -588,23 +588,31 @@ def _parse_13f_holding(fund_cik: str, accn_nodash: str, doc: str, name_kw: str) 
 
     total_val = 0.0
     total_sh  = 0.0
+    portfolio_val = 0.0     # sum of ALL positions → used for % of portfolio
     cusip = None
     held = False
     for block in re.split(r"</(?:\w+:)?infoTable>", text):
+        val_raw = _xml_tag(block, "value")
+        if val_raw:
+            try:
+                portfolio_val += float(val_raw)
+            except ValueError:
+                pass
         nm = (_xml_tag(block, "nameOfIssuer") or "").upper()
         if not nm or not nm.startswith(name_kw):
             continue
         held = True
         cusip = cusip or _xml_tag(block, "cusip")
         try:
-            total_val += float(_xml_tag(block, "value") or 0)
+            total_val += float(val_raw or 0)
         except ValueError:
             pass
         try:
             total_sh += float(_xml_tag(block, "sshPrnamt") or 0)
         except ValueError:
             pass
-    return {"held": held, "value": total_val, "shares": total_sh, "cusip": cusip}
+    return {"held": held, "value": total_val, "shares": total_sh,
+            "portfolio_value": portfolio_val, "cusip": cusip}
 
 
 def get_institutional_holders(submissions: dict, max_funds: int = 100) -> dict:
@@ -661,8 +669,16 @@ def get_institutional_holders(submissions: dict, max_funds: int = 100) -> dict:
     fund_ids = list(funds.keys())[:max_funds]
 
     # Per-filing cache keyed by accession (13F info tables are immutable).
+    # Re-fetch entries from an older cache format that lack portfolio_value.
     cache = _load_holder_cache(cik_no_zero)
-    to_fetch = [fc for fc in fund_ids if funds[fc][1] not in cache]
+
+    def _cached_ok(accn):
+        if accn not in cache:
+            return False
+        v = cache[accn]
+        return v is None or "portfolio_value" in v   # None = negative; dict must be new format
+
+    to_fetch = [fc for fc in fund_ids if not _cached_ok(funds[fc][1])]
 
     failures = 0
     if to_fetch:
@@ -676,9 +692,12 @@ def get_institutional_holders(submissions: dict, max_funds: int = 100) -> dict:
                 if res is None:
                     failures += 1
                 elif res.get("held"):
+                    pv = res.get("portfolio_value") or 0.0
                     cache[accn] = {
                         "fund": fname, "cik": int(fc), "date": date,
                         "value": res["value"], "shares": res["shares"],
+                        "portfolio_value": pv,
+                        "pct": (res["value"] / pv) if pv > 0 else 0.0,
                         "link": f"https://www.sec.gov/Archives/edgar/data/{int(fc)}/{accn}/",
                     }
                 else:
@@ -690,7 +709,8 @@ def get_institutional_holders(submissions: dict, max_funds: int = 100) -> dict:
     _save_holder_cache(cik_no_zero, cache)
 
     holders = [v for v in cache.values() if v]
-    holders.sort(key=lambda h: h["value"], reverse=True)
+    # Highest conviction first: rank by % of the fund's portfolio in this stock.
+    holders.sort(key=lambda h: (h.get("pct") or 0, h.get("value") or 0), reverse=True)
     scanned = len([a for a in window_accns if a in cache])
     return {
         "holders": holders[:50],
@@ -4142,4 +4162,4 @@ def analyze():
 
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5050, host="0.0.0.0")
+    app.run(debug=True, port=int(os.environ.get("PORT", 5050)), host="0.0.0.0")
