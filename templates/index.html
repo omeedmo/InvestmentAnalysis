@@ -587,6 +587,9 @@ function render(data){
       : null,
     {l:'Div. Yield',    v: mk.dividend_yield ? F.pct(mk.dividend_yield) : '—'},
     {l:'Beta',          v: mk.beta ? mk.beta.toFixed(2) : '—'},
+    {l:'Short % Float', v: mk.short_pct_float!=null ? F.pct(mk.short_pct_float) : '—',
+     cls: mk.short_pct_float>=0.20?'r':'',
+     title: mk.short_settlement_date ? `As of ${mk.short_settlement_date}${mk.days_to_cover!=null?' · '+mk.days_to_cover.toFixed(1)+'d to cover':''}` : ''},
     {l:'Market Cap',    v: F.$M(mk.market_cap)},
     {l:'Enterprise Val',v: F.$M(mk.enterprise_value)},
     {l:'Shares Out.',   v: F.sh(mk.shares_outstanding)},
@@ -605,7 +608,7 @@ function render(data){
     </div>
   </div>
   <div class="vl-stats">
-    ${vlStats.filter(Boolean).map(s=>`<div class="vl-stat"><div class="vl-sl">${s.l}</div><div class="vl-sv${s.cls?' '+s.cls:''}">${s.v}</div></div>`).join('')}
+    ${vlStats.filter(Boolean).map(s=>`<div class="vl-stat"${s.title?` title="${s.title}"`:''}><div class="vl-sl">${s.l}</div><div class="vl-sv${s.cls?' '+s.cls:''}">${s.v}</div></div>`).join('')}
   </div>
   ${rangeHtml}
   <div class="vl-links">
@@ -975,33 +978,32 @@ function renderHolders(hd, ticker){
   const asOf = hd.period ? `as of ${hd.period} (latest 13F quarter)` : 'latest 13F quarter';
   let h = `<div class="sec-title-row"><span class="sec-title">Institutional 13F Holders — ${ticker}</span>
     <span style="display:flex;align-items:center;gap:10px">
-      <span style="font-size:11px;color:var(--muted)">${asOf}</span>
-      <button class="btn" style="font-size:11px;padding:3px 9px" title="Clear cached 13F data and re-fetch" onclick="loadHolders('${ticker}', true)">↻ Purge &amp; Reload</button>
+      <span style="font-size:11px;color:var(--muted)">${asOf} · ~92 tracked value-investing funds</span>
+      <button class="btn" style="font-size:11px;padding:3px 9px" title="Clear the shared fund cache and re-fetch all 92 (slow, affects every stock)" onclick="loadHolders('${ticker}', true)">↻ Purge &amp; Reload</button>
     </span></div>
   <div class="ib-wrap">`;
   if(hd.rate_limited){
     h += `<div class="ib-none" style="color:#b45309;background:#fffbeb">
-      ⚠ SEC rate limit reached while scanning 13F filings${list.length?' — the list below may be incomplete':''}.
-      ${hd.pending?`<strong>${hd.pending}</strong> filing${hd.pending!==1?'s':''} still to scan — progress is saved.`:''}
+      ⚠ SEC rate limit reached while loading the tracked-fund roster${list.length?' — the list below may be incomplete':''}.
+      ${hd.pending?`<strong>${hd.pending}</strong> of ${hd.funds_total} funds still to load — progress is shared across every stock, so this only has to happen once.`:''}
       <div style="margin-top:6px">⏳ Retrying automatically in <span id="hld-count">${INSIDER_COOLDOWN}</span>s…</div></div>`;
     if(!list.length){ return h + `</div>`; }
   } else if(!list.length){
-    h += `<div class="ib-none">No institutional 13F holders found for ${ticker} in the most recent quarter${hd.funds_total?` (scanned ${hd.funds_total} filings)`:''}. Smaller or recently-listed companies may have little 13F coverage.</div></div>`;
+    h += `<div class="ib-none">None of the ~92 tracked value investors currently hold ${ticker}${hd.funds_scanned?` (${hd.funds_scanned} funds checked)`:''}.</div></div>`;
     return h;
   }
   h += `<div class="ib-summary">
     <div class="ib-stat"><div class="ib-sl">Reported 13F Value</div><div class="ib-sv g">${F.$M(hd.total_value)}</div></div>
-    <div class="ib-stat"><div class="ib-sl">Holders Shown</div><div class="ib-sv">${list.length}</div></div>
-    ${hd.funds_total?`<div class="ib-stat"><div class="ib-sl">Filers ${hd.sampled?'Scanned':'Found'}</div><div class="ib-sv">${hd.sampled?(hd.funds_scanned||0)+' of '+hd.funds_total:hd.funds_total}</div></div>`:''}
+    <div class="ib-stat"><div class="ib-sl">Holders</div><div class="ib-sv">${list.length} of ${hd.funds_total||92}</div></div>
   </div>
-  <div class="ib-none" style="padding-top:0;font-size:11px">Ranked by conviction — % of the fund's 13F portfolio in this stock. A sample of recent institutional filers, not an exhaustive holder list.</div>
+  <div class="ib-none" style="padding-top:0;font-size:11px">Ranked by conviction — % of the fund's 13F portfolio in this stock. Tracks a curated roster of well-known value-investing 13F filers, not the full universe of institutional holders.</div>
   <div class="tbl-scroll"><table class="ib-table"><thead><tr>
     <th>#</th><th>Institution</th><th>Reported Value</th><th>% of Portfolio</th><th>Fund 13F Total</th><th>Holdings</th><th>Shares</th><th>% Shares Out</th><th>Filed</th><th>13F</th>
   </tr></thead><tbody>`;
   list.forEach((v,i)=>{
     h += `<tr>
       <td class="scr-rank">${i+1}</td>
-      <td style="font-weight:600">${v.fund||'—'}</td>
+      <td style="font-weight:600">${v.fund||'—'}${v.manager && v.manager!==v.fund?` <span style="font-weight:400;color:var(--muted);font-size:11px">· ${v.manager}</span>`:''}</td>
       <td class="g" style="color:var(--green);font-weight:600">${F.$M(v.value)}</td>
       <td class="${v.pct>=0.05?'scr-good':''}" style="${v.pct>=0.05?'color:var(--green);font-weight:700':''}">${v.pct!=null?(v.pct*100).toFixed(1)+'%':'—'}</td>
       <td style="color:var(--muted)">${F.$M(v.portfolio_value)}</td>

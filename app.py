@@ -530,7 +530,108 @@ def _save_filing_cache(cik_no_zero: str, data: dict) -> None:
         pass
 
 
-# ─── Institutional (13F) holders ──────────────────────────────────────────────
+# ─── Institutional (13F) holders — curated value-investor roster ──────────────
+# Sourced from ValueSider's ~92 tracked value-investing 13F filers (2026-07).
+# This is a fixed, small universe (unlike EDGAR full-text search over ~6,000
+# filers), so each fund's latest-quarter 13F is fetched and cached ONCE per
+# quarter — shared across every stock's analyze — instead of re-searching for
+# each stock. A stock lookup after the first population is a pure in-memory
+# scan of the cached holdings data, no SEC calls at all.
+GURUS: list[dict] = [
+    {"guru": "Guy Spier", "fund": "Aquamarine Capital", "manager": "Aquamarine Capital Management, LLC", "cik": 1404599},
+    {"guru": "V. D. Dodge, E. M. Cox", "fund": "Dodge & Cox Stock Fund", "manager": "Dodge & Cox", "cik": 200217},
+    {"guru": "Mark A. Hillman", "fund": "Hillman Value Fund", "manager": "Hillman Capital Management, Inc.", "cik": 1314620},
+    {"guru": "Mason Hawkins", "fund": "Longleaf Partners", "manager": "Southeastern Asset Management Inc", "cik": 807985},
+    {"guru": "Independent Franchise Partners", "fund": "US Equity Fund", "manager": "Independent Franchise Partners LLP", "cik": 1483866},
+    {"guru": "John W. Rogers Jr.", "fund": "Ariel Appreciation Fund", "manager": "Ariel Investments, LLC", "cik": 936753},
+    {"guru": "Christopher Davis", "fund": "Clipper Fund", "manager": "Davis Selected Advisers", "cik": 1036325},
+    {"guru": "Jim Cullen", "fund": "Cullen Value Fund", "manager": "Cullen Capital Management, LLC", "cik": 1362535},
+    {"guru": "Wallace Weitz", "fund": "Weitz Value Fund", "manager": "Weitz Investment Management, Inc.", "cik": 883965},
+    {"guru": "Bill Nygren", "fund": "Oakmark Select Fund", "manager": "Harris Associates L P", "cik": 813917},
+    {"guru": "Charles Bobrinskoy", "fund": "Ariel Focus Fund", "manager": "Ariel Investments, LLC", "cik": 936753},
+    {"guru": "Ruane, Cunniff & Goldfarb", "fund": "Sequoia Fund", "manager": "Ruane, Cunniff & Goldfarb L.P.", "cik": 1720792},
+    {"guru": "Charles Jigarjian", "fund": "7G Capital Management", "manager": "7G Capital Management, LLC", "cik": 1720350},
+    {"guru": "Howard Marks", "fund": "Oaktree Capital Management", "manager": "Oaktree Capital Management LP", "cik": 949509},
+    {"guru": "Duan Yongping", "fund": "H&H International Investment", "manager": "H&H International Investment, LLC", "cik": 1759760},
+    {"guru": "Andrew Brenton", "fund": "Turtle Creek Asset Management", "manager": "Turtle Creek Asset Management Inc.", "cik": 1484148},
+    {"guru": "David Einhorn", "fund": "Greenlight Capital", "manager": "Greenlight Capital Inc", "cik": 1079114},
+    {"guru": "Christopher Bloomstran", "fund": "Semper Augustus Investments Group", "manager": "Semper Augustus Investments Group LLC", "cik": 1115373},
+    {"guru": "Chris Hohn", "fund": "TCI Fund Management", "manager": "TCI Fund Management Ltd", "cik": 1647251},
+    {"guru": "Ravenel Boykin Curry IV", "fund": "Eagle Capital Management", "manager": "Eagle Capital Management LLC", "cik": 945631},
+    {"guru": "Ole Andreas Halvorsen", "fund": "Viking Global Investors", "manager": "Viking Global Investors LP", "cik": 1103804},
+    {"guru": "Bill Miller", "fund": "Miller Value Partners", "manager": "Miller Value Partners, LLC", "cik": 1135778},
+    {"guru": "Nelson Peltz", "fund": "Trian Fund Management", "manager": "Trian Fund Management, L.P.", "cik": 1345471},
+    {"guru": "Quincy Lee", "fund": "Ancient Art (Teton Capital)", "manager": "Ancient Art, L.P.", "cik": 1426749},
+    {"guru": "Nicolai Tangen", "fund": "AKO Capital", "manager": "AKO Capital LLP", "cik": 1376879},
+    {"guru": "Greg Alexander", "fund": "Conifer Management", "manager": "Conifer Management, L.L.C.", "cik": 1773994},
+    {"guru": "Francois Rochon", "fund": "Giverny Capital", "manager": "Giverny Capital Inc.", "cik": 1641864},
+    {"guru": "Pat Dorsey", "fund": "Dorsey Asset Management", "manager": "Dorsey Asset Management, LLC", "cik": 1671657},
+    {"guru": "Daniel Loeb", "fund": "Third Point", "manager": "Third Point LLC", "cik": 1040273},
+    {"guru": "Fred Martin", "fund": "Disciplined Growth Investors", "manager": "Disciplined Growth Investors Inc /MN", "cik": 1050442},
+    {"guru": "Dev Kantesaria", "fund": "Valley Forge Capital Management", "manager": "Valley Forge Capital Management, LP", "cik": 1697868},
+    {"guru": "Stephen Mandel", "fund": "Lone Pine Capital", "manager": "Lone Pine Capital LLC", "cik": 1061165},
+    {"guru": "David Tepper", "fund": "Appaloosa Management", "manager": "Appaloosa LP", "cik": 1656456},
+    {"guru": "Henry Ellenbogen", "fund": "Durable Capital Partners", "manager": "Durable Capital Partners LP", "cik": 1798849},
+    {"guru": "Robert Karr", "fund": "Joho Capital", "manager": "Joho Capital LLC", "cik": 1106500},
+    {"guru": "Stuart Mclaughlin", "fund": "Triple Frond Partners", "manager": "Triple Frond Partners LLC", "cik": 1454502},
+    {"guru": "Jeffrey Ubben", "fund": "ValueAct Holdings", "manager": "ValueAct Holdings, L.P.", "cik": 1418814},
+    {"guru": "Chase Coleman III", "fund": "Tiger Global Management", "manager": "Tiger Global Management LLC", "cik": 1167483},
+    {"guru": "Frederick (Shad) Rowe", "fund": "Greenbrier Partners Capital Management", "manager": "Greenbrier Partners Capital Management, LLC", "cik": 1532262},
+    {"guru": "Bill Gates", "fund": "Bill & Melinda Gates Foundation Trust", "manager": "Gates Foundation Trust", "cik": 1166559},
+    {"guru": "Warren Buffett", "fund": "Berkshire Hathaway", "manager": "Berkshire Hathaway Inc", "cik": 1067983},
+    {"guru": "David Rolfe", "fund": "Wedgewood Partners", "manager": "Wedgewood Partners Inc", "cik": 859804},
+    {"guru": "Alex Roepers", "fund": "Atlantic Investment Management", "manager": "Atlantic Investment Management, Inc.", "cik": 1063296},
+    {"guru": "Glenn Greenberg", "fund": "Brave Warrior Advisors", "manager": "Brave Warrior Advisors, LLC", "cik": 1553733},
+    {"guru": "Prem Watsa", "fund": "Fairfax Financial Holdings", "manager": "Fairfax Financial Holdings Ltd/Can", "cik": 915191},
+    {"guru": "Terry Smith", "fund": "Fundsmith", "manager": "Fundsmith LLP", "cik": 1569205},
+    {"guru": "Glenn W. Welling", "fund": "Engaged Capital", "manager": "Engaged Capital LLC", "cik": 1559771},
+    {"guru": "Connor Haley", "fund": "Alta Fox Capital Management", "manager": "Alta Fox Capital Management, LLC", "cik": 1858353},
+    {"guru": "Bill Ackman", "fund": "Pershing Square Capital Management", "manager": "Pershing Square Capital Management, L.P.", "cik": 1336528},
+    {"guru": "Bryan R. Lawrence", "fund": "Oakcliff Capital Partners", "manager": "Oakcliff Capital Partners, LP", "cik": 1657335},
+    {"guru": "Mark Massey", "fund": "AltaRock Partners", "manager": "AltaRock Partners LP", "cik": 1631014},
+    {"guru": "Li Lu", "fund": "Himalaya Capital Management", "manager": "Himalaya Capital Management LLC", "cik": 1709323},
+    {"guru": "Carl Icahn", "fund": "Icahn Capital Management", "manager": "Icahn Carl C", "cik": 921669},
+    {"guru": "Bruce Berkowitz", "fund": "Fairholme Capital Management", "manager": "Fairholme Capital Management LLC", "cik": 1056831},
+    {"guru": "Norbert Lou", "fund": "Punch Card Management", "manager": "Punch Card Management L.P.", "cik": 1631664},
+    {"guru": "Adam Wyden", "fund": "ADW Capital Management", "manager": "ADW Capital Management, LLC", "cik": 1745214},
+    {"guru": "Clifford Sosin", "fund": "CAS Investment Partners", "manager": "CAS Investment Partners, LLC", "cik": 1697591},
+    {"guru": "Sarah Ketterer", "fund": "Causeway Capital Management", "manager": "Causeway Capital Management LLC", "cik": 1165797},
+    {"guru": "Donald G. Smith", "fund": "Donald Smith & Co.", "manager": "Donald Smith & Co., Inc.", "cik": 814375},
+    {"guru": "Francis Chou", "fund": "Chou Associates Management", "manager": "Chou Associates Management Inc.", "cik": 1389403},
+    {"guru": "David M. Polen", "fund": "Polen Capital Management", "manager": "Polen Capital Management LLC", "cik": 1034524},
+    {"guru": "Chuck Akre", "fund": "Akre Capital Management", "manager": "Akre Capital Management LLC", "cik": 1112520},
+    {"guru": "Mohnish Pabrai", "fund": "Dalal Street", "manager": "Dalal Street, LLC", "cik": 1549575},
+    {"guru": "Seth Klarman", "fund": "Baupost Group", "manager": "Baupost Group LLC/MA", "cik": 1061768},
+    {"guru": "Nathaniel Simons", "fund": "Meritage Group", "manager": "Meritage Group LP", "cik": 1427119},
+    {"guru": "Dennis Hong", "fund": "ShawSpring Partners", "manager": "ShawSpring Partners LLC", "cik": 1766908},
+    {"guru": "David Abrams", "fund": "Abrams Capital Management", "manager": "Abrams Capital Management, L.P.", "cik": 1358706},
+    {"guru": "Thomas Russo", "fund": "Gardner Russo & Quinn", "manager": "Gardner Russo & Quinn LLC", "cik": 860643},
+    {"guru": "Marty Whitman", "fund": "Third Avenue Management", "manager": "Third Avenue Management LLC", "cik": 1099281},
+    {"guru": "John Armitage", "fund": "Egerton Capital", "manager": "Egerton Capital (UK) LLP", "cik": 1581811},
+    {"guru": "Andrew R. Adams", "fund": "Mairs & Power Growth Fund", "manager": "Mairs & Power Inc", "cik": 1070134},
+    {"guru": "Paul Isaac", "fund": "Arbiter Partners Capital Management", "manager": "Arbiter Partners Capital Management LLC", "cik": 1513193},
+    {"guru": "C.T. Fitzpatrick", "fund": "Vulcan Value Partners", "manager": "Vulcan Value Partners, LLC", "cik": 1556785},
+    {"guru": "Rob Vinall", "fund": "RV Capital", "manager": "RV Capital AG", "cik": 1766596},
+    {"guru": "Josh Tarasoff", "fund": "Greenlea Lane Capital Management", "manager": "Greenlea Lane Capital Management, LLC", "cik": 1766504},
+    {"guru": "Thomas Graham, Alan, Irving Kahns", "fund": "Kahn Brothers Group", "manager": "Kahn Brothers Group Inc", "cik": 1039565},
+    {"guru": "Harry Burn", "fund": "Sound Shore Management", "manager": "Sound Shore Management Inc /CT/", "cik": 820124},
+    {"guru": "William Von Mueffling", "fund": "Cantillon Capital Management", "manager": "Cantillon Capital Management LLC", "cik": 1279936},
+    {"guru": "Paul Lountzis", "fund": "Lountzis Asset Management", "manager": "Lountzis Asset Management, LLC", "cik": 1821168},
+    {"guru": "B. Tweedy, Ch. Browne", "fund": "Tweedy, Browne Co All Funds (US)", "manager": "Tweedy, Browne Co LLC", "cik": 732905},
+    {"guru": "Ronald Muhlenkamp", "fund": "Muhlenkamp & Co", "manager": "Muhlenkamp & Co Inc", "cik": 1133219},
+    {"guru": "Parnassus Investments", "fund": "Parnassus Endeavor Fund", "manager": "Parnassus Investments, LLC", "cik": 948669},
+    {"guru": "Eric H. Schoenstein", "fund": "Jensen Investment Management", "manager": "Jensen Investment Management Inc", "cik": 1106129},
+    {"guru": "Donald Yacktman", "fund": "Yacktman Asset Management", "manager": "Yacktman Asset Management LP", "cik": 905567},
+    {"guru": "Robert Torray", "fund": "Torray Fund", "manager": "Torray Investment Partners LLC", "cik": 98758},
+    {"guru": "Michael Lindsell, Nick Train", "fund": "Lindsell Train", "manager": "Lindsell Train Ltd", "cik": 1484150},
+    {"guru": "Charlie Munger", "fund": "Daily Journal Corp", "manager": "Daily Journal Corp", "cik": 783412},
+    {"guru": "Edgar Wachenheim III", "fund": "Greenhaven Associates", "manager": "Greenhaven Associates Inc", "cik": 846222},
+    {"guru": "Brian Bares", "fund": "Bares Capital Management", "manager": "Bares Capital Management, Inc.", "cik": 1340807},
+    {"guru": "Michael Burry", "fund": "Scion Asset Management", "manager": "Scion Asset Management, LLC", "cik": 1649339},
+    {"guru": "David Katz", "fund": "Matrix Advisors Value Fund", "manager": "Matrix Asset Advisors Inc/NY", "cik": 1016287},
+    {"guru": "Phil Town", "fund": "Rule One Fund", "manager": "Rule One Partners, LLC", "cik": 2040263},
+]
+
 
 def _xml_tag(block: str, tag: str) -> Optional[str]:
     """Namespace-agnostic single-value extract from a 13F info-table block."""
@@ -538,64 +639,113 @@ def _xml_tag(block: str, tag: str) -> Optional[str]:
     return m.group(1).strip() if m else None
 
 
-def _holder_cache_path(cik_no_zero: str) -> str:
-    return os.path.join(screener.CACHE_DIR, f"holders_{cik_no_zero}.json")
+def _latest_13f_quarter() -> str:
+    """The most recent quarter-end whose 13F filing deadline (45 days) has passed
+    — i.e. the latest fully-reported quarter. Used only as a display/target
+    reference; each fund's cache is considered fresh once it holds this period
+    (or the fund's own latest available filing, if they haven't filed yet)."""
+    from datetime import date, timedelta
+    d = datetime.now().date() - timedelta(days=46)   # 45-day deadline + 1 buffer
+    qends = [date(y, m, dd)
+             for y in (d.year, d.year - 1)
+             for (m, dd) in ((3, 31), (6, 30), (9, 30), (12, 31))]
+    passed = [q for q in qends if q <= d]
+    return max(passed).isoformat() if passed else ""
 
 
-def _load_holder_cache(cik_no_zero: str) -> dict:
+def _guru_fund_cache_path(cik: int) -> str:
+    return os.path.join(screener.CACHE_DIR, f"guru13f_{cik}.json")
+
+
+def _load_guru_fund(cik: int) -> Optional[dict]:
     try:
-        with open(_holder_cache_path(cik_no_zero)) as f:
+        with open(_guru_fund_cache_path(cik)) as f:
             return json.load(f)
     except Exception:
-        return {}
+        return None
 
 
-def _save_holder_cache(cik_no_zero: str, data: dict) -> None:
+def _save_guru_fund(cik: int, data: dict) -> None:
     try:
-        with open(_holder_cache_path(cik_no_zero), "w") as f:
+        with open(_guru_fund_cache_path(cik), "w") as f:
             json.dump(data, f)
     except Exception:
         pass
 
 
-def _shares_outstanding(cik_no_zero: str) -> Optional[float]:
-    """Most recent shares-outstanding via SEC's single-concept API (lightweight,
-    unlike companyfacts). Used to express each 13F stake as % of shares out."""
-    for ns, tag in (("dei", "EntityCommonStockSharesOutstanding"),
-                    ("us-gaap", "CommonStockSharesOutstanding")):
-        url = f"https://data.sec.gov/api/xbrl/companyconcept/CIK{cik_no_zero.zfill(10)}/{ns}/{tag}.json"
-        for attempt in range(2):
-            try:
-                r = requests.get(url, headers=HEADERS, timeout=15)
-                if r.status_code == 429:
-                    time.sleep(0.5 * (attempt + 1))
-                    continue
-                if r.status_code != 200:
-                    break
-                entries = r.json().get("units", {}).get("shares", [])
-                entries = [e for e in entries if e.get("val") and e.get("end")]
-                if entries:
-                    return float(max(entries, key=lambda e: e["end"])["val"])
-                break
-            except Exception:
-                break
+def _fetch_fund_latest_13f_meta(cik: int) -> Optional[tuple]:
+    """Return (accn_nodash, filing_date, period_ending) for a fund's most
+    recent 13F-HR / 13F-HR/A filing, or None on failure / no such filing.
+    (The submissions API's primaryDocument for a 13F is the cover page, not
+    the information table — that's resolved separately, see _resolve_infotable_doc.)"""
+    for attempt in range(2):
+        try:
+            r = requests.get(f"{EDGAR_BASE}/submissions/CIK{cik:010d}.json",
+                             headers=HEADERS, timeout=20)
+            if r.status_code == 429:
+                time.sleep(0.5 * (attempt + 1))
+                continue
+            if r.status_code != 200:
+                return None
+            j = r.json()
+            break
+        except Exception:
+            if attempt == 1:
+                return None
+            time.sleep(0.4)
+    else:
+        return None
+
+    recent = j.get("filings", {}).get("recent", {})
+    forms  = recent.get("form", [])
+    accns  = recent.get("accessionNumber", [])
+    dates  = recent.get("filingDate", [])
+    periods = recent.get("reportDate", [])
+    best = None   # (period, filing_date, accn)
+    for i, f in enumerate(forms):
+        if f not in ("13F-HR", "13F-HR/A"):
+            continue
+        period = periods[i] if i < len(periods) else ""
+        fdate  = dates[i] if i < len(dates) else ""
+        cand = (period, fdate, accns[i].replace("-", ""))
+        if best is None or (cand[0], cand[1]) > (best[0], best[1]):
+            best = cand
+    if not best:
+        return None
+    return best[2], best[1], best[0]   # accn, filing_date, period
+
+
+def _resolve_infotable_doc(cik: int, accn_nodash: str) -> Optional[str]:
+    """A 13F filing's information table is a separate XML document from the
+    cover-page primary_doc.xml, with a filer-chosen name (e.g. 'infotable.xml',
+    'form13fInfoTable.xml', or a numeric hash). Find it via the filing's
+    document index: the .xml file that isn't primary_doc.xml or an -index file."""
+    try:
+        r = requests.get(f"https://www.sec.gov/Archives/edgar/data/{cik}/{accn_nodash}/index.json",
+                         headers=HEADERS, timeout=15)
+        if r.status_code != 200:
+            return None
+        items = r.json().get("directory", {}).get("item", [])
+    except Exception:
+        return None
+    for it in items:
+        nm = (it.get("name") or "")
+        low = nm.lower()
+        if low.endswith(".xml") and low != "primary_doc.xml" and "-index" not in low:
+            return nm
     return None
 
 
-def _parse_13f_holding(fund_cik: str, accn_nodash: str, doc: str, name_kw: str) -> Optional[dict]:
-    """
-    Fetch one fund's 13F information table and return its position in the target
-    issuer (rows whose nameOfIssuer starts with name_kw — covers multiple share
-    classes/options, summed). Value is in whole USD (post-2023 13F rule).
-    Returns {held, value, shares, cusip} or None on a failed fetch.
-    """
-    raw_doc = doc.split("/")[-1]
-    if not raw_doc.lower().endswith(".xml"):
-        return {"held": False}
-    url = f"https://www.sec.gov/Archives/edgar/data/{int(fund_cik)}/{accn_nodash}/{raw_doc}"
+def _fetch_fund_13f_holdings(cik: int, accn_nodash: str) -> Optional[dict]:
+    """Fetch and parse ALL holdings from one fund's 13F information table
+    (not filtered to any single issuer — this fund's full portfolio)."""
+    raw_doc = _resolve_infotable_doc(cik, accn_nodash)
+    if not raw_doc:
+        return None
+    url = f"https://www.sec.gov/Archives/edgar/data/{cik}/{accn_nodash}/{raw_doc}"
     for attempt in range(2):
         try:
-            r = requests.get(url, headers=HEADERS, timeout=20)
+            r = requests.get(url, headers=HEADERS, timeout=25)
             if r.status_code == 429:
                 time.sleep(0.5 * (attempt + 1))
                 continue
@@ -610,187 +760,171 @@ def _parse_13f_holding(fund_cik: str, accn_nodash: str, doc: str, name_kw: str) 
     else:
         return None
 
-    total_val = 0.0
-    total_sh  = 0.0
-    portfolio_val = 0.0     # sum of ALL positions → used for % of portfolio
-    port_cusips: set = set()   # distinct securities held → portfolio size
-    cusip = None
-    held = False
+    holdings = []
+    portfolio_val = 0.0
     for block in re.split(r"</(?:\w+:)?infoTable>", text):
         val_raw = _xml_tag(block, "value")
-        row_cusip = _xml_tag(block, "cusip")
-        if val_raw:
+        if not val_raw:
+            continue
+        try:
+            val = float(val_raw)
+        except ValueError:
+            continue
+        nm = _xml_tag(block, "nameOfIssuer") or ""
+        if not nm:
+            continue
+        sh_raw = _xml_tag(block, "sshPrnamt")
+        try:
+            sh = float(sh_raw) if sh_raw else 0.0
+        except ValueError:
+            sh = 0.0
+        portfolio_val += val
+        holdings.append({"name": nm.upper(), "cusip": _xml_tag(block, "cusip"),
+                         "value": val, "shares": sh})
+    return {"holdings": holdings, "portfolio_value": portfolio_val}
+
+
+def _unique_guru_ciks() -> list:
+    seen, out = set(), []
+    for g in GURUS:
+        if g["cik"] not in seen:
+            seen.add(g["cik"])
+            out.append(g["cik"])
+    return out
+
+
+def get_guru_universe(refresh: bool = False) -> dict:
+    """
+    Ensure every tracked fund's latest 13F is fetched and cached, then return
+    the merged dataset. Only funds whose cache is missing (or, on refresh,
+    purged) trigger a network fetch — once populated for a quarter, this is a
+    zero-network operation, and get_institutional_holders() for ANY stock just
+    scans the returned dict in memory.
+    """
+    target_q = _latest_13f_quarter()
+    ciks = _unique_guru_ciks()
+
+    if refresh:
+        for c in ciks:
             try:
-                portfolio_val += float(val_raw)
-            except ValueError:
+                os.remove(_guru_fund_cache_path(c))
+            except OSError:
                 pass
-            if row_cusip:
-                port_cusips.add(row_cusip.upper())
-        nm = (_xml_tag(block, "nameOfIssuer") or "").upper()
-        if not nm or not nm.startswith(name_kw):
-            continue
-        held = True
-        cusip = cusip or row_cusip
-        try:
-            total_val += float(val_raw or 0)
-        except ValueError:
-            pass
-        try:
-            total_sh += float(_xml_tag(block, "sshPrnamt") or 0)
-        except ValueError:
-            pass
-    return {"held": held, "value": total_val, "shares": total_sh,
-            "portfolio_value": portfolio_val, "portfolio_positions": len(port_cusips),
-            "cusip": cusip}
 
-
-def get_institutional_holders(submissions: dict, max_funds: int = 200,
-                              shares_out: Optional[float] = None) -> dict:
-    """
-    Institutional 13F holders of this stock, from the most recent quarter's
-    13F-HR filings (EDGAR full-text search), with each fund's position value/
-    shares parsed from its information table. Sorted by position value.
-    Per-filing cache (immutable) → rate-limited runs resume cumulatively.
-    """
-    cik_no_zero = str(int(submissions.get("cik", "0")))
-    name = submissions.get("name", "") or ""
-    words = [w for w in re.sub(r"[.,/&]", " ", name.upper()).split() if w not in ("THE", "A")]
-    name_kw = " ".join(words[:2])           # e.g. "APPLE INC", "DXC TECHNOLOGY"
-    empty = {"holders": [], "total_value": 0, "total_count": 0,
-             "complete": True, "rate_limited": False, "pending": 0,
-             "funds_scanned": 0, "funds_total": 0, "period": ""}
-    if not name_kw:
-        return empty
-
-    from datetime import timedelta
-    # Look back ~200 days so we always capture the full most-recent 13F season
-    # (13Fs are due 45 days after quarter-end) plus the prior one for comparison.
-    start = (datetime.now() - timedelta(days=200)).strftime("%Y-%m-%d")
-    end   = datetime.now().strftime("%Y-%m-%d")
-
-    # Collect all 13F-HR filings mentioning the issuer, tagging each with its
-    # reporting quarter (period_ending). We'll then keep only the latest quarter.
-    raw: list[dict] = []
-    for frm in range(0, 1000, 100):
-        try:
-            r = requests.get("https://efts.sec.gov/LATEST/search-index",
-                             params={"q": f'"{name_kw}"', "forms": "13F-HR",
-                                     "startdt": start, "enddt": end, "from": frm},
-                             headers=HEADERS, timeout=20)
-            hits = r.json().get("hits", {}).get("hits", []) if r.status_code == 200 else []
-        except Exception:
-            hits = []
-        if not hits:
-            break
-        for x in hits:
-            _id = x.get("_id", "")
-            doc = _id.split(":")[1] if ":" in _id else ""
-            src = x.get("_source", {})
-            m   = re.search(r"CIK (\d+)", " ".join(src.get("display_names", [])))
-            if not m or not doc:
-                continue
-            raw.append({
-                "cik":  m.group(1),
-                "name": src.get("display_names", [""])[0].split("  (CIK")[0].strip(),
-                "accn": _id.split(":")[0].replace("-", ""),
-                "doc":  doc,
-                "date": src.get("file_date", ""),
-                "period": src.get("period_ending", ""),
-            })
-        if len(hits) < 100:
-            break
-
-    # Target the latest FULLY-reported quarter. 13Fs are due 45 days after
-    # quarter-end, so the just-started next quarter has only a handful of early
-    # filers while the most-recent complete quarter has hundreds. Picking the
-    # period with the most filings (the mode) selects that complete quarter and
-    # auto-rolls forward once the next quarter's deadline passes. Funds whose
-    # only recent filing is an older quarter (they didn't refile → likely sold)
-    # are then excluded.
-    _period_counts = Counter(h["period"] for h in raw if h["period"])
-    latest_period = _period_counts.most_common(1)[0][0] if _period_counts else ""
-    funds: dict[str, tuple] = {}          # fund_cik -> (name, accn_nodash, doc, date)
-    for h in raw:
-        if latest_period and h["period"] != latest_period:
-            continue
-        fc = h["cik"]
-        if fc not in funds or h["date"] > funds[fc][3]:
-            funds[fc] = (h["name"], h["accn"], h["doc"], h["date"])
-
-    discovered = len(funds)              # true count of latest-quarter filers
-
-    fund_ids = list(funds.keys())[:max_funds]
-
-    # Per-filing cache keyed by accession (13F info tables are immutable).
-    # Re-fetch entries from an older cache format that lack portfolio_value.
-    cache = _load_holder_cache(cik_no_zero)
-
-    def _cached_ok(accn):
-        if accn not in cache:
-            return False
-        v = cache[accn]
-        return v is None or "portfolio_positions" in v   # None = negative; dict must be newest format
-
-    to_fetch = [fc for fc in fund_ids if not _cached_ok(funds[fc][1])]
+    to_fetch = []
+    funds: dict = {}
+    for c in ciks:
+        cached = _load_guru_fund(c)
+        # Fresh if it already reflects the target quarter, OR it's the most
+        # recent filing we could find for a fund that hasn't filed the target
+        # quarter yet (avoids hammering slow/late filers every request).
+        if cached and (cached.get("period", "") >= target_q or cached.get("_no_newer")):
+            funds[c] = cached
+        else:
+            to_fetch.append(c)
 
     failures = 0
     if to_fetch:
-        def _job(fc):
-            fname, accn, doc, date = funds[fc]
-            res = _parse_13f_holding(fc, accn, doc, name_kw)
-            return fc, res
+        def _job(cik):
+            meta = _fetch_fund_latest_13f_meta(cik)
+            if meta is None:
+                return cik, None
+            accn, fdate, period = meta
+            data = _fetch_fund_13f_holdings(cik, accn)
+            if data is None:
+                return cik, None
+            data.update({"period": period, "date": fdate,
+                        "link": f"https://www.sec.gov/Archives/edgar/data/{cik}/{accn}/",
+                        "_no_newer": period < target_q})
+            return cik, data
         with ThreadPoolExecutor(max_workers=6) as ex:
-            for fc, res in ex.map(_job, to_fetch):
-                fname, accn, doc, date = funds[fc]
-                if res is None:
+            for cik, data in ex.map(_job, to_fetch):
+                if data is None:
                     failures += 1
-                elif res.get("held"):
-                    pv = res.get("portfolio_value") or 0.0
-                    cache[accn] = {
-                        "fund": fname, "cik": int(fc), "date": date,
-                        "value": res["value"], "shares": res["shares"],
-                        "portfolio_value": pv,
-                        "portfolio_positions": res.get("portfolio_positions") or 0,
-                        "pct": (res["value"] / pv) if pv > 0 else 0.0,
-                        "link": f"https://www.sec.gov/Archives/edgar/data/{int(fc)}/{accn}/",
-                    }
                 else:
-                    cache[accn] = None      # scanned, doesn't hold — cache the negative
+                    _save_guru_fund(cik, data)
+                    funds[cik] = data
 
-    # Prune to the current window and persist.
-    window_accns = {funds[fc][1] for fc in fund_ids}
-    cache = {a: v for a, v in cache.items() if a in window_accns}
-    _save_holder_cache(cik_no_zero, cache)
-
-    # Ownership as % of shares outstanding. The caller passes shares_out from the
-    # analyze flow (already computed there — no extra call); fall back to the
-    # single-concept API only if it wasn't provided.
-    if not shares_out:
-        shares_out = _shares_outstanding(cik_no_zero)
-    holders = []
-    for v in cache.values():
-        if not v:
-            continue
-        hv = dict(v)
-        hv["own_pct"] = (v["shares"] / shares_out) if shares_out else None
-        holders.append(hv)
-    # Highest conviction first: rank by % of the fund's portfolio in this stock.
-    holders.sort(key=lambda h: (h.get("pct") or 0, h.get("value") or 0), reverse=True)
-    scanned = len([a for a in window_accns if a in cache])
     return {
-        "holders": holders[:50],
+        "funds": funds,
+        "total": len(ciks),
+        "scanned": len(funds),
+        "pending": len(ciks) - len(funds),
+        "complete": len(funds) == len(ciks),
+        "rate_limited": failures > 0,
+        "target_period": target_q,
+    }
+
+
+def get_institutional_holders(submissions: dict, shares_out: Optional[float] = None,
+                              refresh: bool = False) -> dict:
+    """
+    Institutional 13F holders of this stock, scanned from the cached
+    value-investor universe (see get_guru_universe). No per-stock SEC calls
+    once the universe is warm for the quarter.
+    """
+    name = submissions.get("name", "") or ""
+    words = [w for w in re.sub(r"[.,/&]", " ", name.upper()).split() if w not in ("THE", "A")]
+    name_kw = " ".join(words[:2])
+    empty = {"holders": [], "total_value": 0, "total_count": 0,
+             "complete": True, "rate_limited": False, "pending": 0,
+             "funds_scanned": 0, "funds_total": len(_unique_guru_ciks()), "period": ""}
+    if not name_kw:
+        return empty
+
+    universe = get_guru_universe(refresh=refresh)
+
+    # Guru/fund display label per CIK (first entry wins if a manager runs >1 fund).
+    label_by_cik: dict = {}
+    for g in GURUS:
+        label_by_cik.setdefault(g["cik"], (g["guru"], g["fund"], g["manager"]))
+
+    periods = [d.get("period", "") for d in universe["funds"].values() if d.get("period")]
+    period = Counter(periods).most_common(1)[0][0] if periods else universe["target_period"]
+
+    holders = []
+    for cik, data in universe["funds"].items():
+        if not data or not data.get("holdings"):
+            continue
+        val = 0.0
+        sh  = 0.0
+        for h in data["holdings"]:
+            if h["name"].startswith(name_kw):
+                val += h["value"]
+                sh  += h["shares"]
+        if val <= 0:
+            continue
+        guru, fund, manager = label_by_cik.get(cik, ("", "", ""))
+        pv = data.get("portfolio_value") or 0.0
+        holders.append({
+            "fund": guru or manager,
+            "manager": manager,
+            "cik": cik,
+            "date": data.get("date", ""),
+            "value": val,
+            "shares": sh,
+            "portfolio_value": pv,
+            "portfolio_positions": len(data["holdings"]),
+            "pct": (val / pv) if pv > 0 else 0.0,
+            "own_pct": (sh / shares_out) if shares_out else None,
+            "link": data.get("link", ""),
+        })
+    holders.sort(key=lambda h: (h.get("pct") or 0, h.get("value") or 0), reverse=True)
+
+    return {
+        "holders": holders[:100],
         "total_value": round(sum(h["value"] for h in holders)),
         "total_count": len(holders),
-        "funds_scanned": scanned,            # 13F filings we've parsed
-        "funds_window": len(window_accns),   # filings in the parse set (capped)
-        "funds_total": discovered,           # true count of latest-quarter filers
-        "period": latest_period,             # reporting quarter these holdings are as of
+        "funds_scanned": universe["scanned"],
+        "funds_total": universe["total"],
+        "period": period,
         "shares_outstanding": shares_out,
-        "sampled": discovered > len(window_accns),
-        "complete": failures == 0 and scanned == len(window_accns),
-        "pending": len(window_accns) - scanned,
-        "rate_limited": failures > 0,
+        "sampled": False,   # fixed curated roster, not a sample of a larger universe
+        "complete": universe["complete"],
+        "pending": universe["pending"],
+        "rate_limited": universe["rate_limited"],
     }
+
 
 
 def extract_berkshire_equivalent_b_shares(text: str, filing_date: str = "") -> dict[str, float]:
@@ -1342,6 +1476,37 @@ def get_market_data(ticker: str) -> dict:
         except Exception:
             continue
     return data
+
+
+def get_short_interest(ticker: str) -> dict:
+    """Latest bi-monthly short-interest settlement (shares short, days to cover)
+    from Nasdaq's public short-interest API — official exchange/FINRA-sourced
+    data, no auth required. Short % of float is computed by the caller using
+    EDGAR shares outstanding (float itself isn't published here; shares
+    outstanding is the standard proxy most data providers fall back to)."""
+    sym = ticker.replace(".", "/").replace("-", ".")   # BRK.B -> BRK/B for Nasdaq's URL scheme
+    for candidate in (ticker.replace(".", "").replace("-", ""), ticker, sym):
+        try:
+            r = requests.get(f"https://api.nasdaq.com/api/quote/{candidate}/short-interest",
+                             params={"assetclass": "stocks"},
+                             headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"},
+                             timeout=15)
+            if r.status_code != 200:
+                continue
+            rows = (r.json().get("data") or {}).get("shortInterestTable", {}).get("rows") or []
+            if not rows:
+                continue
+            row = rows[0]   # most recent settlement date first
+            shares_short = float((row.get("interest") or "0").replace(",", ""))
+            m, d, y = (row.get("settlementDate") or "").split("/")
+            return {
+                "shares_short": shares_short,
+                "settlement_date": f"{y}-{m}-{d}" if y else None,
+                "days_to_cover": row.get("daysToCover"),
+            }
+        except Exception:
+            continue
+    return {}
 
 
 # ─── XBRL tag priority lists ─────────────────────────────────────────────────
@@ -2953,8 +3118,10 @@ def insider():
 
 @app.route("/api/holders")
 def holders():
-    """Institutional 13F holders of the stock (latest quarter). Loaded async by
-    the frontend; per-filing cache resumes cumulatively if rate-limited."""
+    """Institutional 13F holders of the stock, scanned from a curated ~92-fund
+    value-investor roster (see GURUS). The roster's 13F data is fetched and
+    cached ONCE per quarter, shared across every stock — this endpoint mostly
+    does zero SEC calls once that shared cache is warm."""
     ticker = request.args.get("ticker", "").upper().strip()
     if not ticker:
         return jsonify({"error": "ticker required"}), 400
@@ -2962,11 +3129,9 @@ def holders():
     if not cik:
         return jsonify({"error": f"Ticker '{ticker}' not found"}), 404
 
-    if request.args.get("refresh", "").strip() in ("1", "true", "yes"):
-        try:
-            os.remove(_holder_cache_path(str(int(cik))))
-        except OSError:
-            pass
+    # refresh=1 purges the SHARED guru-fund cache, forcing the whole roster to
+    # be refetched (expensive — an explicit user action, not automatic).
+    refresh = request.args.get("refresh", "").strip() in ("1", "true", "yes")
 
     # Shares outstanding comes from the analyze flow (avoids a redundant fetch).
     try:
@@ -2976,7 +3141,8 @@ def holders():
 
     try:
         submissions = fetch_submissions(cik)
-        return jsonify(get_institutional_holders(submissions, shares_out=shares_out))
+        return jsonify(get_institutional_holders(submissions, shares_out=shares_out,
+                                                   refresh=refresh))
     except Exception as e:
         return jsonify({"error": f"13F fetch failed: {e}", "holders": [],
                         "total_value": 0, "total_count": 0, "rate_limited": True}), 200
@@ -4007,6 +4173,14 @@ def analyze():
     # Market cap = current price × most-recent EDGAR share count
     mktcap = (price * edgar_shares) if (price and edgar_shares) else None
 
+    # Short interest (Nasdaq, bi-monthly settlement) as % of float, using EDGAR
+    # shares outstanding as the float proxy (standard when true free-float isn't
+    # separately published).
+    short_data = get_short_interest(ticker)
+    short_pct_float = None
+    if short_data.get("shares_short") and edgar_shares:
+        short_pct_float = short_data["shares_short"] / edgar_shares
+
     # ── Valuation multiples ──────────────────────────────────────────────────
     latest = years[-1] if years else None
     def L(key): return fy_get(financials.get(key, {}), latest) if latest else None
@@ -4210,6 +4384,10 @@ def analyze():
             "52w_high":          market.get("52w_high"),
             "52w_low":           market.get("52w_low"),
             "buyback_remaining": buyback_remaining,
+            "shares_short":        short_data.get("shares_short"),
+            "short_pct_float":     short_pct_float,
+            "short_settlement_date": short_data.get("settlement_date"),
+            "days_to_cover":       short_data.get("days_to_cover"),
             **multiples,
         },
         "years":           years,
