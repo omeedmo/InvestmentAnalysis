@@ -25,6 +25,7 @@ import os
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from typing import Optional
 
 import requests
@@ -348,6 +349,128 @@ def _merge_frames(tags: list[str], unit: str, periods: list[str]) -> dict[str, f
     return out
 
 
+# ─── companyfacts fallback (foreign / odd-fiscal-year filers) ─────────────────
+# The frames API only returns facts aligned to calendar frames and only under
+# us-gaap tags, so 20-F foreign filers (IFRS) and some odd-fiscal-year filers
+# silently fall out of the screen. Per-CIK companyfacts has no alignment
+# requirement and carries ifrs-full tags, so it recovers most of them. USD
+# units only — a filer reporting in EUR/GBP can't be mixed with a USD price.
+# (ADR-ratio caveat: for ADRs where 1 ADS ≠ 1 ordinary share, market cap =
+# ADR price × ordinary shares is overstated by the ratio, which makes the
+# stock look MORE expensive — conservative for a cheapness screen.)
+
+_CF_TAGS = {
+    "ocf":   [("us-gaap", "NetCashProvidedByUsedInOperatingActivities"),
+              ("us-gaap", "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations"),
+              ("ifrs-full", "CashFlowsFromUsedInOperatingActivities")],
+    "capex": [("us-gaap", "PaymentsToAcquirePropertyPlantAndEquipment"),
+              ("us-gaap", "PaymentsToAcquireProductiveAssets"),
+              ("ifrs-full", "PurchaseOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities")],
+    "ebit":  [("us-gaap", "OperatingIncomeLoss"),
+              ("ifrs-full", "ProfitLossFromOperatingActivities")],
+    "cash":  [("us-gaap", "CashAndCashEquivalentsAtCarryingValue"),
+              ("ifrs-full", "CashAndCashEquivalents")],
+    "ltd":   [("us-gaap", "LongTermDebtNoncurrent"), ("us-gaap", "LongTermDebt"),
+              ("ifrs-full", "NoncurrentPortionOfNoncurrentBorrowings"),
+              ("ifrs-full", "LongtermBorrowings")],
+    "std":   [("us-gaap", "LongTermDebtCurrent"), ("us-gaap", "DebtCurrent"),
+              ("us-gaap", "ShortTermBorrowings"),
+              ("ifrs-full", "CurrentPortionOfNoncurrentBorrowings"),
+              ("ifrs-full", "ShorttermBorrowings")],
+    # 20-F filers often lack the dei cover-page share count in companyfacts —
+    # fall back to the reported share count or FY weighted-average (fine as a
+    # screener market-cap proxy).
+    "shares": [("dei", "EntityCommonStockSharesOutstanding"),
+               ("us-gaap", "CommonStockSharesOutstanding"),
+               ("ifrs-full", "NumberOfSharesIssued"),
+               ("us-gaap", "WeightedAverageNumberOfSharesOutstandingBasic"),
+               ("ifrs-full", "WeightedAverageShares")],
+}
+
+_CF_FLOW_KEYS = {"ocf", "capex", "ebit"}   # duration facts; the rest are instants
+
+
+def _cf_extract(facts: dict, latest_fy: int) -> dict:
+    """Pull the screen's metrics out of one companyfacts JSON. Latest annual
+    (FY) fact per metric, USD money units, not older than latest_fy - 1."""
+    out: dict = {}
+    for key, tag_list in _CF_TAGS.items():
+        unit_want = "shares" if key == "shares" else "USD"
+        best_end = ""
+        for ns, tag in tag_list:
+            entries = (facts.get(ns, {}).get(tag, {}).get("units", {}).get(unit_want)) or []
+            for e in entries:
+                end = e.get("end") or ""
+                if end[:4] and int(end[:4]) < latest_fy - 1:
+                    continue
+                if key in _CF_FLOW_KEYS:
+                    # Annual duration only (~a fiscal year, not a quarter).
+                    start = e.get("start") or ""
+                    if not (start and end) or e.get("fp") not in (None, "FY"):
+                        continue
+                    try:
+                        days = (datetime.strptime(end, "%Y-%m-%d")
+                                - datetime.strptime(start, "%Y-%m-%d")).days
+                    except ValueError:
+                        continue
+                    if not 300 <= days <= 400:
+                        continue
+                if end > best_end and e.get("val") is not None:
+                    best_end = end
+                    out[key] = float(e["val"])
+        # tags are priority-ordered per metric, but we keep whichever has the
+        # newest period end across tags — recency beats tag priority here.
+    return out
+
+
+def _cf_fetch_one(cik: str, latest_fy: int) -> Optional[dict]:
+    """Fetch + reduce one company's companyfacts (cached 7 days, tiny file)."""
+    cache_name = f"cf_{cik}.json"
+    path = os.path.join(CACHE_DIR, cache_name)
+    try:
+        if os.path.exists(path) and time.time() - os.path.getmtime(path) < 7 * 86400:
+            with open(path) as f:
+                return json.load(f)
+    except Exception:
+        pass
+    try:
+        r = requests.get(f"https://data.sec.gov/api/xbrl/companyfacts/CIK{int(cik):010d}.json",
+                         headers=H_SEC, timeout=30)
+        if r.status_code != 200:
+            return None
+        reduced = _cf_extract(r.json().get("facts", {}), latest_fy)
+    except Exception:
+        return None
+    try:
+        with open(path, "w") as f:
+            json.dump(reduced, f)
+    except Exception:
+        pass
+    return reduced
+
+
+def companyfacts_fallback(ciks: list, latest_fy: int,
+                          time_budget_s: float = 45.0) -> dict[str, dict]:
+    """
+    {cik: {metric: val}} for CIKs the frames API couldn't cover. Time-budgeted
+    and resumable — cached CIKs cost nothing, so coverage grows across runs
+    even if a single run can't finish the whole list.
+    """
+    out: dict[str, dict] = {}
+    start = time.time()
+    for c in ciks:
+        cached = os.path.join(CACHE_DIR, f"cf_{c}.json")
+        is_cached = os.path.exists(cached) and time.time() - os.path.getmtime(cached) < 7 * 86400
+        if not is_cached and time.time() - start > time_budget_s:
+            break
+        data = _cf_fetch_one(c, latest_fy)
+        if data:
+            out[c] = data
+        if not is_cached:
+            time.sleep(0.12)   # stay under SEC's ~10 req/s guidance
+    return out
+
+
 # ─── Prices (threaded Yahoo v8) ───────────────────────────────────────────────
 
 # One pooled session shared across worker threads — keep-alive avoids a fresh
@@ -581,6 +704,7 @@ def screen(universe: str, tickers: list[str],
     # thousand, so we only pay the price-fetch cost for real candidates.
     raw_candidates = []
     no_cik = 0
+    cf_needed = []   # has a CIK, but frames lacks its OCF or share count
     for tk in tickers:
         cik = _cik_for(tk)
         if cik is None:
@@ -589,6 +713,27 @@ def screen(universe: str, tickers: list[str],
         c = str(cik)
         if ocf.get(c) is not None and shares.get(c):
             raw_candidates.append((tk, c))
+        else:
+            cf_needed.append((tk, c))
+
+    # Fallback: per-CIK companyfacts for what frames missed — mostly 20-F
+    # foreign filers (IFRS tags) and odd-fiscal-year filers. Resumable, so
+    # coverage completes across a couple of runs on a cold cache.
+    cf_recovered = 0
+    if cf_needed:
+        cf = companyfacts_fallback([c for _, c in cf_needed], latest_fy)
+        for tk, c in cf_needed:
+            d = cf.get(c) or {}
+            if d.get("ocf") is None or not d.get("shares"):
+                continue
+            ocf.setdefault(c, d["ocf"])
+            shares.setdefault(c, d["shares"])
+            for key, dest in (("capex", capex), ("ebit", ebit), ("cash", cash),
+                              ("ltd", ltd), ("std", std)):
+                if d.get(key) is not None:
+                    dest.setdefault(c, d[key])
+            raw_candidates.append((tk, c))
+            cf_recovered += 1
 
     # Drop non-common securities (preferred, warrants, rights, units) and dedupe
     # by CIK. They share the common stock's CIK — and thus its financials — but
@@ -685,6 +830,7 @@ def screen(universe: str, tickers: list[str],
             "passed":     len(filtered),
             "missing":    no_price,
             "excluded_sectors": removed_sectors,
+            "cf_recovered": cf_recovered,
             "fiscal_year": latest_fy,
         },
     }
