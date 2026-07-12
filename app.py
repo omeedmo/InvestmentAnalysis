@@ -1326,6 +1326,60 @@ def _load_ticker_name_index() -> dict:
     return result
 
 
+def _load_ticker_search_list() -> list:
+    """Flat [{"ticker":, "name":}] list from SEC's bulk ticker file, for the
+    ticker-input autocomplete. Includes preferred/warrant tickers too (unlike
+    the CUSIP-resolution index) since a user might legitimately type one.
+    Cached 24h — same source file as everything else that reads it."""
+    cache_path = os.path.join(screener.CACHE_DIR, "ticker_search_list.json")
+    try:
+        if os.path.exists(cache_path) and (time.time() - os.path.getmtime(cache_path)) < 86400:
+            with open(cache_path) as f:
+                return json.load(f)
+    except Exception:
+        pass
+    try:
+        r = requests.get("https://www.sec.gov/files/company_tickers.json", headers=HEADERS, timeout=20)
+        entries = list(r.json().values())
+    except Exception:
+        entries = []
+    seen = set()
+    out = []
+    for e in entries:
+        tk, title = e.get("ticker", ""), e.get("title", "")
+        if not tk or not title or tk in seen:
+            continue
+        seen.add(tk)
+        out.append({"ticker": tk, "name": title})
+    try:
+        with open(cache_path, "w") as f:
+            json.dump(out, f)
+    except Exception:
+        pass
+    return out
+
+
+@app.route("/api/ticker_search")
+def ticker_search():
+    q = request.args.get("q", "").strip().upper()
+    if len(q) < 1:
+        return jsonify({"results": []})
+    entries = _load_ticker_search_list()
+    prefix_tk, prefix_name, contains = [], [], []
+    for e in entries:
+        tk, name = e["ticker"], e["name"]
+        if tk.upper().startswith(q):
+            prefix_tk.append(e)
+        elif name.upper().startswith(q):
+            prefix_name.append(e)
+        elif q in tk.upper() or q in name.upper():
+            contains.append(e)
+    prefix_tk.sort(key=lambda e: len(e["ticker"]))
+    prefix_name.sort(key=lambda e: len(e["name"]))
+    results = (prefix_tk + prefix_name + contains)[:12]
+    return jsonify({"results": results})
+
+
 def _squish_prefix_lookup(squish_list: list, target: str) -> Optional[str]:
     """
     Find a ticker whose squished registry name is a prefix of `target` (or

@@ -29,6 +29,13 @@ body{font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:v
 .form-row input{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);color:#fff;padding:8px 10px;border-radius:5px;font-size:13px;outline:none;min-height:38px}
 .form-row input::placeholder{color:rgba(255,255,255,.5)}
 .form-row input:focus{border-color:#60a5fa;background:rgba(255,255,255,.2)}
+.ticker-ac{display:none;position:absolute;top:calc(100% + 4px);left:0;width:320px;max-width:80vw;max-height:340px;overflow-y:auto;background:var(--card);color:var(--text,#0f172a);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.35);z-index:200}
+.ticker-ac.open{display:block}
+.ticker-ac-item{display:flex;align-items:baseline;gap:8px;padding:8px 12px;cursor:pointer;font-size:13px}
+.ticker-ac-item:hover,.ticker-ac-item.active{background:var(--bg)}
+.ticker-ac-tk{font-weight:700;color:var(--navy);min-width:52px}
+.ticker-ac-name{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.ticker-ac-empty{padding:10px 12px;font-size:12px;color:var(--muted)}
 .btn{background:#2563eb;color:#fff;border:none;padding:8px 20px;border-radius:5px;font-weight:600;cursor:pointer;font-size:14px;white-space:nowrap;transition:background .15s;min-height:38px;touch-action:manipulation}
 .btn:hover{background:#1d4ed8}
 .btn:disabled{background:#475569;cursor:not-allowed}
@@ -290,8 +297,11 @@ th.hidden-col{display:none}
 <body>
 <div class="topbar">
   <h1>Investment <span>Analysis</span></h1>
-  <div class="form-row">
-    <input id="inp-ticker"  type="text"   placeholder="Ticker (AAPL, MSFT…)" maxlength="10" style="width:145px;text-transform:uppercase">
+  <div class="form-row" style="position:relative">
+    <div style="position:relative">
+      <input id="inp-ticker"  type="text"   placeholder="Ticker (AAPL, MSFT…)" maxlength="10" autocomplete="off" style="width:145px;text-transform:uppercase">
+      <div id="ticker-ac" class="ticker-ac"></div>
+    </div>
     <button class="btn" id="btn" onclick="doAnalyze()">Analyze ▸</button>
     <button class="btn" id="btn-screen" onclick="openScreener()" style="background:#0e7490">Screener ⌕</button>
   </div>
@@ -1195,7 +1205,91 @@ async function doAnalyze(){
   }
 }
 
-document.getElementById('inp-ticker').addEventListener('keydown',e=>{if(e.key==='Enter')doAnalyze()});
+// ── Ticker autocomplete ──────────────────────────────────────────────────────
+(function(){
+  const inp = document.getElementById('inp-ticker');
+  const box = document.getElementById('ticker-ac');
+  let results = [];
+  let activeIdx = -1;
+  let debounceT = null;
+  let reqSeq = 0;
+
+  function closeAc(){
+    box.classList.remove('open');
+    box.innerHTML = '';
+    results = [];
+    activeIdx = -1;
+  }
+
+  function renderAc(){
+    if(!results.length){
+      box.innerHTML = `<div class="ticker-ac-empty">No matches</div>`;
+      box.classList.add('open');
+      return;
+    }
+    box.innerHTML = results.map((r,i)=>
+      `<div class="ticker-ac-item${i===activeIdx?' active':''}" data-i="${i}">
+        <span class="ticker-ac-tk">${r.ticker}</span><span class="ticker-ac-name">${r.name}</span>
+      </div>`
+    ).join('');
+    box.classList.add('open');
+    box.querySelectorAll('.ticker-ac-item').forEach(el=>{
+      el.addEventListener('click', ()=> pick(parseInt(el.dataset.i)));
+    });
+  }
+
+  function pick(i){
+    const r = results[i];
+    if(!r) return;
+    inp.value = r.ticker;
+    closeAc();
+    doAnalyze();
+  }
+
+  inp.addEventListener('input', ()=>{
+    const q = inp.value.trim();
+    clearTimeout(debounceT);
+    if(!q){ closeAc(); return; }
+    debounceT = setTimeout(async ()=>{
+      const seq = ++reqSeq;
+      try{
+        const r = await fetch(`/api/ticker_search?q=${encodeURIComponent(q)}`);
+        const d = await r.json();
+        if(seq !== reqSeq) return;   // stale response, a newer query already fired
+        results = d.results || [];
+        activeIdx = -1;
+        renderAc();
+      }catch(e){ /* ignore — autocomplete is best-effort */ }
+    }, 150);
+  });
+
+  inp.addEventListener('keydown', e=>{
+    if(e.key==='Enter'){
+      if(activeIdx >= 0 && results[activeIdx]){ pick(activeIdx); }
+      else { closeAc(); doAnalyze(); }
+      return;
+    }
+    if(!box.classList.contains('open')) return;
+    if(e.key==='ArrowDown'){
+      e.preventDefault();
+      activeIdx = Math.min(activeIdx+1, results.length-1);
+      renderAc();
+    } else if(e.key==='ArrowUp'){
+      e.preventDefault();
+      activeIdx = Math.max(activeIdx-1, 0);
+      renderAc();
+    } else if(e.key==='Escape'){
+      closeAc();
+    }
+  });
+
+  // Outside-click close, rather than input blur — blur fires as soon as a
+  // mousedown starts (before the click completes), which raced the item's
+  // click handler and closed the dropdown before the selection registered.
+  document.addEventListener('click', e=>{
+    if(!inp.contains(e.target) && !box.contains(e.target)) closeAc();
+  });
+})();
 
 // ── Screener ──────────────────────────────────────────────────────────────────
 let SCREEN_DATA = [];   // last results, for client-side re-sorting
