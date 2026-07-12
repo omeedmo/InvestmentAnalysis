@@ -587,8 +587,8 @@ function render(data){
       : null,
     {l:'Div. Yield',    v: mk.dividend_yield ? F.pct(mk.dividend_yield) : '—'},
     {l:'Beta',          v: mk.beta ? mk.beta.toFixed(2) : '—'},
-    {l:'Short % Float', v: mk.short_pct_float!=null ? F.pct(mk.short_pct_float) : '—',
-     cls: mk.short_pct_float>=0.20?'r':'',
+    {l:'Short % Shares Out', v: mk.short_pct_shares_out!=null ? F.pct(mk.short_pct_shares_out) : '—',
+     cls: mk.short_pct_shares_out>=0.20?'r':'',
      title: mk.short_settlement_date ? `As of ${mk.short_settlement_date}${mk.days_to_cover!=null?' · '+mk.days_to_cover.toFixed(1)+'d to cover':''}` : ''},
     {l:'Market Cap',    v: F.$M(mk.market_cap)},
     {l:'Enterprise Val',v: F.$M(mk.enterprise_value)},
@@ -1003,7 +1003,7 @@ function renderHolders(hd, ticker){
   list.forEach((v,i)=>{
     h += `<tr>
       <td class="scr-rank">${i+1}</td>
-      <td style="font-weight:600">${v.fund||'—'}${v.manager && v.manager!==v.fund?` <span style="font-weight:400;color:var(--muted);font-size:11px">· ${v.manager}</span>`:''}</td>
+      <td style="font-weight:600">${v.fund||'—'}${v.manager && v.manager!==v.fund?` <span style="font-weight:400;color:var(--muted);font-size:11px">· ${v.manager}</span>`:''}${v.funds && v.funds!==v.fund?` <span style="font-weight:400;color:var(--muted);font-size:11px">(covers: ${v.funds})</span>`:''}</td>
       <td class="g" style="color:var(--green);font-weight:600">${F.$M(v.value)}</td>
       <td class="${v.pct>=0.05?'scr-good':''}" style="${v.pct>=0.05?'color:var(--green);font-weight:700':''}">${v.pct!=null?(v.pct*100).toFixed(1)+'%':'—'}</td>
       <td style="color:var(--muted)">${F.$M(v.portfolio_value)}</td>
@@ -1128,6 +1128,7 @@ document.getElementById('inp-ticker').addEventListener('keydown',e=>{if(e.key===
 // ── Screener ──────────────────────────────────────────────────────────────────
 let SCREEN_DATA = [];   // last results, for client-side re-sorting
 let SCREEN_SORT = {key:'p_fcf', dir:1};
+let SCREEN_UNRESOLVED = []; // guru_holdings: CUSIPs we couldn't map to a ticker
 
 async function openScreener(){
   let universes = [{key:'sp500',label:'S&P 500'},{key:'nasdaq100',label:'NASDAQ-100'},{key:'dow30',label:'Dow 30'}];
@@ -1229,6 +1230,7 @@ async function runScreen(){
     }
     SCREEN_DATA = d.results;
     SCREEN_SORT = {key:'p_fcf', dir:1};
+    SCREEN_UNRESOLVED = d.guru_unresolved || [];
     renderScreenTable(d.stats);
   }catch(e){
     // "Load failed" / AbortError = the connection dropped, almost always because
@@ -1285,6 +1287,20 @@ function renderScreenTable(stats){
     </tr>`;
   });
   h+=`</tbody></table>`;
+  if(Array.isArray(SCREEN_UNRESOLVED) && SCREEN_UNRESOLVED.length){
+    h += `<div class="scr-hint" style="margin-top:20px;margin-bottom:6px">
+      <strong>Unresolved 13F holdings (${SCREEN_UNRESOLVED.length})</strong> — CUSIPs the SEC/EDGAR-only
+      pipeline couldn't map to a ticker (delisted/merged positions, ETF trust series, or securities
+      with no SC 13D/13G/N-PX on file). Check these manually if interested.</div>
+    <table class="scr-table">
+      <thead><tr><th>CUSIP</th><th>Name (best known)</th><th># Funds</th><th>Total Value</th></tr></thead>
+      <tbody>`;
+    SCREEN_UNRESOLVED.forEach(u=>{
+      h += `<tr><td class="scr-tk">${u.cusip}</td><td>${u.name||'—'}</td>
+        <td>${u.held_by_funds}</td><td>${F.$M(u.total_value)}</td></tr>`;
+    });
+    h += `</tbody></table>`;
+  }
   document.getElementById('scr-results').innerHTML=h;
 }
 

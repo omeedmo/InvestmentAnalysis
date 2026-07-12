@@ -13,7 +13,7 @@ import xml.etree.ElementTree as ET
 
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 import requests
@@ -906,10 +906,24 @@ def get_institutional_holders(submissions: dict, shares_out: Optional[float] = N
     def _matches(h: dict) -> bool:
         return _matches_issuer_name(h["name"]) or (h.get("cusip") in bootstrap_cusips)
 
-    # Guru/fund display label per CIK (first entry wins if a manager runs >1 fund).
-    label_by_cik: dict = {}
+    # Guru/fund display label per CIK. SEC 13F filings are made at the manager
+    # level, not per-fund, so when one manager runs several roster funds
+    # (e.g. Ariel Investments files a single combined 13F covering both its
+    # Appreciation and Focus funds) there's no way to attribute a holding to
+    # one specific fund — label with the manager name instead of picking an
+    # arbitrary individual guru's name, and note the funds it covers.
+    ciks_by_cik: dict = {}
     for g in GURUS:
-        label_by_cik.setdefault(g["cik"], (g["guru"], g["fund"], g["manager"]))
+        ciks_by_cik.setdefault(g["cik"], []).append(g)
+    label_by_cik: dict = {}
+    for cik, entries in ciks_by_cik.items():
+        if len(entries) == 1:
+            g = entries[0]
+            label_by_cik[cik] = (g["guru"], g["fund"], g["manager"])
+        else:
+            manager = entries[0]["manager"]
+            funds = " / ".join(sorted({e["fund"] for e in entries}))
+            label_by_cik[cik] = (manager, funds, manager)
 
     periods = [d.get("period", "") for d in universe["funds"].values() if d.get("period")]
     period = Counter(periods).most_common(1)[0][0] if periods else universe["target_period"]
@@ -930,6 +944,7 @@ def get_institutional_holders(submissions: dict, shares_out: Optional[float] = N
         pv = data.get("portfolio_value") or 0.0
         holders.append({
             "fund": guru or manager,
+            "funds": fund,
             "manager": manager,
             "cik": cik,
             "date": data.get("date", ""),
@@ -1268,8 +1283,40 @@ def get_guru_holdings_tickers(refresh: bool = False, time_budget_s: float = 90.0
 
     tickers = sorted({cache[c] for c in cusips if cache.get(c) and _looks_like_ticker(cache[c])})
     scanned = len([c for c in cusips if c in cache])
+
+    # Surface anything we couldn't map to a ticker — shown to the user so they
+    # can look these up manually rather than silently dropping them. Include
+    # the best-known name and which fund(s) hold it, so it's actually useful
+    # to check offline, not just a bare CUSIP.
+    unresolved_cusips = {c for c in cusips if not (cache.get(c) and _looks_like_ticker(cache[c]))}
+    official_names = _load_13f_official_list()
+    unresolved: dict = {}
+    for cik, data in universe["funds"].items():
+        if not data:
+            continue
+        for h in data.get("holdings", []):
+            c = h.get("cusip")
+            if c not in unresolved_cusips:
+                continue
+            entry = unresolved.setdefault(c, {
+                "cusip": c,
+                "name": official_names.get(c.upper()) or h["name"],
+                "funds": [],
+            })
+            entry["funds"].append({"cik": cik, "value": h.get("value") or 0})
+    unresolved_list = []
+    for c, entry in unresolved.items():
+        total_value = sum(f["value"] for f in entry["funds"])
+        unresolved_list.append({
+            "cusip": c, "name": entry["name"],
+            "held_by_funds": len(entry["funds"]),
+            "total_value": round(total_value),
+        })
+    unresolved_list.sort(key=lambda x: x["total_value"], reverse=True)
+
     return {
         "tickers": tickers,
+        "unresolved": unresolved_list,
         "total_cusips": len(cusips),
         "resolved_cusips": scanned,
         "pending_cusips": len(cusips) - scanned,
@@ -1829,12 +1876,40 @@ def get_market_data(ticker: str) -> dict:
     return data
 
 
-def get_short_interest(ticker: str) -> dict:
-    """Latest bi-monthly short-interest settlement (shares short, days to cover)
-    from Nasdaq's public short-interest API — official exchange/FINRA-sourced
-    data, no auth required. Short % of float is computed by the caller using
-    EDGAR shares outstanding (float itself isn't published here; shares
-    outstanding is the standard proxy most data providers fall back to)."""
+def _short_interest_finra(ticker: str) -> dict:
+    """Latest bi-monthly short-interest settlement from FINRA's own public
+    Consolidated Short Interest API (Rule 4560 reporting, covers all
+    exchanges — NYSE, Nasdaq, NYSE American, etc.). No auth required."""
+    try:
+        cutoff = (datetime.now() - timedelta(days=120)).strftime("%Y-%m-%d")
+        r = requests.post(
+            "https://api.finra.org/data/group/otcMarket/name/consolidatedShortInterest",
+            json={"compareFilters": [
+                {"compareType": "EQUAL", "fieldName": "symbolCode", "fieldValue": ticker.upper()},
+                {"compareType": "GTE", "fieldName": "settlementDate", "fieldValue": cutoff},
+            ], "limit": 10},
+            headers={"Accept": "application/json"}, timeout=15,
+        )
+        if r.status_code != 200:
+            return {}
+        rows = r.json() or []
+        if not rows:
+            return {}
+        row = max(rows, key=lambda x: x.get("settlementDate", ""))
+        shares_short = float(row.get("currentShortPositionQuantity") or 0)
+        if shares_short <= 0:
+            return {}
+        return {
+            "shares_short": shares_short,
+            "settlement_date": row.get("settlementDate"),
+            "days_to_cover": row.get("daysToCoverQuantity"),
+        }
+    except Exception:
+        return {}
+
+
+def _short_interest_nasdaq(ticker: str) -> dict:
+    """Fallback: Nasdaq's public short-interest API (Nasdaq-listed names only)."""
     sym = ticker.replace(".", "/").replace("-", ".")   # BRK.B -> BRK/B for Nasdaq's URL scheme
     for candidate in (ticker.replace(".", "").replace("-", ""), ticker, sym):
         try:
@@ -1858,6 +1933,15 @@ def get_short_interest(ticker: str) -> dict:
         except Exception:
             continue
     return {}
+
+
+def get_short_interest(ticker: str) -> dict:
+    """Latest bi-monthly short-interest settlement (shares short, days to
+    cover). FINRA's Consolidated Short Interest API is tried first (covers
+    every exchange); Nasdaq's short-interest API is the backup for anything
+    FINRA doesn't return. Short % is computed by the caller against EDGAR
+    shares outstanding."""
+    return _short_interest_finra(ticker) or _short_interest_nasdaq(ticker)
 
 
 # ─── XBRL tag priority lists ─────────────────────────────────────────────────
@@ -3442,6 +3526,8 @@ def screen_route():
                 f"{guru_progress['resolved_cusips']} of {guru_progress['total_cusips']} "
                 f"holdings resolved to tickers so far — reload to pick up more."
             )
+        if guru_progress and guru_progress.get("unresolved"):
+            result["guru_unresolved"] = guru_progress["unresolved"]
     else:
         result["stats"]["label"] = screener.UNIVERSE_LABELS.get(universe, universe.upper())
     return jsonify(result)
@@ -4566,13 +4652,12 @@ def analyze():
     # Market cap = current price × most-recent EDGAR share count
     mktcap = (price * edgar_shares) if (price and edgar_shares) else None
 
-    # Short interest (Nasdaq, bi-monthly settlement) as % of float, using EDGAR
-    # shares outstanding as the float proxy (standard when true free-float isn't
-    # separately published).
+    # Short interest (FINRA, Nasdaq backup — bi-monthly settlement) as % of
+    # shares outstanding (EDGAR).
     short_data = get_short_interest(ticker)
-    short_pct_float = None
+    short_pct_shares_out = None
     if short_data.get("shares_short") and edgar_shares:
-        short_pct_float = short_data["shares_short"] / edgar_shares
+        short_pct_shares_out = short_data["shares_short"] / edgar_shares
 
     # ── Valuation multiples ──────────────────────────────────────────────────
     latest = years[-1] if years else None
@@ -4778,7 +4863,7 @@ def analyze():
             "52w_low":           market.get("52w_low"),
             "buyback_remaining": buyback_remaining,
             "shares_short":        short_data.get("shares_short"),
-            "short_pct_float":     short_pct_float,
+            "short_pct_shares_out": short_pct_shares_out,
             "short_settlement_date": short_data.get("settlement_date"),
             "days_to_cover":       short_data.get("days_to_cover"),
             **multiples,
