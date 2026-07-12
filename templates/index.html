@@ -1276,8 +1276,19 @@ async function doAnalyze(){
   function positionAc(){
     const r = inp.getBoundingClientRect();
     const vw = window.innerWidth, vh = window.innerHeight;
-    const width = Math.min(360, vw - 16);
-    const left = Math.max(8, Math.min(r.left, vw - width - 8));
+    // On narrow screens, don't bother aligning to the input's own x — the
+    // input spans (near) the full topbar width in the mobile stacked layout
+    // anyway, so just use fixed viewport margins. This sidesteps any
+    // rect-measurement edge case (layout not yet settled, fractional
+    // device-pixel rounding, etc.) that could push the box off-screen.
+    let left, width;
+    if(vw < 480){
+      left = 12;
+      width = vw - 24;
+    } else {
+      width = Math.min(360, vw - 16);
+      left = Math.max(8, Math.min(r.left, vw - width - 8));
+    }
     box.style.width = width + 'px';
     box.style.left = left + 'px';
     box.style.top = (r.bottom + 4) + 'px';
