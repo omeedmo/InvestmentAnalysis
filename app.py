@@ -867,7 +867,9 @@ def get_institutional_holders(submissions: dict, shares_out: Optional[float] = N
     once the universe is warm for the quarter.
     """
     name = submissions.get("name", "") or ""
-    words = [w for w in re.sub(r"[.,/&]", " ", name.upper()).split() if w not in ("THE", "A")]
+    # Hyphens included: EDGAR says "CAL-MAINE FOODS" but 13F filers write
+    # "CAL MAINE FOODS" — both must normalize identically.
+    words = [w for w in re.sub(r"[.,/&\-]", " ", name.upper()).split() if w not in ("THE", "A")]
     name_kw = " ".join(words[:2])
     first_word = words[0] if words else ""
     empty = {"holders": [], "total_value": 0, "total_count": 0,
@@ -877,6 +879,9 @@ def get_institutional_holders(submissions: dict, shares_out: Optional[float] = N
         return empty
 
     def _matches_issuer_name(holding_name: str) -> bool:
+        # Normalize the holding's name text the same way as the target's, so
+        # hyphen/punctuation differences don't break the prefix comparison.
+        holding_name = " ".join(re.sub(r"[.,/&\-]", " ", holding_name.upper()).split())
         # Primary: precise two-word prefix match (e.g. "APPLE INC..." — avoids
         # false positives like "APPLE HOSPITALITY REIT").
         if holding_name.startswith(name_kw):
@@ -903,10 +908,25 @@ def get_institutional_holders(submissions: dict, shares_out: Optional[float] = N
             continue
         for h in data.get("holdings", []):
             if _matches_issuer_name(h["name"]) and h.get("cusip"):
-                bootstrap_cusips.add(h["cusip"])
+                bootstrap_cusips.add(h["cusip"].upper())
+
+    # Identifier-based seeding — the definitive path, independent of how any
+    # filer spelled the name. Resolve this stock's ticker(s) to CUSIP(s) via:
+    #  1. SEC's Fails-to-Deliver map inverted (ticker → all its CUSIPs,
+    #     including share-class and CINS variants), and
+    #  2. the screener's own CUSIP→ticker cache (built by the Guru Holdings
+    #     universe resolution).
+    own_tickers = {t.upper() for t in (submissions.get("tickers") or []) if t}
+    if own_tickers:
+        for c, tk in _load_ftd_cusip_map().items():
+            if tk and tk.upper() in own_tickers:
+                bootstrap_cusips.add(c.upper())
+        for c, tk in _load_cusip_ticker_cache().items():
+            if tk and tk.upper() in own_tickers:
+                bootstrap_cusips.add(c.upper())
 
     def _matches(h: dict) -> bool:
-        return _matches_issuer_name(h["name"]) or (h.get("cusip") in bootstrap_cusips)
+        return _matches_issuer_name(h["name"]) or ((h.get("cusip") or "").upper() in bootstrap_cusips)
 
     # Guru/fund display label per CIK. SEC 13F filings are made at the manager
     # level, not per-fund, so when one manager runs several roster funds
