@@ -642,6 +642,53 @@ def _load_sector_fallback(sector: str) -> list:
         return []
 
 
+def _is_20f_filer_fetch(cik: str) -> bool:
+    """True if this CIK's annual report is Form 20-F (foreign private issuer)
+    rather than 10-K. Checked once and cached ~indefinitely (30 days) since a
+    filer's annual-report form essentially never changes quarter to quarter."""
+    cache_name = f"20f_{cik}.json"
+    path = os.path.join(CACHE_DIR, cache_name)
+    try:
+        if os.path.exists(path) and time.time() - os.path.getmtime(path) < 30 * 86400:
+            with open(path) as f:
+                return json.load(f)
+    except Exception:
+        pass
+    is_20f = False
+    try:
+        r = requests.get(f"https://data.sec.gov/submissions/CIK{int(cik):010d}.json",
+                         headers=H_SEC, timeout=20)
+        if r.status_code == 200:
+            forms = r.json().get("filings", {}).get("recent", {}).get("form", [])
+            is_20f = "20-F" in forms
+    except Exception:
+        return False   # don't cache a failed lookup — let it retry next time
+    try:
+        with open(path, "w") as f:
+            json.dump(is_20f, f)
+    except Exception:
+        pass
+    return is_20f
+
+
+def filter_20f_ciks(ciks: list, time_budget_s: float = 30.0) -> set:
+    """Subset of `ciks` that are Form 20-F (foreign private issuer) filers.
+    Time-budgeted and resumable like the companyfacts fallback — cached CIKs
+    cost nothing, so coverage grows across runs on a cold cache."""
+    out: set = set()
+    start = time.time()
+    for c in ciks:
+        cached = os.path.join(CACHE_DIR, f"20f_{c}.json")
+        is_cached = os.path.exists(cached) and time.time() - os.path.getmtime(cached) < 30 * 86400
+        if not is_cached and time.time() - start > time_budget_s:
+            break
+        if _is_20f_filer_fetch(c):
+            out.add(c)
+        if not is_cached:
+            time.sleep(0.1)
+    return out
+
+
 def _is_non_common(tk: str) -> bool:
     """Heuristic: True for preferred shares, warrants, rights, and units —
     securities that share a common stock's CIK but trade at their own price."""
@@ -668,7 +715,7 @@ def screen(universe: str, tickers: list[str],
            latest_fy: int = 2025,
            min_mktcap=None, max_mktcap=None, refresh: bool = False,
            remove_insurance: bool = True, remove_banks: bool = True,
-           remove_reits: bool = True) -> dict:
+           remove_reits: bool = True, remove_20f: bool = True) -> dict:
     """
     Run the valuation screen. Returns {results: [...], stats: {...}}.
     Any cutoff may be None (no bound). min/max_mktcap are in dollars.
@@ -762,6 +809,18 @@ def screen(universe: str, tickers: list[str],
         removed_sectors = len(best_per_cik) - len(kept)
         best_per_cik = kept
 
+    # Drop Form 20-F filers (foreign private issuers) — their US-GAAP/IFRS
+    # cash-flow tagging is inconsistent enough (see companyfacts fallback
+    # above) that P/FCF & EV/EBIT can be noisier or ADR-ratio-skewed than for
+    # domestic 10-K filers. Time-budgeted/resumable like the sector CIK sets.
+    removed_20f = 0
+    if remove_20f and best_per_cik:
+        f20 = filter_20f_ciks(list(best_per_cik.keys()))
+        if f20:
+            kept = {c: tk for c, tk in best_per_cik.items() if c not in f20}
+            removed_20f = len(best_per_cik) - len(kept)
+            best_per_cik = kept
+
     candidates = sorted(best_per_cik.values())
 
     prices = get_prices(candidates)
@@ -830,6 +889,7 @@ def screen(universe: str, tickers: list[str],
             "passed":     len(filtered),
             "missing":    no_price,
             "excluded_sectors": removed_sectors,
+            "excluded_20f": removed_20f,
             "cf_recovered": cf_recovered,
             "fiscal_year": latest_fy,
         },

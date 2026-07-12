@@ -3657,6 +3657,7 @@ def screen_route():
     remove_insurance = _flag("remove_insurance")
     remove_banks     = _flag("remove_banks")
     remove_reits     = _flag("remove_reits")
+    remove_20f       = _flag("remove_20f")
 
     guru_progress = None
     try:
@@ -3685,7 +3686,8 @@ def screen_route():
                                  refresh=refresh,
                                  remove_insurance=remove_insurance,
                                  remove_banks=remove_banks,
-                                 remove_reits=remove_reits)
+                                 remove_reits=remove_reits,
+                                 remove_20f=remove_20f)
     except Exception as e:
         return jsonify({"error": f"Screen failed: {e}"}), 500
 
