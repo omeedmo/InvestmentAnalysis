@@ -852,6 +852,9 @@ function render(data){
     </div>`;
   }
 
+  // Top shareholders placeholder — filled asynchronously (13D/13G fetches are slow)
+  h+=`<div id="shareholders-section"></div>`;
+
   // DCF — market_cap/current_fcf/hist_avg_fcf are fixed facts about the
   // company; only discount_rate and tv_dollar are user inputs, so the
   // section keeps its own state and recomputes client-side on Apply
@@ -1110,6 +1113,67 @@ function renderHolders(hd, ticker){
   return h;
 }
 
+// ── Top shareholders (Schedule 13D/13G) ─────────────────────────────────────
+function loadTopShareholders(ticker, refresh){
+  const wrap = document.getElementById('shareholders-section');
+  if(!wrap) return;
+  if(window._sh13Timer){ clearInterval(window._sh13Timer); window._sh13Timer=null; }
+  wrap.innerHTML = `<div class="sec-title-row"><span class="sec-title">Top Shareholders (13D/13G) — ${ticker}</span></div>
+    <div class="ib-wrap"><div class="ib-none">${refresh?'⏳ Purging cache and reloading 13D/13G filings…':'⏳ Loading top shareholders (scanning 13D/13G filings)…'}</div></div>`;
+  fetch(`/api/top_shareholders?ticker=${encodeURIComponent(ticker)}${refresh?'&refresh=1':''}`)
+    .then(r=>r.json())
+    .then(sh=>finishTopShareholders(wrap, sh||{}, ticker))
+    .catch(()=>finishTopShareholders(wrap, {rate_limited:true}, ticker));
+}
+
+function finishTopShareholders(wrap, sh, ticker){
+  wrap.innerHTML = renderTopShareholders(sh, ticker);
+  if(!sh.rate_limited) return;
+  let n = INSIDER_COOLDOWN;
+  const c = document.getElementById('sh13-count');
+  window._sh13Timer = setInterval(()=>{
+    n--; if(c) c.textContent = n;
+    if(n<=0){ clearInterval(window._sh13Timer); window._sh13Timer=null; loadTopShareholders(ticker); }
+  }, 1000);
+}
+
+function renderTopShareholders(sh, ticker){
+  const list = sh.holders || [];
+  let h = `<div class="sec-title-row"><span class="sec-title">Top Shareholders (13D/13G) — ${ticker}</span>
+    <span style="display:flex;align-items:center;gap:10px">
+      <span style="font-size:11px;color:var(--muted)">last ${sh.months||12} months</span>
+      <button class="btn" style="font-size:11px;padding:3px 9px" title="Clear this stock's 13D/13G cache and re-fetch" onclick="loadTopShareholders('${ticker}', true)">↻ Purge &amp; Reload</button>
+    </span></div>
+  <div class="ib-wrap">`;
+  if(sh.rate_limited){
+    h += `<div class="ib-none" style="color:#b45309;background:#fffbeb">
+      ⚠ SEC rate limit reached while loading 13D/13G filings${list.length?' — the list below may be incomplete':''}.
+      ${sh.pending?`<strong>${sh.pending}</strong> of ${sh.filings_total} filings still to process.`:''}
+      <div style="margin-top:6px">⏳ Retrying automatically in <span id="sh13-count">${INSIDER_COOLDOWN}</span>s…</div></div>`;
+    if(!list.length){ return h + `</div>`; }
+  } else if(!list.length){
+    h += `<div class="ib-none">No SC 13D/13G ownership filings on ${ticker} in the last ${sh.months||12} months${sh.filings_total?` (${sh.filings_total} filings checked)`:''} — large holders only need to refile on a material change, so a stable roster can go quiet for a long stretch.</div></div>`;
+    return h;
+  }
+  h += `<div class="ib-none" style="padding-top:0;font-size:11px">Each owner's most recent Schedule 13D/13G filing in the window — an amendment supersedes that owner's earlier stake. Not the full float; only holders who crossed a reporting threshold (generally 5%) show up here.</div>
+  <div class="tbl-scroll"><table class="ib-table"><thead><tr>
+    <th>#</th><th>Filer</th><th>% of Class</th><th>Shares</th><th>Form</th><th>Filed</th><th>Filing</th>
+  </tr></thead><tbody>`;
+  list.forEach((v,i)=>{
+    h += `<tr>
+      <td class="scr-rank">${i+1}</td>
+      <td style="font-weight:600">${v.filer||'—'}</td>
+      <td class="${v.pct>=0.05?'scr-good':''}" style="${v.pct>=0.05?'color:var(--green);font-weight:700':''}">${v.pct!=null?(v.pct*100).toFixed(1)+'%':'—'}</td>
+      <td>${v.shares!=null?Math.round(v.shares).toLocaleString():'—'}</td>
+      <td>${v.form||'—'}</td>
+      <td>${v.date||'—'}</td>
+      <td><a class="rf-link" href="${v.link}" target="_blank" rel="noreferrer">View ↗</a></td>
+    </tr>`;
+  });
+  h += `</tbody></table></div></div>`;
+  return h;
+}
+
 function renderRecentFilings(filings, allUrl, ticker){
   if(!filings || !filings.length) return '';
   function badgeCls(form){
@@ -1203,6 +1267,8 @@ async function doAnalyze(){
     loadInsiderBuys(tk);
     // Load institutional 13F holders in the background
     loadHolders(tk);
+    // Load top shareholders (13D/13G) in the background
+    loadTopShareholders(tk);
     // Fetch VIC ideas in background after main render
     const vicWrap = document.getElementById('vic-section');
     if(vicWrap) vicWrap.innerHTML=`<div class="sec-title-row"><span class="sec-title">Value Investors Club — ${tk}</span></div><div class="vic-wrap"><div class="vic-spinner">⏳ Loading VIC writeups…</div></div>`;

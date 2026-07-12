@@ -532,6 +532,185 @@ def _save_filing_cache(cik_no_zero: str, data: dict) -> None:
         pass
 
 
+# ─── Top shareholders (Schedule 13D/13G beneficial-ownership filings) ─────────
+
+def _sc13_cache_path(cik_no_zero: str) -> str:
+    return os.path.join(screener.CACHE_DIR, f"sc13_filings_{cik_no_zero}.json")
+
+
+def _load_sc13_cache(cik_no_zero: str) -> dict:
+    try:
+        with open(_sc13_cache_path(cik_no_zero)) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_sc13_cache(cik_no_zero: str, data: dict) -> None:
+    try:
+        with open(_sc13_cache_path(cik_no_zero), "w") as f:
+            json.dump(data, f)
+    except Exception:
+        pass
+
+
+_SC13_PCT_RE = re.compile(
+    r"PERCENT OF CLASS REPRESENTED BY AMOUNT IN\s*ROW\s*\(?9\)?\s*(\d{1,3}(?:\.\d+)?)\s*%",
+    re.IGNORECASE)
+_SC13_SHARES_RE = re.compile(
+    r"AGGREGATE AMOUNT BENEFICIALLY OWNED BY\s*EACH REPORTING PERSON\s*([\d,]+)",
+    re.IGNORECASE)
+
+
+def _sc13_index_filers(cik_no_zero: str, accn_nodash: str, accn: str) -> list[dict]:
+    """Parse an SC 13D/13G filing's own EDGAR index page for the reporting
+    owner(s) ('Filed by' companyName spans) — reliable across all form eras,
+    unlike scraping the cover page text for a name."""
+    try:
+        r = requests.get(
+            f"https://www.sec.gov/Archives/edgar/data/{cik_no_zero}/{accn_nodash}/{accn}-index.htm",
+            headers=HEADERS, timeout=20)
+        if r.status_code != 200:
+            return []
+    except Exception:
+        return []
+    filers = []
+    for m in re.finditer(r'<span class="companyName">(.*?)</span>', r.text, re.S):
+        block = m.group(1)
+        if "(Filed by)" not in block:
+            continue
+        name_m = re.match(r"\s*(.+?)\s*\(Filed by\)", block, re.S)
+        cik_m = re.search(r"CIK=(\d+)", block)
+        if name_m:
+            filers.append({"name": re.sub(r"\s+", " ", name_m.group(1)).strip(),
+                          "cik": int(cik_m.group(1)) if cik_m else None})
+    return filers
+
+
+def _parse_sc13_ownership(cik_no_zero: str, accn_nodash: str, doc: str) -> Optional[dict]:
+    """Extract the first reporting person's Item 9 (shares owned) / Item 11
+    (% of class) from a Schedule 13D/13G cover page — the standardized cover
+    page items every filer, old HTML or new, must complete. A joint filing
+    lists one cover page per reporting person; the first is the lead/primary
+    filer named on the index page, which is what we key the row to."""
+    if not doc:
+        return None
+    try:
+        r = requests.get(f"https://www.sec.gov/Archives/edgar/data/{cik_no_zero}/{accn_nodash}/{doc}",
+                         headers=HEADERS, timeout=25)
+        if r.status_code != 200:
+            return None
+        if doc.lower().endswith((".htm", ".html", ".txt")):
+            text = BeautifulSoup(r.text, "html.parser").get_text(" ")
+        else:
+            text = r.text
+        text = re.sub(r"\s+", " ", text)
+    except Exception:
+        return None
+    pct_m = _SC13_PCT_RE.search(text)
+    if not pct_m:
+        return None
+    sh_m = _SC13_SHARES_RE.search(text)
+    return {
+        "pct": float(pct_m.group(1)) / 100.0,
+        "shares": float(sh_m.group(1).replace(",", "")) if sh_m else None,
+    }
+
+
+def _fetch_sc13_filing(cik_no_zero: str, accn: str, doc: str, fdate: str, form: str) -> Optional[dict]:
+    accn_nodash = accn.replace("-", "")
+    own = _parse_sc13_ownership(cik_no_zero, accn_nodash, doc)
+    if not own:
+        return None
+    filers = _sc13_index_filers(cik_no_zero, accn_nodash, accn)
+    if not filers:
+        return None
+    lead = filers[0]
+    return {
+        "filer": lead["name"],
+        "filer_cik": lead["cik"],
+        "pct": own["pct"],
+        "shares": own["shares"],
+        "form": form,
+        "date": fdate,
+        "link": f"https://www.sec.gov/Archives/edgar/data/{cik_no_zero}/{accn_nodash}/{accn}-index.htm",
+    }
+
+
+def get_top_shareholders(submissions: dict, months: int = 12, max_filings: int = 60) -> dict:
+    """
+    Top shareholders derived from Schedule 13D/13G beneficial-ownership
+    filings over the last `months` — each reporting owner's most recent
+    filing in the window gives their current disclosed stake, since an
+    amendment supersedes everything that owner filed before it.
+    """
+    recent = submissions.get("filings", {}).get("recent", {})
+    forms  = recent.get("form", [])
+    accns  = recent.get("accessionNumber", [])
+    docs   = recent.get("primaryDocument", [])
+    dates  = recent.get("filingDate", [])
+    cik_no_zero = str(int(submissions.get("cik", "0")))
+
+    horizon = (datetime.now() - timedelta(days=months * 31)).strftime("%Y-%m-%d")
+    sc13_forms = {"SC 13D", "SC 13D/A", "SC 13G", "SC 13G/A"}
+
+    jobs = []
+    for i, f in enumerate(forms):
+        if f not in sc13_forms:
+            continue
+        fdate = dates[i] if i < len(dates) else ""
+        if fdate and fdate < horizon:
+            continue
+        jobs.append((accns[i], docs[i], fdate, f))
+        if len(jobs) >= max_filings:
+            break
+
+    # Per-accession cache — a filed 13D/13G cover page is immutable, so once
+    # parsed it never needs re-fetching. Resumable like the Form 4 cache.
+    cache = _load_sc13_cache(cik_no_zero)
+    window_accns = {j[0] for j in jobs}
+    to_fetch = [j for j in jobs if j[0] not in cache]
+
+    failures = 0
+    if to_fetch:
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            results = list(ex.map(lambda j: _fetch_sc13_filing(cik_no_zero, j[0], j[1], j[2], j[3]), to_fetch))
+        for j, res in zip(to_fetch, results):
+            if res is None:
+                failures += 1
+            else:
+                cache[j[0]] = res
+
+    cache = {a: v for a, v in cache.items() if a in window_accns}
+    _save_sc13_cache(cik_no_zero, cache)
+
+    filings = [cache[a] for a in window_accns if a in cache and cache[a]]
+
+    # Keep only the most recent filing per reporting owner — an amendment
+    # (13D/A, 13G/A) supersedes that owner's earlier stake disclosure.
+    latest_by_filer: dict = {}
+    for f in filings:
+        key = f.get("filer_cik") or f["filer"]
+        cur = latest_by_filer.get(key)
+        if cur is None or f["date"] > cur["date"]:
+            latest_by_filer[key] = f
+
+    holders = sorted(latest_by_filer.values(), key=lambda f: f["pct"], reverse=True)
+
+    fetched_all = all(a in cache for a in window_accns)
+    processed = len([a for a in window_accns if a in cache])
+    return {
+        "holders": holders[:20],
+        "total_count": len(holders),
+        "months": months,
+        "filings_processed": processed,
+        "filings_total": len(window_accns),
+        "complete": fetched_all,
+        "pending": len(window_accns) - processed,
+        "rate_limited": not fetched_all,
+    }
+
+
 # ─── Institutional (13F) holders — curated value-investor roster ──────────────
 # Sourced from ValueSider's ~92 tracked value-investing 13F filers (2026-07).
 # This is a fixed, small universe (unlike EDGAR full-text search over ~6,000
@@ -3791,6 +3970,32 @@ def insider():
         return jsonify({"error": f"Insider fetch failed: {e}",
                         "purchases": [], "trend": {}, "total_value": 0,
                         "total_count": 0, "rate_limited": True}), 200
+
+
+@app.route("/api/top_shareholders")
+def top_shareholders():
+    """Top shareholders derived from Schedule 13D/13G filings over the last
+    12 months. Loaded asynchronously, same pattern as /api/insider — cached
+    per accession so repeat calls are cheap and a rate-limited run resumes."""
+    ticker = request.args.get("ticker", "").upper().strip()
+    if not ticker:
+        return jsonify({"error": "ticker required"}), 400
+    cik = resolve_cik(ticker)
+    if not cik:
+        return jsonify({"error": f"Ticker '{ticker}' not found"}), 404
+
+    if request.args.get("refresh", "").strip() in ("1", "true", "yes"):
+        try:
+            os.remove(_sc13_cache_path(str(int(cik))))
+        except OSError:
+            pass
+
+    try:
+        submissions = fetch_submissions(cik)
+        return jsonify(get_top_shareholders(submissions))
+    except Exception as e:
+        return jsonify({"error": f"Top shareholders fetch failed: {e}",
+                        "holders": [], "total_count": 0, "rate_limited": True}), 200
 
 
 def _cached_company_name(cik: str) -> str:
