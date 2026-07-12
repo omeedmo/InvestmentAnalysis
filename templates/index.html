@@ -1137,7 +1137,7 @@ function renderTopShareholders(sh, ticker){
   const list = sh.holders || [];
   let h = `<div class="sec-title-row"><span class="sec-title">Top Shareholders (13D/13G) — ${ticker}</span>
     <span style="display:flex;align-items:center;gap:10px">
-      <span style="font-size:11px;color:var(--muted)">last ${sh.months||12} months</span>
+      <span style="font-size:11px;color:var(--muted)">${sh.stale?'most recent on file':`last ${sh.months||12} months`}</span>
       <button class="btn" style="font-size:11px;padding:3px 9px" title="Clear this stock's 13D/13G cache and re-fetch" onclick="loadTopShareholders('${ticker}', true)">↻ Purge &amp; Reload</button>
     </span></div>
   <div class="ib-wrap">`;
@@ -1158,7 +1158,10 @@ function renderTopShareholders(sh, ticker){
     h += `<div class="ib-none">No SC 13D/13G ownership filings on ${ticker} in the last ${sh.months||12} months${sh.filings_total?` (${sh.filings_total} filings checked)`:''} — large holders only need to refile on a material change, so a stable roster can go quiet for a long stretch.</div></div>`;
     return h;
   }
-  h += `<div class="ib-none" style="padding-top:0;font-size:11px">Each owner's most recent Schedule 13D/13G filing in the window — an amendment supersedes that owner's earlier stake. Not the full float; only holders who crossed a reporting threshold (generally 5%) show up here.</div>
+  if(sh.stale){
+    h += `<div class="ib-none" style="color:#b45309;background:#fffbeb">⚠ No 13D/13G filed on ${ticker} in the last ${sh.months||12} months — SEC's 2024 rule change means large holders now only refile on a material change, so a stable position can go quiet for years. Showing each owner's most recent filing on record instead; dates may be old.</div>`;
+  }
+  h += `<div class="ib-none" style="padding-top:0;font-size:11px">Each owner's most recent Schedule 13D/13G filing${sh.stale?'':' in the window'} — an amendment supersedes that owner's earlier stake. Not the full float; only holders who crossed a reporting threshold (generally 5%) show up here.</div>
   <div class="tbl-scroll"><table class="ib-table"><thead><tr>
     <th>#</th><th>Filer</th><th>% of Class</th><th>Shares</th><th>Form</th><th>Filed</th><th>Filing</th>
   </tr></thead><tbody>`;

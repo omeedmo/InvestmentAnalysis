@@ -637,12 +637,22 @@ def _fetch_sc13_filing(cik_no_zero: str, accn: str, doc: str, fdate: str, form: 
     }
 
 
-def get_top_shareholders(submissions: dict, months: int = 12, max_filings: int = 60) -> dict:
+def get_top_shareholders(submissions: dict, months: int = 12, max_filings: int = 60,
+                         stale_years: int = 8) -> dict:
     """
     Top shareholders derived from Schedule 13D/13G beneficial-ownership
-    filings over the last `months` — each reporting owner's most recent
-    filing in the window gives their current disclosed stake, since an
-    amendment supersedes everything that owner filed before it.
+    filings — each reporting owner's most recent filing gives their current
+    disclosed stake, since an amendment supersedes everything that owner
+    filed before it.
+
+    SEC's 2024 amendments to Regulation 13D-G replaced the old "refile every
+    February regardless" requirement with "only refile on a material
+    change," which collapsed 13D/13G filing volume industry-wide — a strict
+    last-12-months window is now empty for most stocks, including mega-caps,
+    even though their large holders' stakes are unchanged. So: fetch across
+    a wide window (`stale_years`) once, then prefer the in-window (`months`)
+    result; if that's empty, fall back to the most recent filing per owner
+    regardless of age, flagged `stale` so the UI can be honest about it.
     """
     recent = submissions.get("filings", {}).get("recent", {})
     forms  = recent.get("form", [])
@@ -651,7 +661,8 @@ def get_top_shareholders(submissions: dict, months: int = 12, max_filings: int =
     dates  = recent.get("filingDate", [])
     cik_no_zero = str(int(submissions.get("cik", "0")))
 
-    horizon = (datetime.now() - timedelta(days=months * 31)).strftime("%Y-%m-%d")
+    horizon      = (datetime.now() - timedelta(days=months * 31)).strftime("%Y-%m-%d")
+    wide_horizon = (datetime.now() - timedelta(days=stale_years * 366)).strftime("%Y-%m-%d")
     sc13_forms = {"SC 13D", "SC 13D/A", "SC 13G", "SC 13G/A"}
 
     jobs = []
@@ -659,7 +670,7 @@ def get_top_shareholders(submissions: dict, months: int = 12, max_filings: int =
         if f not in sc13_forms:
             continue
         fdate = dates[i] if i < len(dates) else ""
-        if fdate and fdate < horizon:
+        if fdate and fdate < wide_horizon:
             continue
         jobs.append((accns[i], docs[i], fdate, f))
         if len(jobs) >= max_filings:
@@ -671,14 +682,11 @@ def get_top_shareholders(submissions: dict, months: int = 12, max_filings: int =
     window_accns = {j[0] for j in jobs}
     to_fetch = [j for j in jobs if j[0] not in cache]
 
-    failures = 0
     if to_fetch:
         with ThreadPoolExecutor(max_workers=4) as ex:
             results = list(ex.map(lambda j: _fetch_sc13_filing(cik_no_zero, j[0], j[1], j[2], j[3]), to_fetch))
         for j, res in zip(to_fetch, results):
-            if res is None:
-                failures += 1
-            else:
+            if res is not None:
                 cache[j[0]] = res
 
     cache = {a: v for a, v in cache.items() if a in window_accns}
@@ -686,16 +694,21 @@ def get_top_shareholders(submissions: dict, months: int = 12, max_filings: int =
 
     filings = [cache[a] for a in window_accns if a in cache and cache[a]]
 
-    # Keep only the most recent filing per reporting owner — an amendment
-    # (13D/A, 13G/A) supersedes that owner's earlier stake disclosure.
-    latest_by_filer: dict = {}
-    for f in filings:
-        key = f.get("filer_cik") or f["filer"]
-        cur = latest_by_filer.get(key)
-        if cur is None or f["date"] > cur["date"]:
-            latest_by_filer[key] = f
+    def _latest_per_filer(rows):
+        latest: dict = {}
+        for f in rows:
+            key = f.get("filer_cik") or f["filer"]
+            cur = latest.get(key)
+            if cur is None or f["date"] > cur["date"]:
+                latest[key] = f
+        return sorted(latest.values(), key=lambda f: f["pct"], reverse=True)
 
-    holders = sorted(latest_by_filer.values(), key=lambda f: f["pct"], reverse=True)
+    in_window = [f for f in filings if f["date"] >= horizon]
+    holders = _latest_per_filer(in_window)
+    stale = False
+    if not holders and filings:
+        holders = _latest_per_filer(filings)
+        stale = True
 
     fetched_all = all(a in cache for a in window_accns)
     processed = len([a for a in window_accns if a in cache])
@@ -703,6 +716,7 @@ def get_top_shareholders(submissions: dict, months: int = 12, max_filings: int =
         "holders": holders[:20],
         "total_count": len(holders),
         "months": months,
+        "stale": stale,
         "filings_processed": processed,
         "filings_total": len(window_accns),
         "complete": fetched_all,
