@@ -554,6 +554,7 @@ function drawCharts(years, fin){
 
 // ── Reverse DCF ──────────────────────────────────────────────────────────────
 let DCF_STATE = null;   // {discount_rate, tv_dollar, current_fcf, market_cap, scenarios}
+let PROXY_INFO = null;  // {url, date} for the latest DEF 14A, shown in the Top Shareholders header
 
 // Mirrors app.py's reverse_dcf() — pure math on facts already in DCF_STATE
 // (market cap, current FCF, historical avg FCF per horizon don't change with
@@ -843,14 +844,9 @@ function render(data){
     h+=`<div class="ch-card"><h4>${d.title}</h4><canvas id="${d.id}"></canvas></div>`;
   h+=`</div>`;
 
-  // Proxy statement link
-  if(px.url){
-    h+=`<div style="margin-bottom:18px">
-      <a href="${px.url}" target="_blank" rel="noreferrer" style="display:inline-flex;align-items:center;gap:8px;font-size:13px;font-weight:600;padding:9px 16px;border-radius:6px;background:#1d4ed8;color:#fff;text-decoration:none;border:none;transition:background .15s" onmouseover="this.style.background='#1e40af'" onmouseout="this.style.background='#1d4ed8'">
-        📄 Proxy Statement (DEF 14A) — ${px.date}
-      </a>
-    </div>`;
-  }
+  // Proxy statement link — shown inside the Top Shareholders section
+  // header (renderTopShareholders), not as its own block.
+  PROXY_INFO = px && px.url ? px : null;
 
   // Top shareholders placeholder — filled asynchronously (13D/13G fetches are slow)
   h+=`<div id="shareholders-section"></div>`;
@@ -1145,6 +1141,13 @@ function renderTopShareholders(sh, ticker){
       <button class="btn" style="font-size:11px;padding:3px 9px" title="Clear this stock's 13D/13G cache and re-fetch" onclick="loadTopShareholders('${ticker}', true)">↻ Purge &amp; Reload</button>
     </span></div>
   <div class="ib-wrap">`;
+  if(PROXY_INFO){
+    h += `<div style="margin-bottom:14px">
+      <a href="${PROXY_INFO.url}" target="_blank" rel="noreferrer" style="display:inline-flex;align-items:center;gap:8px;font-size:13px;font-weight:600;padding:9px 16px;border-radius:6px;background:#1d4ed8;color:#fff;text-decoration:none;border:none;transition:background .15s" onmouseover="this.style.background='#1e40af'" onmouseout="this.style.background='#1d4ed8'">
+        📄 Proxy Statement (DEF 14A) — ${PROXY_INFO.date}
+      </a>
+    </div>`;
+  }
   if(sh.rate_limited){
     h += `<div class="ib-none" style="color:#b45309;background:#fffbeb">
       ⚠ SEC rate limit reached while loading 13D/13G filings${list.length?' — the list below may be incomplete':''}.
