@@ -848,10 +848,19 @@ def get_guru_universe(refresh: bool = False) -> dict:
                     _save_guru_fund(cik, data)
                     funds[cik] = data
 
+    # Drop funds whose latest 13F was filed more than 6 months ago — a fund
+    # that's gone quiet that long is treated as no longer actively tracked
+    # for holders/screener purposes (e.g. dropped below the $100M 13F
+    # threshold, wound down, or otherwise stopped reporting).
+    cutoff = (datetime.now() - timedelta(days=182)).strftime("%Y-%m-%d")
+    fresh_funds = {c: d for c, d in funds.items() if (d.get("date") or "") >= cutoff}
+    stale_count = len(funds) - len(fresh_funds)
+
     return {
-        "funds": funds,
+        "funds": fresh_funds,
         "total": len(ciks),
         "scanned": len(funds),
+        "stale_excluded": stale_count,
         "pending": len(ciks) - len(funds),
         "complete": len(funds) == len(ciks),
         "rate_limited": failures > 0,
@@ -984,8 +993,9 @@ def get_institutional_holders(submissions: dict, shares_out: Optional[float] = N
         "holders": holders[:100],
         "total_value": round(sum(h["value"] for h in holders)),
         "total_count": len(holders),
-        "funds_scanned": universe["scanned"],
+        "funds_scanned": len(universe["funds"]),
         "funds_total": universe["total"],
+        "funds_stale_excluded": universe.get("stale_excluded", 0),
         "period": period,
         "shares_outstanding": shares_out,
         "sampled": False,   # fixed curated roster, not a sample of a larger universe

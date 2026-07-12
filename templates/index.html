@@ -976,9 +976,10 @@ function finishHolders(wrap, hd, ticker){
 function renderHolders(hd, ticker){
   const list = hd.holders || [];
   const asOf = hd.period ? `as of ${hd.period} (latest 13F quarter)` : 'latest 13F quarter';
+  const activeNote = hd.funds_stale_excluded ? ` (${hd.funds_stale_excluded} excluded — no 13F filed in the last 6 months)` : '';
   let h = `<div class="sec-title-row"><span class="sec-title">Institutional 13F Holders — ${ticker}</span>
     <span style="display:flex;align-items:center;gap:10px">
-      <span style="font-size:11px;color:var(--muted)">${asOf} · ~92 tracked value-investing funds</span>
+      <span style="font-size:11px;color:var(--muted)">${asOf} · ~92 tracked value-investing funds${activeNote}</span>
       <button class="btn" style="font-size:11px;padding:3px 9px" title="Clear the shared fund cache and re-fetch all 92 (slow, affects every stock)" onclick="loadHolders('${ticker}', true)">↻ Purge &amp; Reload</button>
     </span></div>
   <div class="ib-wrap">`;
@@ -989,14 +990,14 @@ function renderHolders(hd, ticker){
       <div style="margin-top:6px">⏳ Retrying automatically in <span id="hld-count">${INSIDER_COOLDOWN}</span>s…</div></div>`;
     if(!list.length){ return h + `</div>`; }
   } else if(!list.length){
-    h += `<div class="ib-none">None of the ~92 tracked value investors currently hold ${ticker}${hd.funds_scanned?` (${hd.funds_scanned} funds checked)`:''}.</div></div>`;
+    h += `<div class="ib-none">None of the ~92 tracked value investors currently hold ${ticker}${hd.funds_scanned?` (${hd.funds_scanned} active funds checked${activeNote})`:''}.</div></div>`;
     return h;
   }
   h += `<div class="ib-summary">
     <div class="ib-stat"><div class="ib-sl">Reported 13F Value</div><div class="ib-sv g">${F.$M(hd.total_value)}</div></div>
-    <div class="ib-stat"><div class="ib-sl">Holders</div><div class="ib-sv">${list.length} of ${hd.funds_total||92}</div></div>
+    <div class="ib-stat"><div class="ib-sl">Holders</div><div class="ib-sv">${list.length} of ${hd.funds_scanned||hd.funds_total||92} active</div></div>
   </div>
-  <div class="ib-none" style="padding-top:0;font-size:11px">Ranked by conviction — % of the fund's 13F portfolio in this stock. Tracks a curated roster of well-known value-investing 13F filers, not the full universe of institutional holders.</div>
+  <div class="ib-none" style="padding-top:0;font-size:11px">Ranked by conviction — % of the fund's 13F portfolio in this stock. Tracks a curated roster of well-known value-investing 13F filers, not the full universe of institutional holders. Only funds with a 13F filed in the last 6 months are considered.</div>
   <div class="tbl-scroll"><table class="ib-table"><thead><tr>
     <th>#</th><th>Institution</th><th>Reported Value</th><th>% of Portfolio</th><th>Fund 13F Total</th><th>Holdings</th><th>Shares</th><th>% Shares Out</th><th>Filed</th><th>13F</th>
   </tr></thead><tbody>`;
