@@ -764,12 +764,6 @@ function render(data){
   <div class="vl-links">
     ${co.latest_10k?`<a class="badge lk" href="${co.latest_10k.url}" target="_blank" rel="noreferrer">Latest ${co.latest_10k.form} (${co.latest_10k.filing_date})</a>`:''}
     ${co.latest_10q?`<a class="badge lk" href="${co.latest_10q.url}" target="_blank" rel="noreferrer">Latest ${co.latest_10q.form} (${co.latest_10q.filing_date})</a>`:''}
-    <span class="badge bl">P/E ${F.x(mk.pe)}</span>
-    ${co.is_reit
-      ? `<span class="badge bl">P/FFO ${F.x(mk.p_ffo)}</span><span class="badge bl">P/AFFO ${F.x(mk.p_affo)}</span>`
-      : `<span class="badge bl">P/FCF ${F.x(mk.p_fcf)}</span><span class="badge bl">EV/EBIT ${F.x(mk.ev_ebit)}</span>`
-    }
-    <span class="badge gr">FCF Yield ${F.pct(mk.fcf_yield)}</span>
   </div>
 </div>`;
 
