@@ -1293,11 +1293,15 @@ function renderScreenTable(stats){
       pipeline couldn't map to a ticker (delisted/merged positions, ETF trust series, or securities
       with no SC 13D/13G/N-PX on file). Check these manually if interested.</div>
     <table class="scr-table">
-      <thead><tr><th>CUSIP</th><th>Name (best known)</th><th># Funds</th><th>Total Value</th></tr></thead>
+      <thead><tr><th>CUSIP</th><th>Name (best known)</th><th># Funds</th><th>Total Value</th><th>13F Filings</th></tr></thead>
       <tbody>`;
     SCREEN_UNRESOLVED.forEach(u=>{
+      const links = (u.funds||[]).map(f=>
+        `<a class="rf-link" href="${f.link}" target="_blank" rel="noreferrer" title="${f.manager}">${f.manager} ↗</a>`
+      ).join('<span style="color:var(--muted)"> · </span>');
       h += `<tr><td class="scr-tk">${u.cusip}</td><td>${u.name||'—'}</td>
-        <td>${u.held_by_funds}</td><td>${F.$M(u.total_value)}</td></tr>`;
+        <td>${u.held_by_funds}</td><td>${F.$M(u.total_value)}</td>
+        <td style="font-size:11px">${links||'—'}</td></tr>`;
     });
     h += `</tbody></table>`;
   }

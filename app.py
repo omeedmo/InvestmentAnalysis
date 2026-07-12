@@ -4,12 +4,14 @@ Value Line Style Investment Analysis – Flask Backend
 Pulls 15 years of financial data from SEC EDGAR (free, no API key).
 """
 
+import io
 import json
 import math
 import os
 import re
 import time
 import xml.etree.ElementTree as ET
+import zipfile
 
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
@@ -1006,13 +1008,109 @@ _CUSIP_DISPLAY_NAME_RE = re.compile(
     r"^(.*?)\s+\(([A-Z0-9.\-]+(?:,\s*[A-Z0-9.\-]+)*)\)\s+\(CIK (\d+)\)$")
 
 
-def _resolve_cusip_edgar(cusip: str) -> Optional[str]:
+def _load_ftd_cusip_map() -> dict:
+    """
+    CUSIP → ticker dictionary from SEC's twice-monthly Fails-to-Deliver files —
+    the only SEC dataset that is a direct CUSIP|SYMBOL table (a security only
+    needs a single fail-to-deliver to appear, so coverage is near-total,
+    including foreign CINS identifiers that trade in the US). Pulls the last
+    few half-month files and merges them; 30-day disk cache.
+    """
+    cache_path = os.path.join(screener.CACHE_DIR, "ftd_cusip_map.json")
+    try:
+        if os.path.exists(cache_path) and time.time() - os.path.getmtime(cache_path) < 30 * 86400:
+            with open(cache_path) as f:
+                return json.load(f)
+    except Exception:
+        pass
+
+    # Half-month files, newest first: cnsfails{YYYYMM}a (1st–15th) / b (16th–EOM).
+    d = datetime.now().date()
+    halves = []
+    y, m = d.year, d.month
+    for _ in range(4):   # current + previous month, both halves
+        halves += [f"{y}{m:02d}b", f"{y}{m:02d}a"]
+        y, m = (y, m - 1) if m > 1 else (y - 1, 12)
+    out: dict = {}
+    fetched = 0
+    for tag in halves:
+        if fetched >= 3:   # 3 successful files is plenty of coverage
+            break
+        try:
+            r = requests.get(f"https://www.sec.gov/files/data/fails-deliver-data/cnsfails{tag}.zip",
+                             headers=HEADERS, timeout=45)
+            if r.status_code != 200:
+                continue
+            z = zipfile.ZipFile(io.BytesIO(r.content))
+            with z.open(z.namelist()[0]) as f:
+                for raw in f:
+                    parts = raw.decode("utf-8", errors="replace").split("|")
+                    if len(parts) < 3 or parts[1] == "CUSIP":
+                        continue
+                    cusip, symbol = parts[1].strip(), parts[2].strip()
+                    if cusip and symbol and cusip not in out:
+                        out[cusip] = symbol
+            fetched += 1
+        except Exception:
+            continue
+
+    if out:
+        try:
+            with open(cache_path, "w") as f:
+                json.dump(out, f)
+        except Exception:
+            pass
+    return out
+
+
+def _resolve_cusips_ftd(cusips: list) -> dict:
+    """Tier: direct CUSIP→ticker lookup in SEC's Fails-to-Deliver data."""
+    ftd = _load_ftd_cusip_map()
+    return {c: ftd[c.upper()] for c in cusips if ftd.get(c.upper())}
+
+
+def _cik_ticker_title_map() -> dict:
+    """CIK → (best ticker, registry title) from SEC's ticker registry
+    (score-resolved so primary share classes win over -A/-WS variants;
+    lower _ticker_score is better, matching screener's convention)."""
+    out: dict = {}
+    try:
+        r = requests.get("https://www.sec.gov/files/company_tickers.json",
+                         headers=HEADERS, timeout=20)
+        entries = list(r.json().values())
+    except Exception:
+        return out
+    for e in entries:
+        tk, title, cik = e.get("ticker", ""), e.get("title", ""), int(e.get("cik_str") or 0)
+        if not tk or not cik or screener._is_non_common(tk):
+            continue
+        cur = out.get(cik)
+        if cur is None or screener._ticker_score(tk) < screener._ticker_score(cur[0]):
+            out[cik] = (tk, title)
+    return out
+
+
+def _names_overlap(a: str, b: str) -> bool:
+    """True if two issuer names share at least one distinctive (≥4-char) word —
+    guards CIK-based resolution against matching the wrong filer entirely."""
+    wa = {w for w in _norm_issuer_name(a) if len(w) >= 4}
+    wb = {w for w in _norm_issuer_name(b) if len(w) >= 4}
+    return bool(wa & wb)
+
+
+def _resolve_cusip_edgar(cusip: str, cik_titles: Optional[dict] = None,
+                         expected_name: str = "") -> Optional[str]:
     """
     Resolve a CUSIP to a ticker using SEC's own EDGAR full-text search — no
-    third party involved. Ownership-disclosure filings (SC 13D/13G, N-PX, etc.)
-    are indexed by CUSIP, and the subject company's entry in the hit's
-    display_names is formatted "NAME (TICKER) (CIK NNNNNNNNNN)" when SEC has a
-    ticker on file for it — we just parse that.
+    third party involved. Two extraction paths per hit:
+    1. Ownership-disclosure filings (SC 13D/13G, N-PX) index the subject
+       company's display_name as "NAME (TICKER) (CIK NNNNNNNNNN)" — parse it.
+    2. Issuer-made filings (424B prospectuses, 8-K, S-1, FWP) carry the CUSIP
+       in the body and the issuer's own CIK in the hit — map CIK → ticker via
+       SEC's ticker registry. Guarded by a name-overlap check against the
+       expected issuer name: closed-end funds also file 424B prospectuses
+       listing their *holdings'* CUSIPs, so without the check a fund like
+       Source Capital would win the match for Heineken's CUSIP.
     """
     try:
         r = requests.get("https://efts.sec.gov/LATEST/search-index",
@@ -1022,26 +1120,43 @@ def _resolve_cusip_edgar(cusip: str) -> Optional[str]:
         hits = r.json().get("hits", {}).get("hits", [])
     except Exception:
         return None
-    for h in hits[:5]:
-        dn = h.get("_source", {}).get("display_names", [])
-        if not dn:
-            continue
-        m = _CUSIP_DISPLAY_NAME_RE.match(dn[0])
-        if m:
-            return m.group(2).split(",")[0].strip()
+    issuer_forms = {"424B1", "424B2", "424B3", "424B4", "424B5", "8-K", "S-1",
+                    "S-3", "FWP", "10-K", "10-Q", "S-4", "20-F", "6-K"}
+    for h in hits[:8]:
+        src = h.get("_source", {})
+        dn = src.get("display_names", [])
+        if dn:
+            m = _CUSIP_DISPLAY_NAME_RE.match(dn[0])
+            if m and (not expected_name or _names_overlap(expected_name, m.group(1))):
+                return m.group(2).split(",")[0].strip()
+        # Issuer-filing path: the filer IS the subject company.
+        if cik_titles and set(src.get("root_forms") or []) & issuer_forms:
+            for cik_s in src.get("ciks") or []:
+                info = cik_titles.get(int(cik_s))
+                if not info:
+                    continue
+                tk, title = info
+                if not expected_name or _names_overlap(expected_name, title):
+                    return tk
     return None
 
 
-def _resolve_cusips_edgar(cusips: list, time_budget_s: float = 90.0) -> dict:
+def _resolve_cusips_edgar(cusips: list, time_budget_s: float = 90.0,
+                          names: Optional[dict] = None) -> dict:
     """Resolve a batch of CUSIPs via EDGAR full-text search (one request per
     CUSIP — SEC has no bulk CUSIP-lookup endpoint). Time-budgeted and
-    resumable like every other SEC-fetch loop in this app."""
+    resumable like every other SEC-fetch loop in this app. `names` maps
+    CUSIP → expected issuer name, used to guard the issuer-CIK path."""
     out: dict = {}
     start = time.time()
+    cik_titles = _cik_ticker_title_map()
+    names = names or {}
+    official = _load_13f_official_list()
     for cusip in cusips:
         if time.time() - start > time_budget_s:
             break
-        ticker = _resolve_cusip_edgar(cusip)
+        expected = names.get(cusip) or official.get(cusip.upper()) or ""
+        ticker = _resolve_cusip_edgar(cusip, cik_titles, expected_name=expected)
         if ticker:
             out[cusip] = ticker
         time.sleep(0.15)   # EDGAR full-text search rate limit is generous but not unlimited
@@ -1260,18 +1375,36 @@ def get_guru_holdings_tickers(refresh: bool = False, time_budget_s: float = 90.0
     cache = {} if refresh else _load_cusip_ticker_cache()
     missing = [c for c in cusips if c not in cache]
     if missing:
-        # Tier 1: fast, in-memory, no-network lookup via SEC's official 13(f)
-        # securities list cross-referenced against SEC's ticker registry.
-        # Resolves nearly everything instantly regardless of list size.
-        resolved = _resolve_cusips_13flist(missing)
+        # Tier 1: direct CUSIP→ticker table from SEC's Fails-to-Deliver files.
+        # Exact-identifier match, no name heuristics — runs FIRST because it can
+        # never confuse similarly-named issuers (D R HORTON vs D-Wave, WW
+        # GRAINGER vs WW International), and it covers foreign CINS identifiers
+        # that trade in the US.
+        resolved = _resolve_cusips_ftd(missing)
         cache.update(resolved)
         _save_cusip_ticker_cache(cache)
 
-        # Tier 2: whatever that couldn't resolve (name variant SEC's registry
-        # doesn't recognize) falls through to per-CUSIP EDGAR full-text search.
+        # Tier 2: in-memory name matching via SEC's official 13(f) securities
+        # list cross-referenced against SEC's ticker registry.
         still_missing = [c for c in missing if c not in resolved]
         if still_missing:
-            resolved2 = _resolve_cusips_edgar(still_missing, time_budget_s=time_budget_s)
+            resolved_13f = _resolve_cusips_13flist(still_missing)
+            cache.update(resolved_13f)
+            resolved.update(resolved_13f)
+            _save_cusip_ticker_cache(cache)
+
+        # Tier 3: whatever still couldn't resolve falls through to per-CUSIP
+        # EDGAR full-text search (subject-company display names on ownership
+        # filings, plus issuer CIK → ticker on issuer-made filings).
+        still_missing = [c for c in missing if c not in resolved]
+        if still_missing:
+            holding_names = {}
+            for data in universe["funds"].values():
+                for h in (data or {}).get("holdings", []):
+                    if h.get("cusip") in still_missing and h.get("name"):
+                        holding_names.setdefault(h["cusip"], h["name"])
+            resolved2 = _resolve_cusips_edgar(still_missing, time_budget_s=time_budget_s,
+                                              names=holding_names)
             cache.update(resolved2)
             _save_cusip_ticker_cache(cache)
 
@@ -1290,6 +1423,7 @@ def get_guru_holdings_tickers(refresh: bool = False, time_budget_s: float = 90.0
     # to check offline, not just a bare CUSIP.
     unresolved_cusips = {c for c in cusips if not (cache.get(c) and _looks_like_ticker(cache[c]))}
     official_names = _load_13f_official_list()
+    manager_by_cik = {g["cik"]: g["manager"] for g in reversed(GURUS)}
     unresolved: dict = {}
     for cik, data in universe["funds"].items():
         if not data:
@@ -1303,14 +1437,21 @@ def get_guru_holdings_tickers(refresh: bool = False, time_budget_s: float = 90.0
                 "name": official_names.get(c.upper()) or h["name"],
                 "funds": [],
             })
-            entry["funds"].append({"cik": cik, "value": h.get("value") or 0})
+            entry["funds"].append({
+                "cik": cik,
+                "value": h.get("value") or 0,
+                "manager": manager_by_cik.get(cik, str(cik)),
+                "link": data.get("link", ""),
+            })
     unresolved_list = []
     for c, entry in unresolved.items():
         total_value = sum(f["value"] for f in entry["funds"])
+        entry["funds"].sort(key=lambda f: f["value"], reverse=True)
         unresolved_list.append({
             "cusip": c, "name": entry["name"],
             "held_by_funds": len(entry["funds"]),
             "total_value": round(total_value),
+            "funds": [{"manager": f["manager"], "link": f["link"]} for f in entry["funds"]],
         })
     unresolved_list.sort(key=lambda x: x["total_value"], reverse=True)
 
