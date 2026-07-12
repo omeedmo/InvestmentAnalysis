@@ -1359,25 +1359,18 @@ def _load_ticker_search_list() -> list:
     return out
 
 
-@app.route("/api/ticker_search")
-def ticker_search():
-    q = request.args.get("q", "").strip().upper()
-    if len(q) < 1:
-        return jsonify({"results": []})
+@app.route("/api/ticker_list")
+def ticker_list_route():
+    """Full ticker+name list for the client-side autocomplete. Fetched once
+    per browser session (not per keystroke) and filtered locally — a search
+    endpoint hit on every keystroke was dominated by mobile round-trip
+    latency, not server-side work. The list itself is ~9k small entries
+    (a few hundred KB), so one cached fetch beats dozens of tiny slow ones.
+    """
     entries = _load_ticker_search_list()
-    prefix_tk, prefix_name, contains = [], [], []
-    for e in entries:
-        tk, name = e["ticker"], e["name"]
-        if tk.upper().startswith(q):
-            prefix_tk.append(e)
-        elif name.upper().startswith(q):
-            prefix_name.append(e)
-        elif q in tk.upper() or q in name.upper():
-            contains.append(e)
-    prefix_tk.sort(key=lambda e: len(e["ticker"]))
-    prefix_name.sort(key=lambda e: len(e["name"]))
-    results = (prefix_tk + prefix_name + contains)[:12]
-    return jsonify({"results": results})
+    resp = jsonify({"results": entries})
+    resp.headers["Cache-Control"] = "public, max-age=86400"
+    return resp
 
 
 def _squish_prefix_lookup(squish_list: list, target: str) -> Optional[str]:

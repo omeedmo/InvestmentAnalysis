@@ -29,13 +29,21 @@ body{font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:v
 .form-row input{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);color:#fff;padding:8px 10px;border-radius:5px;font-size:13px;outline:none;min-height:38px}
 .form-row input::placeholder{color:rgba(255,255,255,.5)}
 .form-row input:focus{border-color:#60a5fa;background:rgba(255,255,255,.2)}
-.ticker-ac{display:none;position:absolute;top:calc(100% + 4px);left:0;width:320px;max-width:80vw;max-height:340px;overflow-y:auto;background:var(--card);color:var(--text,#0f172a);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.35);z-index:200}
+/* position:fixed with JS-computed coordinates (see positionAc()) rather than
+   position:absolute anchored to the input's own wrapper — on mobile the
+   input sits far enough right (after the title) that a wrapper-anchored
+   dropdown could overflow off the right edge of the viewport entirely. */
+.ticker-ac{display:none;position:fixed;max-height:340px;overflow-y:auto;background:var(--card);color:var(--text,#0f172a);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.35);z-index:200}
 .ticker-ac.open{display:block}
-.ticker-ac-item{display:flex;align-items:baseline;gap:8px;padding:8px 12px;cursor:pointer;font-size:13px}
+.ticker-ac-item{display:flex;align-items:baseline;gap:8px;padding:10px 12px;min-height:44px;box-sizing:border-box;cursor:pointer;font-size:13px}
 .ticker-ac-item:hover,.ticker-ac-item.active{background:var(--bg)}
 .ticker-ac-tk{font-weight:700;color:var(--navy);min-width:52px}
 .ticker-ac-name{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
 .ticker-ac-empty{padding:10px 12px;font-size:12px;color:var(--muted)}
+@media(max-width:640px){
+  .ticker-ac-item{flex-direction:column;align-items:flex-start;gap:2px;padding:10px 12px}
+  .ticker-ac-name{white-space:normal;font-size:12px}
+}
 .btn{background:#2563eb;color:#fff;border:none;padding:8px 20px;border-radius:5px;font-weight:600;cursor:pointer;font-size:14px;white-space:nowrap;transition:background .15s;min-height:38px;touch-action:manipulation}
 .btn:hover{background:#1d4ed8}
 .btn:disabled{background:#475569;cursor:not-allowed}
@@ -1206,13 +1214,44 @@ async function doAnalyze(){
 }
 
 // ── Ticker autocomplete ──────────────────────────────────────────────────────
+// Fetched once (browser-cached 24h) and filtered entirely client-side — a
+// per-keystroke search request was dominated by mobile round-trip latency,
+// not server work, so typing felt laggy on phones. One upfront list fetch
+// (~a few hundred KB, ~9k tickers) beats dozens of slow round trips.
 (function(){
   const inp = document.getElementById('inp-ticker');
   const box = document.getElementById('ticker-ac');
+  let allEntries = null;   // null = not loaded yet, [] = load failed
+  let loadPromise = null;
   let results = [];
   let activeIdx = -1;
   let debounceT = null;
-  let reqSeq = 0;
+
+  function ensureLoaded(){
+    if(loadPromise) return loadPromise;
+    loadPromise = fetch('/api/ticker_list')
+      .then(r=>r.json())
+      .then(d=>{ allEntries = d.results || []; })
+      .catch(()=>{ allEntries = []; });
+    return loadPromise;
+  }
+  // Warm the cache as soon as the page is interactive, so it's ready before
+  // the user's first keystroke.
+  ensureLoaded();
+
+  function search(q){
+    if(!allEntries || !allEntries.length) return [];
+    const prefixTk=[], prefixName=[], contains=[];
+    for(const e of allEntries){
+      const tk = e.ticker, name = e.name;
+      if(tk.toUpperCase().startsWith(q)) prefixTk.push(e);
+      else if(name.toUpperCase().startsWith(q)) prefixName.push(e);
+      else if(tk.toUpperCase().includes(q) || name.toUpperCase().includes(q)) contains.push(e);
+    }
+    prefixTk.sort((a,b)=>a.ticker.length-b.ticker.length);
+    prefixName.sort((a,b)=>a.name.length-b.name.length);
+    return [...prefixTk, ...prefixName, ...contains].slice(0,12);
+  }
 
   function closeAc(){
     box.classList.remove('open');
@@ -1221,9 +1260,26 @@ async function doAnalyze(){
     activeIdx = -1;
   }
 
+  // Fixed-position under the input, clamped so it never runs off the right
+  // edge of a narrow phone screen, and capped to whatever vertical space is
+  // actually left below the input.
+  function positionAc(){
+    const r = inp.getBoundingClientRect();
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const width = Math.min(360, vw - 16);
+    const left = Math.max(8, Math.min(r.left, vw - width - 8));
+    box.style.width = width + 'px';
+    box.style.left = left + 'px';
+    box.style.top = (r.bottom + 4) + 'px';
+    box.style.maxHeight = Math.min(340, vh - r.bottom - 16) + 'px';
+  }
+  window.addEventListener('resize', ()=>{ if(box.classList.contains('open')) positionAc(); });
+  window.addEventListener('scroll', ()=>{ if(box.classList.contains('open')) positionAc(); }, true);
+
   function renderAc(){
+    positionAc();
     if(!results.length){
-      box.innerHTML = `<div class="ticker-ac-empty">No matches</div>`;
+      box.innerHTML = `<div class="ticker-ac-empty">${allEntries&&allEntries.length?'No matches':'Loading…'}</div>`;
       box.classList.add('open');
       return;
     }
@@ -1247,20 +1303,19 @@ async function doAnalyze(){
   }
 
   inp.addEventListener('input', ()=>{
-    const q = inp.value.trim();
+    const q = inp.value.trim().toUpperCase();
     clearTimeout(debounceT);
     if(!q){ closeAc(); return; }
-    debounceT = setTimeout(async ()=>{
-      const seq = ++reqSeq;
-      try{
-        const r = await fetch(`/api/ticker_search?q=${encodeURIComponent(q)}`);
-        const d = await r.json();
-        if(seq !== reqSeq) return;   // stale response, a newer query already fired
-        results = d.results || [];
+    // Light debounce for render/layout cost on low-end phones — the data
+    // itself is already local, no network wait involved.
+    debounceT = setTimeout(()=>{
+      ensureLoaded().then(()=>{
+        if(inp.value.trim().toUpperCase() !== q) return;   // input changed since
+        results = search(q);
         activeIdx = -1;
         renderAc();
-      }catch(e){ /* ignore — autocomplete is best-effort */ }
-    }, 150);
+      });
+    }, 40);
   });
 
   inp.addEventListener('keydown', e=>{
@@ -1284,8 +1339,9 @@ async function doAnalyze(){
   });
 
   // Outside-click close, rather than input blur — blur fires as soon as a
-  // mousedown starts (before the click completes), which raced the item's
-  // click handler and closed the dropdown before the selection registered.
+  // mousedown/touchstart begins (before the click/tap completes), which
+  // raced the item's click handler and closed the dropdown before the
+  // selection registered.
   document.addEventListener('click', e=>{
     if(!inp.contains(e.target) && !box.contains(e.target)) closeAc();
   });
