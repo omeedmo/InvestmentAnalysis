@@ -145,6 +145,11 @@ th.hidden-col{display:none}
 .bar-track{height:8px;background:#e2e8f0;border-radius:4px;overflow:hidden;margin:8px 0 10px}
 .bar-fill{height:100%;border-radius:4px;transition:width .4s}
 .dcf-note{font-size:11px;color:var(--muted);margin-top:14px;line-height:1.6;padding-top:12px;border-top:1px solid var(--border)}
+.dcf-apply-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px 12px;margin-bottom:14px}
+.dcf-apply-row label{font-size:11px;color:var(--muted);font-weight:600}
+.dcf-apply-row input{padding:6px 8px;font-size:13px;border:1px solid var(--border);border-radius:5px;background:var(--card);color:inherit}
+#dcf-dr{width:110px}
+#dcf-tv{width:140px}
 
 /* ── Shareholders ────────────────────────────────────────────────────── */
 .sh-wrap{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:16px 18px;margin-bottom:22px}
@@ -260,7 +265,7 @@ th.hidden-col{display:none}
   .topbar h1{font-size:14px}
   .form-row{gap:6px}
   .form-row input{font-size:12px;padding:7px 8px}
-  #inp-dr,#inp-tv{width:90px!important}
+  #dcf-dr,#dcf-tv{width:90px!important}
   #inp-ticker{width:110px!important}
   .btn{padding:7px 14px;font-size:13px}
   .container{padding:8px}
@@ -279,7 +284,6 @@ th.hidden-col{display:none}
 @media(max-width:400px){
   :root{--lbl-w:130px}
   .vl-stats{grid-template-columns:repeat(2,1fr)}
-  #inp-dr,#inp-tv{display:none}
 }
 </style>
 </head>
@@ -288,8 +292,6 @@ th.hidden-col{display:none}
   <h1>Investment <span>Analysis</span></h1>
   <div class="form-row">
     <input id="inp-ticker"  type="text"   placeholder="Ticker (AAPL, MSFT…)" maxlength="10" style="width:145px;text-transform:uppercase">
-    <input id="inp-dr"      type="number" placeholder="Discount % (e.g. 10)"  value="10" min="1" max="30" step="0.5" style="width:130px">
-    <input id="inp-tv"      type="number" placeholder="Terminal Value ($B)"    value=""   min="0" step="1"          style="width:150px">
     <button class="btn" id="btn" onclick="doAnalyze()">Analyze ▸</button>
     <button class="btn" id="btn-screen" onclick="openScreener()" style="background:#0e7490">Screener ⌕</button>
   </div>
@@ -522,6 +524,126 @@ function drawCharts(years, fin){
   }
 }
 
+// ── Reverse DCF ──────────────────────────────────────────────────────────────
+let DCF_STATE = null;   // {discount_rate, tv_dollar, current_fcf, market_cap, scenarios}
+
+// Mirrors app.py's reverse_dcf() — pure math on facts already in DCF_STATE
+// (market cap, current FCF, historical avg FCF per horizon don't change with
+// the discount rate or terminal value), so Apply recomputes instantly with
+// no network round trip.
+function computeDcfScenarios(marketCap, currentFcf, dr, tvDollar, histAvgByHorizon){
+  const out = {};
+  for(const years of [5,10,20]){
+    if(!marketCap) continue;
+    const r = dr;
+    const annuityFactor = (1 - Math.pow(1+r,-years)) / r;
+    const tvPv = tvDollar ? tvDollar / Math.pow(1+r,years) : 0;
+    const numerator = marketCap - tvPv;
+    if(annuityFactor <= 0 || numerator <= 0) continue;
+    const avgFcf = numerator / annuityFactor;
+    out[years] = {
+      avg_fcf: avgFcf,
+      current_fcf: currentFcf,
+      tv_pv: tvPv,
+      vs_current: currentFcf ? Math.round((avgFcf/currentFcf)*100)/100 : null,
+      entry_multiple: currentFcf ? Math.round((marketCap/currentFcf)*10)/10 : null,
+      annuity_pct: Math.round((numerator/marketCap)*1000)/10,
+      tv_pct: Math.round((tvPv/marketCap)*1000)/10,
+      hist_avg_fcf: histAvgByHorizon[years],
+    };
+  }
+  return out;
+}
+
+function renderDcfSection(dcf){
+  const {discount_rate:dr, tv_dollar:tvDollar, current_fcf:cFCF, market_cap:cMC, scenarios:sc}=dcf;
+  const entMult=cMC&&cFCF&&cFCF>0?(cMC/cFCF).toFixed(1)+'x':'—';
+  const sc_cls={5:'s5',10:'s10',20:'s20'};
+  const sc_clr={5:'#3b82f6',10:'#8b5cf6',20:'#ec4899'};
+  const tvTxt = tvDollar ? F.$M(tvDollar) : '(none)';
+  const tvB = tvDollar ? (tvDollar/1e9) : '';
+
+  let h = `<div class="sec-title-row"><span class="sec-title">Reverse DCF Analysis</span></div>
+<div class="dcf-wrap">
+  <div class="dcf-apply-row">
+    <label for="dcf-dr">Discount Rate</label>
+    <input id="dcf-dr" type="number" min="1" max="30" step="0.5" value="${(dr*100).toFixed(1)}">
+    <label for="dcf-tv">Terminal Value ($B)</label>
+    <input id="dcf-tv" type="number" min="0" step="1" placeholder="(none)" value="${tvB}">
+    <button class="btn" id="btn-dcf-apply" onclick="applyDcf()">Apply</button>
+  </div>
+  <div class="dcf-hdr">
+    <div><div class="dcf-t">Average annual FCF needed to justify today's price</div>
+    <div class="dcf-s">Flat annual FCF discounted at ${(dr*100).toFixed(1)}%${tvDollar ? ` + terminal value of ${tvTxt} at end of period` : ' (no terminal value)'} = market cap</div></div>
+  </div>
+  <div class="dcf-ctx">
+    <div><div class="dci-label">Current FCF (LTM)</div><div class="dci-val">${F.$M(cFCF)}</div></div>
+    <div><div class="dci-label">Market Cap</div><div class="dci-val">${F.$M(cMC)}</div></div>
+    <div><div class="dci-label">Current FCF Multiple</div><div class="dci-val">${entMult}</div></div>
+    <div><div class="dci-label">Terminal Value (your input)</div><div class="dci-val">${tvTxt}</div></div>
+    <div><div class="dci-label">Discount Rate</div><div class="dci-val">${(dr*100).toFixed(1)}%</div></div>
+  </div>
+  <div class="dcf-cards">`;
+
+  for(const [hor,s] of Object.entries(sc)){
+    const clr=sc_clr[parseInt(hor)];
+    // color the avg FCF vs current: red if needs much more, green if close/below
+    const ratio=s.vs_current;
+    const ratioCls=ratio==null?'':ratio>2?'hi':ratio<1.2?'lo':'';
+    const histAvg=s.hist_avg_fcf;
+    // bar: how far avg_fcf is above current FCF (capped at 4×)
+    const barW=ratio!=null?Math.min((ratio-1)/3*100,100).toFixed(0):'0';
+    h+=`<div class="dcf-card ${sc_cls[parseInt(hor)]}">
+      <h3>${hor}-Year Horizon</h3>
+      <div class="dcf-m">
+        <span class="dcf-ml">Avg. Annual FCF Needed</span>
+        <span class="dcf-mv ${ratioCls}" style="font-size:15px">${F.$M(s.avg_fcf)}</span>
+      </div>
+      <div style="margin:6px 0 10px">
+        <div style="font-size:10px;color:var(--muted);margin-bottom:3px">vs. current FCF of ${F.$M(cFCF)}</div>
+        <div class="bar-track"><div class="bar-fill" style="width:${barW}%;background:${clr}"></div></div>
+      </div>
+      <div class="dcf-m"><span class="dcf-ml">Multiple of Current FCF</span><span class="dcf-mv ${ratioCls}">${ratio!=null?ratio.toFixed(2)+'×':'—'}</span></div>
+      <div class="dcf-m"><span class="dcf-ml">Historical Avg FCF (${hor}yr)</span><span class="dcf-mv">${F.$M(histAvg)}</span></div>
+      <div class="dcf-m"><span class="dcf-ml">Terminal Value (PV)</span><span class="dcf-mv">${F.$M(s.tv_pv)} <span style="font-size:10px;color:#94a3b8">${s.tv_pct}% of cap</span></span></div>
+      <div class="dcf-m"><span class="dcf-ml">Annuity Value</span><span class="dcf-mv">${s.annuity_pct}% of cap</span></div>
+      <div class="dcf-m"><span class="dcf-ml">Entry FCF Multiple</span><span class="dcf-mv">${s.entry_multiple}×</span></div>
+    </div>`;
+  }
+
+  if(!Object.keys(sc).length)
+    h+=`<div style="color:var(--muted);grid-column:span 3">Reverse DCF unavailable — terminal value already exceeds market cap, or market cap not available.</div>`;
+
+  h+=`</div>
+  <div class="dcf-note"><strong>How to read:</strong>
+    ${tvDollar ? `Your terminal value of ${tvTxt} is discounted back N years at ${(dr*100).toFixed(1)}% — the remaining gap to market cap must be covered by the FCF annuity.` : `No terminal value entered — the full market cap must be justified by the FCF annuity alone.`}
+    The required average annual FCF is what the company must earn each year (on average) for the PV of those cash flows plus the TV to equal today's market cap.
+    Shorter horizons require a higher annual average; longer horizons spread the burden over more years.
+    Compare the required average against the historical average shown — a required average well above history implies significant growth is priced in.
+  </div>
+</div>`;
+  return h;
+}
+
+function applyDcf(){
+  if(!DCF_STATE) return;
+  const drRaw = parseFloat(document.getElementById('dcf-dr').value);
+  const tvRaw = document.getElementById('dcf-tv').value.trim();
+  if(isNaN(drRaw) || drRaw <= 0 || drRaw >= 100){
+    alert('Discount rate must be between 1 and 99%.');
+    return;
+  }
+  const dr = drRaw / 100;
+  const tvDollar = tvRaw ? parseFloat(tvRaw) * 1e9 : null;
+
+  const histAvgByHorizon = {};
+  for(const [hor,s] of Object.entries(DCF_STATE.scenarios||{})) histAvgByHorizon[hor] = s.hist_avg_fcf;
+
+  const scenarios = computeDcfScenarios(DCF_STATE.market_cap, DCF_STATE.current_fcf, dr, tvDollar, histAvgByHorizon);
+  DCF_STATE = {...DCF_STATE, discount_rate: dr, tv_dollar: tvDollar, scenarios};
+  document.getElementById('dcf-section').innerHTML = renderDcfSection(DCF_STATE);
+}
+
 // ── Main render ───────────────────────────────────────────────────────────────
 function render(data){
   const {company:co, market:mk, financials:fin, dcf, filing_links:fl={}, proxy:px={}} = data;
@@ -708,65 +830,12 @@ function render(data){
     </div>`;
   }
 
-  // DCF
-  const {discount_rate:dr, tv_dollar:tvDollar, current_fcf:cFCF, market_cap:cMC, scenarios:sc}=dcf;
-  const entMult=cMC&&cFCF&&cFCF>0?(cMC/cFCF).toFixed(1)+'x':'—';
-  const sc_cls={5:'s5',10:'s10',20:'s20'};
-  const sc_clr={5:'#3b82f6',10:'#8b5cf6',20:'#ec4899'};
-  const tvTxt = tvDollar ? F.$M(tvDollar) : '(none)';
-
-  h+=`<div class="sec-title-row"><span class="sec-title">Reverse DCF Analysis</span></div>
-<div class="dcf-wrap">
-  <div class="dcf-hdr">
-    <div><div class="dcf-t">Average annual FCF needed to justify today's price</div>
-    <div class="dcf-s">Flat annual FCF discounted at ${(dr*100).toFixed(1)}%${tvDollar ? ` + terminal value of ${tvTxt} at end of period` : ' (no terminal value)'} = market cap</div></div>
-  </div>
-  <div class="dcf-ctx">
-    <div><div class="dci-label">Current FCF (LTM)</div><div class="dci-val">${F.$M(cFCF)}</div></div>
-    <div><div class="dci-label">Market Cap</div><div class="dci-val">${F.$M(cMC)}</div></div>
-    <div><div class="dci-label">Current FCF Multiple</div><div class="dci-val">${entMult}</div></div>
-    <div><div class="dci-label">Terminal Value (your input)</div><div class="dci-val">${tvTxt}</div></div>
-    <div><div class="dci-label">Discount Rate</div><div class="dci-val">${(dr*100).toFixed(1)}%</div></div>
-  </div>
-  <div class="dcf-cards">`;
-
-  for(const [hor,s] of Object.entries(sc)){
-    const clr=sc_clr[parseInt(hor)];
-    // color the avg FCF vs current: red if needs much more, green if close/below
-    const ratio=s.vs_current;
-    const ratioCls=ratio==null?'':ratio>2?'hi':ratio<1.2?'lo':'';
-    const histAvg=s.hist_avg_fcf;
-    // bar: how far avg_fcf is above current FCF (capped at 4×)
-    const barW=ratio!=null?Math.min((ratio-1)/3*100,100).toFixed(0):'0';
-    h+=`<div class="dcf-card ${sc_cls[parseInt(hor)]}">
-      <h3>${hor}-Year Horizon</h3>
-      <div class="dcf-m">
-        <span class="dcf-ml">Avg. Annual FCF Needed</span>
-        <span class="dcf-mv ${ratioCls}" style="font-size:15px">${F.$M(s.avg_fcf)}</span>
-      </div>
-      <div style="margin:6px 0 10px">
-        <div style="font-size:10px;color:var(--muted);margin-bottom:3px">vs. current FCF of ${F.$M(cFCF)}</div>
-        <div class="bar-track"><div class="bar-fill" style="width:${barW}%;background:${clr}"></div></div>
-      </div>
-      <div class="dcf-m"><span class="dcf-ml">Multiple of Current FCF</span><span class="dcf-mv ${ratioCls}">${ratio!=null?ratio.toFixed(2)+'×':'—'}</span></div>
-      <div class="dcf-m"><span class="dcf-ml">Historical Avg FCF (${hor}yr)</span><span class="dcf-mv">${F.$M(histAvg)}</span></div>
-      <div class="dcf-m"><span class="dcf-ml">Terminal Value (PV)</span><span class="dcf-mv">${F.$M(s.tv_pv)} <span style="font-size:10px;color:#94a3b8">${s.tv_pct}% of cap</span></span></div>
-      <div class="dcf-m"><span class="dcf-ml">Annuity Value</span><span class="dcf-mv">${s.annuity_pct}% of cap</span></div>
-      <div class="dcf-m"><span class="dcf-ml">Entry FCF Multiple</span><span class="dcf-mv">${s.entry_multiple}×</span></div>
-    </div>`;
-  }
-
-  if(!Object.keys(sc).length)
-    h+=`<div style="color:var(--muted);grid-column:span 3">Reverse DCF unavailable — terminal value already exceeds market cap, or market cap not available.</div>`;
-
-  h+=`</div>
-  <div class="dcf-note"><strong>How to read:</strong>
-    ${tvDollar ? `Your terminal value of ${tvTxt} is discounted back N years at ${(dr*100).toFixed(1)}% — the remaining gap to market cap must be covered by the FCF annuity.` : `No terminal value entered — the full market cap must be justified by the FCF annuity alone.`}
-    The required average annual FCF is what the company must earn each year (on average) for the PV of those cash flows plus the TV to equal today's market cap.
-    Shorter horizons require a higher annual average; longer horizons spread the burden over more years.
-    Compare the required average against the historical average shown — a required average well above history implies significant growth is priced in.
-  </div>
-</div>`;
+  // DCF — market_cap/current_fcf/hist_avg_fcf are fixed facts about the
+  // company; only discount_rate and tv_dollar are user inputs, so the
+  // section keeps its own state and recomputes client-side on Apply
+  // (see applyDcf()) instead of re-fetching the whole filing history.
+  DCF_STATE = dcf;
+  h+=`<div id="dcf-section">${renderDcfSection(dcf)}</div>`;
 
   // Earnings materials section
   h+=renderEarningsMaterials(data.earnings_materials||{}, data.quarter_dates||{}, co.ticker, data.ir_url||'');
@@ -1086,9 +1155,11 @@ function renderVIC(ideas, ticker){
 // ── Fetch ─────────────────────────────────────────────────────────────────────
 async function doAnalyze(){
   const tk  = document.getElementById('inp-ticker').value.trim().toUpperCase();
-  const dr  = parseFloat(document.getElementById('inp-dr').value)/100;
-  const tvRaw = document.getElementById('inp-tv').value.trim();
-  const tv = tvRaw ? parseFloat(tvRaw) * 1e9 : null;
+  // Discount rate / terminal value now live in the Reverse DCF section
+  // itself (see renderDcfSection/applyDcf) — a fresh Analyze always starts
+  // from the same defaults the backend uses.
+  const dr  = 0.10;
+  const tv  = null;
   if(!tk){ document.getElementById('inp-ticker').focus(); return; }
 
   const btn=document.getElementById('btn');
