@@ -276,13 +276,18 @@ th.hidden-col{display:none}
 @media(max-width:640px){
   :root{--lbl-w:145px}
   body{font-size:12px}
-  .topbar{padding:8px 12px;gap:6px}
-  .topbar h1{font-size:14px}
-  .form-row{gap:6px}
-  .form-row input{font-size:12px;padding:7px 8px}
+  /* Stack the topbar deliberately instead of letting flex-wrap break it
+     mid-row — organic wrapping here left the title vertically centered
+     against the input's own two-line wrap, landing visually between the
+     input and the buttons instead of above them. */
+  .topbar{flex-direction:column;align-items:stretch;padding:8px 12px;gap:8px}
+  .topbar h1{font-size:15px;text-align:center}
+  .form-row{gap:6px;width:100%}
+  .form-row input{font-size:13px;padding:9px 10px}
+  .form-row > div:first-child{flex:1;min-width:0}
   #dcf-dr,#dcf-tv{width:90px!important}
-  #inp-ticker{width:110px!important}
-  .btn{padding:7px 14px;font-size:13px}
+  #inp-ticker{width:100%!important}
+  .btn{padding:9px 14px;font-size:13px;flex:1}
   .container{padding:8px}
   .vl-name{font-size:16px}
   .vl-price{font-size:22px}
@@ -290,6 +295,11 @@ th.hidden-col{display:none}
   .vl-stat{padding:6px 8px}
   .vl-sv{font-size:12px}
   .dcf-cards{grid-template-columns:1fr}
+  .dcf-apply-row{flex-direction:column;align-items:stretch}
+  .dcf-apply-row label{margin-top:4px}
+  .dcf-apply-row label:first-child{margin-top:0}
+  #dcf-dr,#dcf-tv{width:100%!important}
+  #btn-dcf-apply{width:100%;margin-top:4px}
   .tbl-hint{display:block}
   thead tr.yr-row th{font-size:10px;padding:6px 7px}
   tr.dr td{font-size:11px;padding:4px 7px}
