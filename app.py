@@ -595,6 +595,40 @@ def _parse_sc13_ownership(cik_no_zero: str, accn_nodash: str, doc: str) -> Optio
     filer named on the index page, which is what we key the row to."""
     if not doc:
         return None
+
+    # Structured-XML era (Dec 2024+): the primary document is primary_doc.xml
+    # (submissions.json prefixes it with an XSL viewer path). Parse the raw
+    # XML's typed fields — cleaner than text heuristics, and it names the
+    # reporting person directly.
+    if doc.endswith("primary_doc.xml"):
+        try:
+            r = requests.get(f"https://www.sec.gov/Archives/edgar/data/{cik_no_zero}/{accn_nodash}/primary_doc.xml",
+                             headers=HEADERS, timeout=25)
+            if r.status_code != 200:
+                return None
+            xml = re.sub(r'xmlns(:\w+)?="[^"]*"', "", r.text)   # drop namespaces for plain-tag matching
+            persons = re.findall(r"<coverPageHeaderReportingPersonDetails>(.*?)</coverPageHeaderReportingPersonDetails>",
+                                 xml, re.S)
+            best = None
+            for p in persons:
+                name_m = re.search(r"<reportingPersonName>(.*?)</reportingPersonName>", p, re.S)
+                pct_m = re.search(r"<classPercent>([\d.]+)</classPercent>", p)
+                sh_m = re.search(r"<reportingPersonBeneficiallyOwnedAggregateNumberOfShares>([\d.,]+)<", p)
+                if not (name_m and pct_m):
+                    continue
+                cand = {
+                    "pct": float(pct_m.group(1)) / 100.0,
+                    "shares": float(sh_m.group(1).replace(",", "")) if sh_m else None,
+                    "name": re.sub(r"\s+", " ", name_m.group(1)).strip(),
+                }
+                # Joint filings list several reporting persons (parent entities
+                # repeat the same stake); keep the largest as the lead row.
+                if best is None or cand["pct"] > best["pct"]:
+                    best = cand
+            return best
+        except Exception:
+            return None
+
     try:
         r = requests.get(f"https://www.sec.gov/Archives/edgar/data/{cik_no_zero}/{accn_nodash}/{doc}",
                          headers=HEADERS, timeout=25)
@@ -622,13 +656,18 @@ def _fetch_sc13_filing(cik_no_zero: str, accn: str, doc: str, fdate: str, form: 
     own = _parse_sc13_ownership(cik_no_zero, accn_nodash, doc)
     if not own:
         return None
-    filers = _sc13_index_filers(cik_no_zero, accn_nodash, accn)
-    if not filers:
-        return None
-    lead = filers[0]
+    if own.get("name"):
+        # Structured XML names the reporting person directly — no index-page
+        # scrape needed (and joint parents share one 'Filed by' anyway).
+        filer_name, filer_cik = own["name"], None
+    else:
+        filers = _sc13_index_filers(cik_no_zero, accn_nodash, accn)
+        if not filers:
+            return None
+        filer_name, filer_cik = filers[0]["name"], filers[0]["cik"]
     return {
-        "filer": lead["name"],
-        "filer_cik": lead["cik"],
+        "filer": filer_name,
+        "filer_cik": filer_cik,
         "pct": own["pct"],
         "shares": own["shares"],
         "form": form,
@@ -663,7 +702,11 @@ def get_top_shareholders(submissions: dict, months: int = 12, max_filings: int =
 
     horizon      = (datetime.now() - timedelta(days=months * 31)).strftime("%Y-%m-%d")
     wide_horizon = (datetime.now() - timedelta(days=stale_years * 366)).strftime("%Y-%m-%d")
-    sc13_forms = {"SC 13D", "SC 13D/A", "SC 13G", "SC 13G/A"}
+    # Old-style form names plus the renamed types used by SEC's structured
+    # (XML) 13D/G filing format mandated since Dec 2024 — new filings arrive
+    # as "SCHEDULE 13G" / "SCHEDULE 13D/A", not "SC 13G" / "SC 13D/A".
+    sc13_forms = {"SC 13D", "SC 13D/A", "SC 13G", "SC 13G/A",
+                  "SCHEDULE 13D", "SCHEDULE 13D/A", "SCHEDULE 13G", "SCHEDULE 13G/A"}
 
     jobs = []
     for i, f in enumerate(forms):
@@ -701,7 +744,11 @@ def get_top_shareholders(submissions: dict, months: int = 12, max_filings: int =
             cur = latest.get(key)
             if cur is None or f["date"] > cur["date"]:
                 latest[key] = f
-        return sorted(latest.values(), key=lambda f: f["pct"], reverse=True)
+        # A 0% amendment is an exit notice (holder fell below the reporting
+        # threshold) — it correctly supersedes that owner's stake above, but
+        # isn't itself a shareholder row.
+        return sorted((f for f in latest.values() if f["pct"] > 0),
+                      key=lambda f: f["pct"], reverse=True)
 
     in_window = [f for f in filings if f["date"] >= horizon]
     holders = _latest_per_filer(in_window)
