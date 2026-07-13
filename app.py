@@ -4120,6 +4120,7 @@ def analyze():
     discount_rate = float(request.args.get("discount_rate", 0.10))
     tv_raw        = request.args.get("tv")
     tv_dollar     = float(tv_raw) if tv_raw else None   # user passes raw dollars (already converted in JS)
+    dcf_horizon   = int(request.args.get("horizon", 10))
 
     if not ticker:
         return jsonify({"error": "Ticker is required"}), 400
@@ -4127,6 +4128,8 @@ def analyze():
         return jsonify({"error": "Discount rate must be between 0 and 1 (e.g. 0.10)"}), 400
     if tv_dollar is not None and tv_dollar < 0:
         return jsonify({"error": "Terminal value must be a positive dollar amount"}), 400
+    if dcf_horizon < 1 or dcf_horizon > 50:
+        return jsonify({"error": "Horizon must be between 1 and 50 years"}), 400
 
     cik = resolve_cik(ticker)
     if not cik:
@@ -5215,14 +5218,13 @@ def analyze():
         if latest_dps and price > 0:
             dividend_yield = latest_dps / price
 
-    # ── Reverse DCF scenarios ────────────────────────────────────────────────
+    # ── Reverse DCF scenario (single, user-adjustable horizon) ────────────────
     dcf_scenarios = {}
     if mktcap:
-        for h in [5, 10, 20]:
-            res = reverse_dcf(mktcap, current_fcf, discount_rate, tv_dollar, h)
-            if res:
-                res["hist_avg_fcf"] = hist_avg_fcf(h)
-                dcf_scenarios[str(h)] = res
+        res = reverse_dcf(mktcap, current_fcf, discount_rate, tv_dollar, dcf_horizon)
+        if res:
+            res["hist_avg_fcf"] = hist_avg_fcf(dcf_horizon)
+            dcf_scenarios[str(dcf_horizon)] = res
 
     # ── Fiscal year end month ────────────────────────────────────────────────
     fy_month = "Dec"
