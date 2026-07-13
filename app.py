@@ -606,7 +606,8 @@ def _parse_sc13_ownership(cik_no_zero: str, accn_nodash: str, doc: str) -> Optio
                              headers=HEADERS, timeout=25)
             if r.status_code != 200:
                 return None
-            xml = re.sub(r'xmlns(:\w+)?="[^"]*"', "", r.text)   # drop namespaces for plain-tag matching
+            xml = re.sub(r'xmlns(:\w+)?="[^"]*"', "", r.text)   # drop namespace declarations
+            xml = re.sub(r"<(/?)\w+:", r"<\1", xml)             # and tag prefixes (<sch:classPercent> → <classPercent>)
             persons = re.findall(r"<coverPageHeaderReportingPersonDetails>(.*?)</coverPageHeaderReportingPersonDetails>",
                                  xml, re.S)
             best = None
