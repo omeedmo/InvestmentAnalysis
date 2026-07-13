@@ -1110,12 +1110,21 @@ function renderHolders(hd, ticker){
 }
 
 // ── Top shareholders (Schedule 13D/13G) ─────────────────────────────────────
+function proxyLinkHtml(){
+  if(!PROXY_INFO) return '';
+  return `<div style="margin-bottom:14px">
+    <a href="${PROXY_INFO.url}" target="_blank" rel="noreferrer" style="display:inline-flex;align-items:center;gap:8px;font-size:13px;font-weight:600;padding:9px 16px;border-radius:6px;background:#1d4ed8;color:#fff;text-decoration:none;border:none;transition:background .15s" onmouseover="this.style.background='#1e40af'" onmouseout="this.style.background='#1d4ed8'">
+      📄 Proxy Statement (DEF 14A) — ${PROXY_INFO.date}
+    </a>
+  </div>`;
+}
+
 function loadTopShareholders(ticker, refresh){
   const wrap = document.getElementById('shareholders-section');
   if(!wrap) return;
   if(window._sh13Timer){ clearInterval(window._sh13Timer); window._sh13Timer=null; }
   wrap.innerHTML = `<div class="sec-title-row"><span class="sec-title">Top Shareholders (13D/13G) — ${ticker}</span></div>
-    <div class="ib-wrap"><div class="ib-none">${refresh?'⏳ Purging cache and reloading 13D/13G filings…':'⏳ Loading top shareholders (scanning 13D/13G filings)…'}</div></div>`;
+    <div class="ib-wrap">${proxyLinkHtml()}<div class="ib-none">${refresh?'⏳ Purging cache and reloading 13D/13G filings…':'⏳ Loading top shareholders (scanning 13D/13G filings)…'}</div></div>`;
   fetch(`/api/top_shareholders?ticker=${encodeURIComponent(ticker)}${refresh?'&refresh=1':''}`)
     .then(r=>r.json())
     .then(sh=>finishTopShareholders(wrap, sh||{}, ticker))
@@ -1141,13 +1150,7 @@ function renderTopShareholders(sh, ticker){
       <button class="btn" style="font-size:11px;padding:3px 9px" title="Clear this stock's 13D/13G cache and re-fetch" onclick="loadTopShareholders('${ticker}', true)">↻ Purge &amp; Reload</button>
     </span></div>
   <div class="ib-wrap">`;
-  if(PROXY_INFO){
-    h += `<div style="margin-bottom:14px">
-      <a href="${PROXY_INFO.url}" target="_blank" rel="noreferrer" style="display:inline-flex;align-items:center;gap:8px;font-size:13px;font-weight:600;padding:9px 16px;border-radius:6px;background:#1d4ed8;color:#fff;text-decoration:none;border:none;transition:background .15s" onmouseover="this.style.background='#1e40af'" onmouseout="this.style.background='#1d4ed8'">
-        📄 Proxy Statement (DEF 14A) — ${PROXY_INFO.date}
-      </a>
-    </div>`;
-  }
+  h += proxyLinkHtml();
   if(sh.rate_limited){
     h += `<div class="ib-none" style="color:#b45309;background:#fffbeb">
       ⚠ SEC rate limit reached while loading 13D/13G filings${list.length?' — the list below may be incomplete':''}.

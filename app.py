@@ -748,7 +748,7 @@ def get_top_shareholders(submissions: dict, months: int = 12, max_filings: int =
         # threshold) — it correctly supersedes that owner's stake above, but
         # isn't itself a shareholder row.
         return sorted((f for f in latest.values() if f["pct"] > 0),
-                      key=lambda f: f["pct"], reverse=True)
+                      key=lambda f: (f["date"], f["pct"]), reverse=True)
 
     in_window = [f for f in filings if f["date"] >= horizon]
     holders = _latest_per_filer(in_window)
