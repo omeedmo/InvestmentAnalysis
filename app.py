@@ -560,6 +560,11 @@ _SC13_PCT_RE = re.compile(
 _SC13_SHARES_RE = re.compile(
     r"AGGREGATE AMOUNT BENEFICIALLY OWNED BY\s*EACH REPORTING PERSON\s*([\d,]+)",
     re.IGNORECASE)
+# Legacy terse plain-text layout (e.g. old FMR/Fidelity filings): cover page
+# items are given as bare "Item 9: 998,190,803" / "Item 11: 4.069%" instead
+# of the full verbose item-label text the two regexes above expect.
+_SC13_ITEM9_RE  = re.compile(r"Item\s*9\s*:\s*([\d,]+)", re.IGNORECASE)
+_SC13_ITEM11_RE = re.compile(r"Item\s*11\s*:\s*(\d{1,3}(?:\.\d+)?)\s*%", re.IGNORECASE)
 
 
 def _sc13_index_filers(cik_no_zero: str, accn_nodash: str, accn: str) -> list[dict]:
@@ -643,9 +648,12 @@ def _parse_sc13_ownership(cik_no_zero: str, accn_nodash: str, doc: str) -> Optio
     except Exception:
         return None
     pct_m = _SC13_PCT_RE.search(text)
+    sh_m = _SC13_SHARES_RE.search(text)
+    if not pct_m:
+        pct_m = _SC13_ITEM11_RE.search(text)
+        sh_m = _SC13_ITEM9_RE.search(text)
     if not pct_m:
         return None
-    sh_m = _SC13_SHARES_RE.search(text)
     return {
         "pct": float(pct_m.group(1)) / 100.0,
         "shares": float(sh_m.group(1).replace(",", "")) if sh_m else None,
