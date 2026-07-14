@@ -703,22 +703,19 @@ def _fetch_sc13_filing(cik_no_zero: str, accn: str, doc: str, fdate: str, form: 
     }
 
 
-def get_top_shareholders(submissions: dict, months: int = 12, max_filings: int = 60,
-                         stale_years: int = 4) -> dict:
+def get_top_shareholders(submissions: dict, months: int = 12, max_filings: int = 60) -> dict:
     """
-    Top shareholders derived from Schedule 13D/13G beneficial-ownership
-    filings — each reporting owner's most recent filing gives their current
-    disclosed stake, since an amendment supersedes everything that owner
-    filed before it.
+    Schedule 13D/13G beneficial-ownership filings from the last `months` —
+    each reporting owner's most recent filing in the window gives their
+    current disclosed stake, since an amendment supersedes everything that
+    owner filed before it.
 
-    SEC's 2024 amendments to Regulation 13D-G replaced the old "refile every
-    February regardless" requirement with "only refile on a material
-    change," which collapsed 13D/13G filing volume industry-wide — a strict
-    last-12-months window is now empty for most stocks, including mega-caps,
-    even though their large holders' stakes are unchanged. So: fetch across
-    a wide window (`stale_years`) once, then prefer the in-window (`months`)
-    result; if that's empty, fall back to the most recent filing per owner
-    regardless of age, flagged `stale` so the UI can be honest about it.
+    This is meant to be read alongside the company's Proxy Statement (shown
+    in the same UI section), not as a standalone full holder list: the proxy
+    already gives a point-in-time snapshot of top shareholders as of its own
+    filing date (itself within the last 12 months), so a strict 12-month
+    13D/13G scan is exactly the "what's changed since the proxy" delta —
+    new stakes, exits, and updated percentages the proxy wouldn't yet show.
     """
     recent = submissions.get("filings", {}).get("recent", {})
     forms  = recent.get("form", [])
@@ -727,8 +724,7 @@ def get_top_shareholders(submissions: dict, months: int = 12, max_filings: int =
     dates  = recent.get("filingDate", [])
     cik_no_zero = str(int(submissions.get("cik", "0")))
 
-    horizon      = (datetime.now() - timedelta(days=months * 31)).strftime("%Y-%m-%d")
-    wide_horizon = (datetime.now() - timedelta(days=stale_years * 366)).strftime("%Y-%m-%d")
+    horizon = (datetime.now() - timedelta(days=months * 31)).strftime("%Y-%m-%d")
     # Old-style form names plus the renamed types used by SEC's structured
     # (XML) 13D/G filing format mandated since Dec 2024 — new filings arrive
     # as "SCHEDULE 13G" / "SCHEDULE 13D/A", not "SC 13G" / "SC 13D/A".
@@ -740,7 +736,7 @@ def get_top_shareholders(submissions: dict, months: int = 12, max_filings: int =
         if f not in sc13_forms:
             continue
         fdate = dates[i] if i < len(dates) else ""
-        if fdate and fdate < wide_horizon:
+        if fdate and fdate < horizon:
             continue
         jobs.append((accns[i], docs[i], fdate, f))
         if len(jobs) >= max_filings:
@@ -767,25 +763,17 @@ def get_top_shareholders(submissions: dict, months: int = 12, max_filings: int =
     # either, since re-fetching them will never succeed.
     filings = [cache[a] for a in window_accns if a in cache and cache[a] and not cache[a].get("_unparsed")]
 
-    def _latest_per_filer(rows):
-        latest: dict = {}
-        for f in rows:
-            key = f.get("filer_cik") or f["filer"]
-            cur = latest.get(key)
-            if cur is None or f["date"] > cur["date"]:
-                latest[key] = f
-        # A 0% amendment is an exit notice (holder fell below the reporting
-        # threshold) — it correctly supersedes that owner's stake above, but
-        # isn't itself a shareholder row.
-        return sorted((f for f in latest.values() if f["pct"] > 0),
-                      key=lambda f: (f["date"], f["pct"]), reverse=True)
-
-    in_window = [f for f in filings if f["date"] >= horizon]
-    holders = _latest_per_filer(in_window)
-    stale = False
-    if not holders and filings:
-        holders = _latest_per_filer(filings)
-        stale = True
+    latest_by_filer: dict = {}
+    for f in filings:
+        key = f.get("filer_cik") or f["filer"]
+        cur = latest_by_filer.get(key)
+        if cur is None or f["date"] > cur["date"]:
+            latest_by_filer[key] = f
+    # A 0% amendment is an exit notice (holder fell below the reporting
+    # threshold) — it correctly supersedes that owner's stake above, but
+    # isn't itself a shareholder row.
+    holders = sorted((f for f in latest_by_filer.values() if f["pct"] > 0),
+                     key=lambda f: (f["date"], f["pct"]), reverse=True)
 
     fetched_all = all(a in cache for a in window_accns)
     processed = len([a for a in window_accns if a in cache])
@@ -793,7 +781,6 @@ def get_top_shareholders(submissions: dict, months: int = 12, max_filings: int =
         "holders": holders[:20],
         "total_count": len(holders),
         "months": months,
-        "stale": stale,
         "filings_processed": processed,
         "filings_total": len(window_accns),
         "complete": fetched_all,
