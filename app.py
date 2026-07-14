@@ -592,14 +592,27 @@ def _sc13_index_filers(cik_no_zero: str, accn_nodash: str, accn: str) -> list[di
     return filers
 
 
-def _parse_sc13_ownership(cik_no_zero: str, accn_nodash: str, doc: str) -> Optional[dict]:
+# Sentinel distinguishing a permanent parse failure (fetched fine, but no
+# regex/tag matched — retrying won't help until the parser itself changes)
+# from a transient one (network error / non-200 / timeout — worth retrying).
+# Conflating the two was the original bug: an unparseable filing looked
+# identical to a pending network fetch, so it was counted as "pending"
+# forever and the UI showed a permanent, misleading "rate limited" banner.
+_SC13_UNPARSEABLE = object()
+
+
+def _parse_sc13_ownership(cik_no_zero: str, accn_nodash: str, doc: str):
     """Extract the first reporting person's Item 9 (shares owned) / Item 11
     (% of class) from a Schedule 13D/13G cover page — the standardized cover
     page items every filer, old HTML or new, must complete. A joint filing
     lists one cover page per reporting person; the first is the lead/primary
-    filer named on the index page, which is what we key the row to."""
+    filer named on the index page, which is what we key the row to.
+
+    Returns a dict on success, None on a transient fetch failure (retry
+    later), or _SC13_UNPARSEABLE if the document fetched fine but matched
+    none of the known cover-page layouts (don't retry — it'll never match)."""
     if not doc:
-        return None
+        return _SC13_UNPARSEABLE
 
     # Structured-XML era (Dec 2024+): the primary document is primary_doc.xml
     # (submissions.json prefixes it with an XSL viewer path). Parse the raw
@@ -631,7 +644,7 @@ def _parse_sc13_ownership(cik_no_zero: str, accn_nodash: str, doc: str) -> Optio
                 # repeat the same stake); keep the largest as the lead row.
                 if best is None or cand["pct"] > best["pct"]:
                     best = cand
-            return best
+            return best if best else _SC13_UNPARSEABLE
         except Exception:
             return None
 
@@ -653,7 +666,7 @@ def _parse_sc13_ownership(cik_no_zero: str, accn_nodash: str, doc: str) -> Optio
         pct_m = _SC13_ITEM11_RE.search(text)
         sh_m = _SC13_ITEM9_RE.search(text)
     if not pct_m:
-        return None
+        return _SC13_UNPARSEABLE
     return {
         "pct": float(pct_m.group(1)) / 100.0,
         "shares": float(sh_m.group(1).replace(",", "")) if sh_m else None,
@@ -661,8 +674,13 @@ def _parse_sc13_ownership(cik_no_zero: str, accn_nodash: str, doc: str) -> Optio
 
 
 def _fetch_sc13_filing(cik_no_zero: str, accn: str, doc: str, fdate: str, form: str) -> Optional[dict]:
+    """Returns a holder dict, None (transient failure — caller should retry),
+    or {"_unparsed": True} (permanent — cache it so it stops being retried,
+    but exclude it from results and don't count it against "complete")."""
     accn_nodash = accn.replace("-", "")
     own = _parse_sc13_ownership(cik_no_zero, accn_nodash, doc)
+    if own is _SC13_UNPARSEABLE:
+        return {"_unparsed": True}
     if not own:
         return None
     if own.get("name"):
@@ -686,7 +704,7 @@ def _fetch_sc13_filing(cik_no_zero: str, accn: str, doc: str, fdate: str, form: 
 
 
 def get_top_shareholders(submissions: dict, months: int = 12, max_filings: int = 60,
-                         stale_years: int = 8) -> dict:
+                         stale_years: int = 4) -> dict:
     """
     Top shareholders derived from Schedule 13D/13G beneficial-ownership
     filings — each reporting owner's most recent filing gives their current
@@ -744,7 +762,10 @@ def get_top_shareholders(submissions: dict, months: int = 12, max_filings: int =
     cache = {a: v for a, v in cache.items() if a in window_accns}
     _save_sc13_cache(cik_no_zero, cache)
 
-    filings = [cache[a] for a in window_accns if a in cache and cache[a]]
+    # Permanently-unparseable filings are cached (so they stop being retried)
+    # but excluded from the usable rows — they don't count as "still pending"
+    # either, since re-fetching them will never succeed.
+    filings = [cache[a] for a in window_accns if a in cache and cache[a] and not cache[a].get("_unparsed")]
 
     def _latest_per_filer(rows):
         latest: dict = {}
