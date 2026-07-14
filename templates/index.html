@@ -270,6 +270,19 @@ th.hidden-col{display:none}
 .vic-comp{font-size:12px;font-weight:600;flex:1}
 .vic-arrow{color:var(--muted);font-size:12px}
 .vic-spinner{text-align:center;padding:20px;color:var(--muted);font-size:12px}
+
+/* ── Latest news ─────────────────────────────────────────────────────── */
+.news-list{display:flex;flex-direction:column;gap:6px}
+.news-row{display:flex;align-items:baseline;gap:10px;padding:7px 10px;border-radius:6px;border:1px solid var(--border);text-decoration:none;color:var(--text);transition:background .12s}
+.news-row:hover{background:var(--row-hover)}
+.news-date{font-size:11px;color:var(--muted);min-width:74px;font-variant-numeric:tabular-nums}
+.news-src{font-size:10px;font-weight:700;padding:2px 6px;border-radius:3px;background:var(--bg);color:var(--muted);white-space:nowrap}
+.news-src.prem{background:#dbeafe;color:#1d4ed8}
+.news-title{font-size:12px;font-weight:500;flex:1;line-height:1.45}
+@media(max-width:640px){
+  .news-row{flex-wrap:wrap;gap:6px}
+  .news-title{flex-basis:100%;order:3}
+}
 .footer{text-align:center;color:var(--muted);font-size:11px;padding:18px;border-top:1px solid var(--border)}
 
 /* ── Mobile overrides ─────────────────────────────────────────────────── */
@@ -880,6 +893,9 @@ function render(data){
   window._sharesOut = mk.shares_outstanding || null;   // reuse for 13F ownership %
   h+=`<div id="holders-section"></div>`;
 
+  // Latest news placeholder — filled asynchronously (at the bottom)
+  h+=`<div id="news-section"></div>`;
+
   document.getElementById('root').innerHTML=h;
   drawCharts(years,fin);
 }
@@ -1254,6 +1270,42 @@ function renderVIC(ideas, ticker){
   wrap.innerHTML=h;
 }
 
+// ── Latest news ───────────────────────────────────────────────────────────────
+function loadNews(ticker){
+  const wrap = document.getElementById('news-section');
+  if(!wrap) return;
+  wrap.innerHTML = `<div class="sec-title-row"><span class="sec-title">Latest News — ${ticker}</span></div>
+    <div class="ib-wrap"><div class="ib-none">⏳ Loading news from WSJ, Fortune, NYT, Bloomberg, Reuters…</div></div>`;
+  fetch(`/api/news?ticker=${encodeURIComponent(ticker)}`)
+    .then(r=>r.json())
+    .then(d=>renderNews(d.items||[], ticker))
+    .catch(()=>renderNews([], ticker));
+}
+
+function renderNews(items, ticker){
+  const wrap = document.getElementById('news-section');
+  if(!wrap) return;
+  let h = `<div class="sec-title-row"><span class="sec-title">Latest News — ${ticker}</span>
+    <span style="font-size:11px;color:var(--muted)">aggregated from WSJ, NYT, Fortune, Bloomberg, Reuters, CNBC, Barron's &amp; more</span></div>
+  <div class="ib-wrap">`;
+  if(!items.length){
+    h += `<div class="ib-none">No recent news found for ${ticker}.</div></div>`;
+    wrap.innerHTML = h;
+    return;
+  }
+  h += `<div class="news-list">`;
+  for(const n of items){
+    h += `<a class="news-row" href="${n.url}" target="_blank" rel="noreferrer">
+      <span class="news-date">${n.date||''}</span>
+      <span class="news-src${n.premium?' prem':''}">${n.source||'—'}</span>
+      <span class="news-title">${n.title}</span>
+      <span class="vic-arrow">↗</span>
+    </a>`;
+  }
+  h += `</div></div>`;
+  wrap.innerHTML = h;
+}
+
 // ── Fetch ─────────────────────────────────────────────────────────────────────
 async function doAnalyze(){
   const tk  = document.getElementById('inp-ticker').value.trim().toUpperCase();
@@ -1285,6 +1337,8 @@ async function doAnalyze(){
     loadHolders(tk);
     // Load top shareholders (13D/13G) in the background
     loadTopShareholders(tk);
+    // Load latest news in the background
+    loadNews(tk);
     // Fetch VIC ideas in background after main render
     const vicWrap = document.getElementById('vic-section');
     if(vicWrap) vicWrap.innerHTML=`<div class="sec-title-row"><span class="sec-title">Value Investors Club — ${tk}</span></div><div class="vic-wrap"><div class="vic-spinner">⏳ Loading VIC writeups…</div></div>`;

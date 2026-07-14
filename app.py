@@ -4003,6 +4003,139 @@ def vic():
     return jsonify({"ticker": ticker, "ideas": ideas})
 
 
+# ─── Company news (Google News RSS + Yahoo Finance, aggregated) ────────────────
+
+_NEWS_PREMIUM_SITES = ("wsj.com", "nytimes.com", "fortune.com", "reuters.com",
+                       "ft.com", "bloomberg.com", "cnbc.com", "barrons.com",
+                       "economist.com", "forbes.com")
+
+
+def _news_query_name(company_name: str) -> str:
+    """Short, searchable company name: strip corporate suffixes and keep the
+    leading distinctive words ('Apple Inc.' → 'Apple'; 'DXC Technology
+    Company' → 'DXC Technology')."""
+    words = re.sub(r"[.,]", " ", company_name).split()
+    stop = {"INC", "CORP", "CORPORATION", "CO", "COMPANY", "LTD", "PLC", "SA",
+            "NV", "LLC", "LP", "GROUP", "HOLDINGS", "THE", "&"}
+    kept = [w for w in words if w.upper() not in stop]
+    return " ".join(kept[:2]) if kept else company_name
+
+
+def _google_news_rss(query: str, limit: int = 30) -> list[dict]:
+    try:
+        r = requests.get("https://news.google.com/rss/search",
+                         params={"q": query, "hl": "en-US", "gl": "US", "ceid": "US:en"},
+                         headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+        if r.status_code != 200:
+            return []
+        root = ET.fromstring(r.content)
+    except Exception:
+        return []
+    from email.utils import parsedate_to_datetime
+    out = []
+    for item in root.iter("item"):
+        title = item.findtext("title") or ""
+        link = item.findtext("link") or ""
+        src_el = item.find("source")
+        source = src_el.text if src_el is not None else ""
+        # Google News suffixes titles with " - Source"; strip the duplicate.
+        if source and title.endswith(" - " + source):
+            title = title[: -len(" - " + source)]
+        ts = 0
+        try:
+            ts = int(parsedate_to_datetime(item.findtext("pubDate") or "").timestamp())
+        except Exception:
+            pass
+        if title and link:
+            out.append({"title": title.strip(), "url": link, "source": source, "ts": ts})
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _yahoo_news(ticker: str, limit: int = 15) -> list[dict]:
+    try:
+        r = requests.get("https://query1.finance.yahoo.com/v1/finance/search",
+                         params={"q": ticker, "newsCount": limit, "quotesCount": 0},
+                         headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+        if r.status_code != 200:
+            return []
+        news = r.json().get("news", []) or []
+    except Exception:
+        return []
+    return [{"title": (n.get("title") or "").strip(),
+             "url": n.get("link") or "",
+             "source": n.get("publisher") or "",
+             "ts": int(n.get("providerPublishTime") or 0)}
+            for n in news if n.get("title") and n.get("link")]
+
+
+def get_company_news(ticker: str, company_name: str) -> list[dict]:
+    """Aggregated recent news for one company: a premium-source Google News
+    query (WSJ/NYT/Fortune/Bloomberg/Reuters/CNBC/Barron's...), a general
+    Google News query, and Yahoo Finance's feed — merged, deduped by
+    normalized title, newest first. Cached 15 minutes per ticker."""
+    cache_path = os.path.join(screener.CACHE_DIR, f"news_{ticker}.json")
+    try:
+        if os.path.exists(cache_path) and time.time() - os.path.getmtime(cache_path) < 15 * 60:
+            with open(cache_path) as f:
+                return json.load(f)
+    except Exception:
+        pass
+
+    qname = _news_query_name(company_name) if company_name else ticker
+    sites = " OR ".join(f"site:{s}" for s in _NEWS_PREMIUM_SITES)
+    premium = _google_news_rss(f'"{qname}" ({sites}) when:30d')
+    general = _google_news_rss(f'"{qname}" OR {ticker} stock when:14d', limit=20)
+    # Yahoo's feed pads results with generic market stories about unrelated
+    # companies — keep only items that actually name this company or ticker.
+    name_words = [w.lower() for w in qname.split() if len(w) >= 3]
+    yahoo = [n for n in _yahoo_news(ticker)
+             if ticker.lower() in n["title"].lower()
+             or any(w in n["title"].lower() for w in name_words)]
+
+    def _norm_title(t: str) -> str:
+        return re.sub(r"[^a-z0-9]+", " ", t.lower()).strip()[:80]
+
+    seen: set = set()
+    merged = []
+    # Premium sources first so they win the dedupe against syndicated copies.
+    for item in premium + general + yahoo:
+        key = _norm_title(item["title"])
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        merged.append(item)
+    merged.sort(key=lambda x: x["ts"], reverse=True)
+    merged = merged[:30]
+    premium_names = {"wsj", "wallstreetjournal", "thenewyorktimes", "nytimes", "fortune",
+                     "reuters", "reutersvideos", "bloomberg", "bloombergcom", "cnbc",
+                     "barrons", "barronscom", "financialtimes", "ft", "theeconomist", "forbes"}
+    for m in merged:
+        m["date"] = datetime.utcfromtimestamp(m["ts"]).strftime("%Y-%m-%d") if m["ts"] else ""
+        m["premium"] = re.sub(r"[^a-z]", "", m["source"].lower()) in premium_names
+    try:
+        with open(cache_path, "w") as f:
+            json.dump(merged, f)
+    except Exception:
+        pass
+    return merged
+
+
+@app.route("/api/news")
+def company_news():
+    ticker = request.args.get("ticker", "").upper().strip()
+    if not ticker:
+        return jsonify({"error": "ticker required"}), 400
+    cik = resolve_cik(ticker)
+    name = _cached_company_name(cik) if cik else ""
+    try:
+        items = get_company_news(ticker, name)
+        return jsonify({"ticker": ticker, "items": items})
+    except Exception as e:
+        return jsonify({"ticker": ticker, "items": [], "error": str(e)}), 200
+
+
 @app.route("/api/insider")
 def insider():
     """Insider open-market purchases (Form 4, code P). Loaded asynchronously by
