@@ -2481,6 +2481,10 @@ METRIC_TAGS: dict[str, list[str]] = {
     "noninterest_expense":  ["NoninterestExpense"],
     "provision_for_losses": ["ProvisionForLoanAndLeaseLosses", "ProvisionForLoanLeaseAndOtherLosses",
                              "ProvisionForCreditLosses"],
+    # Loan-loss realization (for normalized loss rate). Gross write-offs and
+    # recoveries; net charge-offs = write-offs − recoveries, derived below.
+    "loan_writeoffs":  ["FinancingReceivableAllowanceForCreditLossesWriteOffs"],
+    "loan_recoveries": ["FinancingReceivableAllowanceForCreditLossesRecovery"],
 
     # Per Share (USD/shares unit)
     "eps_diluted": ["EarningsPerShareDiluted", "EarningsPerShareBasicAndDiluted"],
@@ -2523,6 +2527,11 @@ METRIC_TAGS: dict[str, list[str]] = {
 
     # Balance Sheet – point-in-time
     "total_assets": ["Assets"],
+    # Loans held (denominator for net charge-off rate). Tag varies by era:
+    # net-of-allowance pre-CECL, then the CECL-era financing-receivable tag.
+    "bank_loans": ["LoansAndLeasesReceivableNetReportedAmount",
+                   "LoansAndLeasesReceivableNetOfDeferredIncome",
+                   "FinancingReceivableExcludingAccruedInterestAfterAllowanceForCreditLoss"],
     "current_assets": ["AssetsCurrent"],
     "current_liabilities": ["LiabilitiesCurrent"],
     "total_liabilities": ["Liabilities"],
@@ -2996,6 +3005,7 @@ def build_financials(facts: dict) -> dict[str, dict[str, float]]:
     raw: dict[str, dict[str, float]] = {}
     point_in_time_metrics = {
         "total_assets",
+        "bank_loans",
         "current_assets",
         "current_liabilities",
         "total_liabilities",
@@ -3476,6 +3486,60 @@ def build_financials(facts: dict) -> dict[str, dict[str, float]]:
             if ne_v is not None:
                 ppnr[d] = nii_bank[d] + noni_v - abs(ne_v)
         raw["ppnr"] = ppnr or None
+
+    # ── Net charge-offs, NCO rate, and normalized-loss-based earnings ─────────
+    # Net charge-offs (NCO) = gross write-offs − recoveries — the loans that
+    # actually went bad, a realized figure far harder to manage than the
+    # forward-looking provision. NCO rate = NCO / average loans. The
+    # "normalized" loss rate is the trailing average of that rate (a through-
+    # the-cycle credit cost), which we then subtract from PPNR to get
+    # normalized pre-tax earnings — the bank's earning power with a smoothed,
+    # non-discretionary credit charge in place of whatever provision management
+    # happened to book. Only populated where SEC actually tags write-offs /
+    # recoveries / loans (coverage varies a lot by bank); left blank otherwise
+    # rather than substituting the provision, which would defeat the purpose.
+    wo   = raw.get("loan_writeoffs", {})
+    rec  = raw.get("loan_recoveries", {})
+    loans = raw.get("bank_loans", {})
+    if wo and loans:
+        nco = {}
+        for d in wo:
+            r_v = fy_get(rec, d[:4]) or 0
+            nco[d] = abs(wo[d]) - abs(r_v)
+        raw["net_charge_offs"] = nco or None
+
+        # Average loans over the year (this year-end + prior year-end)/2 when
+        # both are available, else just this year-end.
+        loans_by_year = {d[:4]: loans[d] for d in loans}
+        def _avg_loans(year: str):
+            cur = loans_by_year.get(year)
+            if cur is None:
+                return None
+            prev = loans_by_year.get(str(int(year) - 1))
+            return (cur + prev) / 2 if prev is not None else cur
+
+        nco_rate = {}
+        for d in nco:
+            al = _avg_loans(d[:4])
+            if al and al > 0:
+                nco_rate[d] = nco[d] / al
+        raw["nco_rate"] = nco_rate or None
+
+        # Normalized (through-cycle) loss rate = simple average of the annual
+        # NCO rates we have. More years — ideally spanning a downturn — make it
+        # more meaningful; with only a benign stretch it understates true risk.
+        if nco_rate:
+            norm_rate = sum(nco_rate.values()) / len(nco_rate)
+            raw["normalized_loss_rate"] = {d: norm_rate for d in nco_rate}
+
+            # Normalized pre-tax earnings = PPNR − normalized loss rate × avg loans.
+            if raw.get("ppnr"):
+                npe = {}
+                for d in raw["ppnr"]:
+                    al = _avg_loans(d[:4])
+                    if al and al > 0:
+                        npe[d] = raw["ppnr"][d] - norm_rate * al
+                raw["normalized_pretax_earnings"] = npe or None
 
     # Owner Earnings (Buffett, 1986 letter) = Net Income + D&A − CapEx − Investment Gains/Losses
     # Investment gains/losses are stripped out because they are non-cash, lumpy, and not
