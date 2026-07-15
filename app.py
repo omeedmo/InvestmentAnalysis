@@ -3371,12 +3371,14 @@ def build_financials(facts: dict) -> dict[str, dict[str, float]]:
         if sh_bb:
             raw["shares_repurchased"] = sh_bb
 
-    # ROE = Net Income / Equity
+    # ROE = Net Income / Equity — undefined (not just sign-flipped) when
+    # equity is negative, since NI/negative-equity produces a nonsensical
+    # "return" (e.g. a loss over negative equity reads as a huge positive %).
     if ni and eq:
         roe = {}
         for d in ni:
             e = fy_get(eq, d[:4])
-            if e and e != 0:
+            if e and e > 0:
                 roe[d] = ni[d] / e
         raw["roe"] = roe or None
 
@@ -3385,7 +3387,7 @@ def build_financials(facts: dict) -> dict[str, dict[str, float]]:
         fcf_roe = {}
         for d in fcf:
             e = fy_get(eq, d[:4])
-            if e and e != 0:
+            if e and e > 0:
                 fcf_roe[d] = fcf[d] / e
         raw["fcf_roe"] = fcf_roe or None
 
@@ -3395,7 +3397,7 @@ def build_financials(facts: dict) -> dict[str, dict[str, float]]:
         adj_fcf_roe = {}
         for d in adj_fcf_for_roe:
             e = fy_get(eq, d[:4])
-            if e and e != 0:
+            if e and e > 0:
                 adj_fcf_roe[d] = adj_fcf_for_roe[d] / e
         raw["adj_fcf_roe"] = adj_fcf_roe or None
 
@@ -3530,7 +3532,7 @@ def build_financials(facts: dict) -> dict[str, dict[str, float]]:
             gw_v = fy_get(gw, d[:4]) or 0
             ia_v = fy_get(ia, d[:4]) or 0
             te   = e - gw_v - ia_v
-            if te and te != 0:
+            if te and te > 0:
                 rote[d] = ni[d] / te
         raw["rote"] = rote or None
 
@@ -5041,18 +5043,18 @@ def analyze():
         if _q_ni and _q_eq:
             _roe_q = financials.setdefault("roe", {})
             for qk in set(_q_ni) & set(_q_eq):
-                if _q_eq[qk] and _q_eq[qk] != 0:
+                if _q_eq[qk] and _q_eq[qk] > 0:
                     _roe_q[qk] = (_q_ni[qk] * 4) / _q_eq[qk]
         if _q_fcf and _q_eq:
             _fcfroe_q = financials.setdefault("fcf_roe", {})
             for qk in set(_q_fcf) & set(_q_eq):
-                if _q_eq[qk] and _q_eq[qk] != 0:
+                if _q_eq[qk] and _q_eq[qk] > 0:
                     _fcfroe_q[qk] = (_q_fcf[qk] * 4) / _q_eq[qk]
         _q_adj_fcf_r = {k: v for k, v in financials.get("adj_fcf", {}).items() if k.startswith("Q")}
         if _q_adj_fcf_r and _q_eq:
             _adjfcfroe_q = financials.setdefault("adj_fcf_roe", {})
             for qk in set(_q_adj_fcf_r) & set(_q_eq):
-                if _q_eq[qk] and _q_eq[qk] != 0:
+                if _q_eq[qk] and _q_eq[qk] > 0:
                     _adjfcfroe_q[qk] = (_q_adj_fcf_r[qk] * 4) / _q_eq[qk]
         if _q_ni and _q_ta:
             _roa_q = financials.setdefault("roa", {})
@@ -5065,7 +5067,7 @@ def analyze():
             _rote_q = financials.setdefault("rote", {})
             for qk in set(_q_ni) & set(_q_eq):
                 te = (_q_eq.get(qk) or 0) - (_q_gw_r.get(qk) or 0) - (_q_ia_r.get(qk) or 0)
-                if te and te != 0:
+                if te and te > 0:
                     _rote_q[qk] = (_q_ni[qk] * 4) / te
 
         # Quarterly NII ROE (BDC)
