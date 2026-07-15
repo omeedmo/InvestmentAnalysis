@@ -3252,6 +3252,20 @@ def build_financials(facts: dict) -> dict[str, dict[str, float]]:
                 bvps[d] = eq[d] / s
         raw["book_value_per_share"] = bvps or None
 
+    # Tangible Book Value per Share = (Equity − Goodwill − Intangibles) / Shares.
+    # The book-value measure analysts favor for banks and acquisitive firms,
+    # since it strips out intangibles that can't absorb losses.
+    if eq and so:
+        gw_bv = raw.get("goodwill", {})
+        ia_bv = raw.get("intangibles", {})
+        tbvps = {}
+        for d in eq:
+            s = fy_get(so, d[:4])
+            if s and s > 0:
+                te = eq[d] - (fy_get(gw_bv, d[:4]) or 0) - (fy_get(ia_bv, d[:4]) or 0)
+                tbvps[d] = te / s
+        raw["tangible_book_value_per_share"] = tbvps or None
+
     # Revenue per Share = Revenue / Diluted Shares
     share_base_for_per_share = sd or so
     if rev and share_base_for_per_share:
@@ -3448,6 +3462,20 @@ def build_financials(facts: dict) -> dict[str, dict[str, float]]:
             if denom and denom != 0:
                 eff[d] = abs(none_exp[d]) / denom
         raw["efficiency_ratio"] = eff or None
+
+    # PPNR (Pre-Provision Net Revenue) = NII + Non-interest Income − Non-interest
+    # Expense. The cleanest read on a bank's underlying earnings engine: it
+    # strips out the two most discretionary/volatile lines below it — the loan-
+    # loss provision (a management estimate) and taxes — so it isn't flattered
+    # by reserve releases or hurt by reserve builds the way net income is.
+    if nii_bank and none_exp:
+        ppnr = {}
+        for d in nii_bank:
+            noni_v = fy_get(noni, d[:4]) or 0
+            ne_v   = fy_get(none_exp, d[:4])
+            if ne_v is not None:
+                ppnr[d] = nii_bank[d] + noni_v - abs(ne_v)
+        raw["ppnr"] = ppnr or None
 
     # Owner Earnings (Buffett, 1986 letter) = Net Income + D&A − CapEx − Investment Gains/Losses
     # Investment gains/losses are stripped out because they are non-cash, lumpy, and not
@@ -4573,7 +4601,7 @@ def analyze():
         "net_investment_income", "gross_investment_income", "nii_per_share",
         # Bank flow metrics
         "interest_income", "net_interest_income", "noninterest_income",
-        "noninterest_expense", "provision_for_losses",
+        "noninterest_expense", "provision_for_losses", "ppnr",
         # REIT flow metrics
         "gains_on_real_estate", "real_estate_depreciation", "straight_line_rent", "recurring_capex",
         "general_admin_expense", "selling_marketing_expense",
@@ -5035,6 +5063,12 @@ def analyze():
                 if denom and denom != 0:
                     _eff_q[qk] = abs(_q_none_exp[qk]) / denom
 
+        # Quarterly PPNR = NII + Non-interest Income − Non-interest Expense
+        if _q_nii_bank and _q_none_exp:
+            _ppnr_q = financials.setdefault("ppnr", {})
+            for qk in set(_q_nii_bank) & set(_q_none_exp):
+                _ppnr_q[qk] = _q_nii_bank[qk] + (_q_noni.get(qk) or 0) - abs(_q_none_exp[qk])
+
         # Quarterly ROE, FCF ROE, ROA (annualized: × 4)
         _q_ni  = {k: v for k, v in financials.get("net_income", {}).items() if k.startswith("Q")}
         _q_fcf = {k: v for k, v in financials.get("fcf", {}).items() if k.startswith("Q")}
@@ -5196,6 +5230,13 @@ def analyze():
             for qk in set(_q_eq2) & set(_q_so):
                 if _q_so[qk]:
                     _bvps_q[qk] = _q_eq2[qk] / _q_so[qk]
+            _q_gw_bv = {k: v for k, v in financials.get("goodwill", {}).items() if k.startswith("Q")}
+            _q_ia_bv = {k: v for k, v in financials.get("intangibles", {}).items() if k.startswith("Q")}
+            _tbvps_q = financials.setdefault("tangible_book_value_per_share", {})
+            for qk in set(_q_eq2) & set(_q_so):
+                if _q_so[qk]:
+                    _te = _q_eq2[qk] - (_q_gw_bv.get(qk) or 0) - (_q_ia_bv.get(qk) or 0)
+                    _tbvps_q[qk] = _te / _q_so[qk]
 
         # Quarterly ROIC and Pre-tax ROIC
         _q_oi  = {k: v for k, v in financials.get("operating_income", {}).items() if k.startswith("Q")}

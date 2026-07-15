@@ -379,6 +379,7 @@ const ROWS = [
   {lbl:'Revenue / Share',         key:'revenue_per_share',       t:'ps'},
   {lbl:'EPS (Diluted)',            key:'eps_diluted',              t:'ps'},
   {lbl:'Book Value / Share',       key:'book_value_per_share',    t:'ps'},
+  {lbl:'Tangible Book Value / Share', key:'tangible_book_value_per_share', t:'ps'},
   {lbl:'FCF / Share',              key:'fcf_per_share',           t:'ps'},
   {lbl:'Dividends / Share',        key:'dividends_per_share',     t:'ps'},
   // BDC per-share
@@ -432,6 +433,7 @@ const ROWS = [
   {lbl:'Non-Interest Income',      key:'noninterest_income',  t:'$',    bank:true},
   {lbl:'Provision for Losses',     key:'provision_for_losses',t:'$',    bank:true},
   {lbl:'Non-Interest Expense',     key:'noninterest_expense', t:'$',    bank:true},
+  {lbl:'PPNR  (NII + Non-Int Inc − Non-Int Exp)', key:'ppnr',    t:'$',    bank:true, bld:true},
   {lbl:'Efficiency Ratio',         key:'efficiency_ratio',    t:'%',    bank:true, hi:true},
 
   {sec:'BDC INCOME  ($M)',                                               bdc:true},
