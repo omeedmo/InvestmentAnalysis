@@ -3389,6 +3389,16 @@ def build_financials(facts: dict) -> dict[str, dict[str, float]]:
                 fcf_roe[d] = fcf[d] / e
         raw["fcf_roe"] = fcf_roe or None
 
+    # Adj. FCF ROE = Adj. FCF (FCF - SBC) / Equity
+    adj_fcf_for_roe = raw.get("adj_fcf", {})
+    if adj_fcf_for_roe and eq:
+        adj_fcf_roe = {}
+        for d in adj_fcf_for_roe:
+            e = fy_get(eq, d[:4])
+            if e and e != 0:
+                adj_fcf_roe[d] = adj_fcf_for_roe[d] / e
+        raw["adj_fcf_roe"] = adj_fcf_roe or None
+
     # NII ROE = Net Investment Income / Equity  (BDC equivalent of ROE)
     nii_series = raw.get("net_investment_income", {})
     if nii_series and eq:
@@ -5038,6 +5048,12 @@ def analyze():
             for qk in set(_q_fcf) & set(_q_eq):
                 if _q_eq[qk] and _q_eq[qk] != 0:
                     _fcfroe_q[qk] = (_q_fcf[qk] * 4) / _q_eq[qk]
+        _q_adj_fcf_r = {k: v for k, v in financials.get("adj_fcf", {}).items() if k.startswith("Q")}
+        if _q_adj_fcf_r and _q_eq:
+            _adjfcfroe_q = financials.setdefault("adj_fcf_roe", {})
+            for qk in set(_q_adj_fcf_r) & set(_q_eq):
+                if _q_eq[qk] and _q_eq[qk] != 0:
+                    _adjfcfroe_q[qk] = (_q_adj_fcf_r[qk] * 4) / _q_eq[qk]
         if _q_ni and _q_ta:
             _roa_q = financials.setdefault("roa", {})
             for qk in set(_q_ni) & set(_q_ta):
