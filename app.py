@@ -2481,10 +2481,26 @@ METRIC_TAGS: dict[str, list[str]] = {
     "noninterest_expense":  ["NoninterestExpense"],
     "provision_for_losses": ["ProvisionForLoanAndLeaseLosses", "ProvisionForLoanLeaseAndOtherLosses",
                              "ProvisionForCreditLosses"],
-    # Loan-loss realization (for normalized loss rate). Gross write-offs and
-    # recoveries; net charge-offs = write-offs − recoveries, derived below.
-    "loan_writeoffs":  ["FinancingReceivableAllowanceForCreditLossesWriteOffs"],
-    "loan_recoveries": ["FinancingReceivableAllowanceForCreditLossesRecovery"],
+    # Loan-loss realization (for normalized loss rate). Tag names vary across
+    # three eras — pre-CECL "AllowanceForLoanAndLeaseLosses…", the interim
+    # "FinancingReceivableAllowanceForCreditLosses…", and the current
+    # "FinancingReceivableExcludingAccruedInterest…" — so each list spans all
+    # three to get continuous history (extract_annual_series merges years
+    # across the list). Net charge-offs are taken directly from the
+    # "write-off after recovery" tags where present, else derived below from
+    # gross write-offs − recoveries.
+    "net_charge_offs_reported": [
+        "FinancingReceivableExcludingAccruedInterestAllowanceForCreditLossWriteoffAfterRecovery",
+        "FinancingReceivableAllowanceForCreditLossWriteoffAfterRecovery",
+        "AllowanceForLoanAndLeaseLossesWriteoffsNet"],
+    "loan_writeoffs":  [
+        "FinancingReceivableExcludingAccruedInterestAllowanceForCreditLossWriteoff",
+        "FinancingReceivableAllowanceForCreditLossesWriteOffs",
+        "AllowanceForLoanAndLeaseLossesWriteOffs"],
+    "loan_recoveries": [
+        "FinancingReceivableExcludingAccruedInterestAllowanceForCreditLossRecovery",
+        "FinancingReceivableAllowanceForCreditLossesRecovery",
+        "AllowanceForLoanAndLeaseLossRecoveryOfBadDebts"],
 
     # Per Share (USD/shares unit)
     "eps_diluted": ["EarningsPerShareDiluted", "EarningsPerShareBasicAndDiluted"],
@@ -2531,7 +2547,8 @@ METRIC_TAGS: dict[str, list[str]] = {
     # net-of-allowance pre-CECL, then the CECL-era financing-receivable tag.
     "bank_loans": ["LoansAndLeasesReceivableNetReportedAmount",
                    "LoansAndLeasesReceivableNetOfDeferredIncome",
-                   "FinancingReceivableExcludingAccruedInterestAfterAllowanceForCreditLoss"],
+                   "FinancingReceivableExcludingAccruedInterestAfterAllowanceForCreditLoss",
+                   "FinancingReceivableExcludingAccruedInterestBeforeAllowanceForCreditLoss"],
     "current_assets": ["AssetsCurrent"],
     "current_liabilities": ["LiabilitiesCurrent"],
     "total_liabilities": ["Liabilities"],
@@ -3498,14 +3515,26 @@ def build_financials(facts: dict) -> dict[str, dict[str, float]]:
     # happened to book. Only populated where SEC actually tags write-offs /
     # recoveries / loans (coverage varies a lot by bank); left blank otherwise
     # rather than substituting the provision, which would defeat the purpose.
+    nco_direct = raw.get("net_charge_offs_reported", {})
     wo   = raw.get("loan_writeoffs", {})
     rec  = raw.get("loan_recoveries", {})
     loans = raw.get("bank_loans", {})
-    if wo and loans:
+    if (nco_direct or wo) and loans:
         nco = {}
-        for d in wo:
-            r_v = fy_get(rec, d[:4]) or 0
-            nco[d] = abs(wo[d]) - abs(r_v)
+        covered_years: set = set()
+        # Prefer the directly-reported net-charge-off (write-off-after-recovery)
+        # tag where available — cleanest and avoids mismatched write-off vs
+        # recovery year coverage.
+        for d, v in nco_direct.items():
+            if v is not None:
+                nco[d] = abs(v)
+                covered_years.add(d[:4])
+        # Fill remaining years from gross write-offs − recoveries.
+        for d, v in wo.items():
+            if v is not None and d[:4] not in covered_years:
+                r_v = fy_get(rec, d[:4]) or 0
+                nco[d] = abs(v) - abs(r_v)
+                covered_years.add(d[:4])
         raw["net_charge_offs"] = nco or None
 
         # Average loans over the year (this year-end + prior year-end)/2 when
