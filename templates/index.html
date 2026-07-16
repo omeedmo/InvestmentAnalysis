@@ -103,18 +103,18 @@ body{font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:v
 /* scroll hint fades out once user scrolls */
 .tbl-hint{display:none;font-size:11px;color:var(--muted);text-align:center;padding:4px;margin-bottom:4px;animation:fadeHint 3s ease 1s forwards}
 @keyframes fadeHint{0%{opacity:1}80%{opacity:1}100%{opacity:0;pointer-events:none}}
-/* Cap the height and scroll INSIDE the wrapper so the sticky year header
-   (thead position:sticky;top:0) and sticky first column both stay frozen
-   while scrolling a long metrics table — otherwise page-level scroll takes
-   the header out of view. */
-.tbl-wrap{max-height:82vh;overflow:auto;-webkit-overflow-scrolling:touch;border-radius:8px;border:1px solid var(--border);background:var(--card);scrollbar-width:thin}
-.tbl-wrap::-webkit-scrollbar{height:5px;width:5px}
+/* Horizontal scroll only — the page scrolls vertically as normal. A JS
+   floating clone (see setupStickyHeader) pins the year header below the top
+   bar while the table is in view, so the header stays visible without
+   turning the whole table into an internal scroll box (which felt wrong on
+   mobile). */
+.tbl-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:8px;border:1px solid var(--border);background:var(--card);scrollbar-width:thin}
+.tbl-wrap::-webkit-scrollbar{height:5px}
 .tbl-wrap::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:3px}
 table{border-collapse:collapse;width:100%}
-/* The main metrics table uses border-collapse:separate so its sticky year
-   header (position:sticky) actually freezes — sticky <th> is unreliable under
-   border-collapse:collapse. border-spacing:0 keeps the appearance identical. */
-.tbl-wrap table{border-collapse:separate;border-spacing:0}
+/* Floating sticky header clone */
+.sticky-head-float{position:fixed;overflow:hidden;z-index:90;display:none;box-shadow:0 3px 8px rgba(0,0,0,.18);border-radius:0 0 4px 4px}
+.sticky-head-float table{border-collapse:collapse}
 thead tr.yr-row th{background:var(--navy);color:#e2e8f0;font-size:11px;font-weight:700;padding:7px 9px;text-align:right;white-space:nowrap;position:sticky;top:0;z-index:5}
 thead tr.yr-row th:first-child{text-align:left;position:sticky;left:0;z-index:10;background:var(--navy);width:var(--lbl-w);min-width:var(--lbl-w);max-width:var(--lbl-w)}
 thead tr.yr-row th.lat{background:#1e3a6e;color:#93c5fd}
@@ -909,6 +909,72 @@ function render(data){
 
   document.getElementById('root').innerHTML=h;
   drawCharts(years,fin);
+  setupStickyHeader();
+}
+
+// ── Floating sticky year header ───────────────────────────────────────────────
+// The metrics table scrolls horizontally, and a horizontal-scroll container
+// traps position:sticky (it can't stick to the page). So instead of turning
+// the table into an internal scroll box, we pin a lightweight clone of the
+// header row just below the top bar whenever the table is in view, and hide it
+// otherwise. Page scrolling stays completely normal.
+let _stickyUpdate = null, _stickyRebuild = null, _stickyHead = null;
+function setupStickyHeader(){
+  if(_stickyHead){ _stickyHead.remove(); _stickyHead = null; }
+  if(_stickyUpdate) window.removeEventListener('scroll', _stickyUpdate, true);
+  if(_stickyRebuild) window.removeEventListener('resize', _stickyRebuild);
+  _stickyUpdate = _stickyRebuild = null;
+
+  const wrap  = document.getElementById('main-tbl-wrap');
+  const table = document.getElementById('main-tbl');
+  const thead = table && table.querySelector('thead');
+  const topbar = document.querySelector('.topbar');
+  if(!wrap || !table || !thead) return;
+
+  const floater = document.createElement('div');
+  floater.className = 'sticky-head-float';
+  const ftable = document.createElement('table');
+  ftable.id = 'sticky-head-tbl';
+  floater.appendChild(ftable);
+  document.body.appendChild(floater);
+  _stickyHead = floater;
+
+  function syncWidths(){
+    const src = thead.querySelectorAll('th');
+    const dst = ftable.querySelectorAll('th');
+    src.forEach((c,i)=>{
+      if(!dst[i]) return;
+      const w = c.getBoundingClientRect().width;
+      dst[i].style.width = dst[i].style.minWidth = dst[i].style.maxWidth = w + 'px';
+    });
+    ftable.style.width = table.getBoundingClientRect().width + 'px';
+  }
+  function rebuild(){
+    ftable.innerHTML = '';
+    ftable.appendChild(thead.cloneNode(true));   // mirrors current column visibility
+    syncWidths();
+    update();
+  }
+  function update(){
+    const wr = wrap.getBoundingClientRect();
+    const topH  = topbar ? topbar.getBoundingClientRect().height : 0;
+    const headH = thead.getBoundingClientRect().height;
+    if(wr.top < topH && wr.bottom > topH + headH){
+      floater.style.display = 'block';
+      floater.style.top   = topH + 'px';
+      floater.style.left  = wr.left + 'px';
+      floater.style.width = wr.width + 'px';
+      floater.scrollLeft  = wrap.scrollLeft;      // keep horizontal position in sync
+    } else {
+      floater.style.display = 'none';
+    }
+  }
+  _stickyUpdate = update;
+  _stickyRebuild = rebuild;
+  window.addEventListener('scroll', update, true);   // capture: also fires for the wrap's own scroll
+  window.addEventListener('resize', rebuild);
+  wrap.addEventListener('scroll', ()=>{ if(floater.style.display==='block') floater.scrollLeft = wrap.scrollLeft; });
+  rebuild();
 }
 
 // ── Earnings Materials ────────────────────────────────────────────────────────
@@ -1721,6 +1787,8 @@ function toggleYearRange(){
     const wrap = document.getElementById('main-tbl-wrap');
     if(wrap) wrap.scrollLeft = 0;
   }
+  // Rebuild the floating header clone to match the new column visibility.
+  if(_stickyRebuild) _stickyRebuild();
 }
 </script>
 </body>
