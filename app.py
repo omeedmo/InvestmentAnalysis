@@ -2610,7 +2610,12 @@ METRIC_TAGS: dict[str, list[str]] = {
     ],
 
     # Capital Returns
-    "dividends_paid": ["PaymentsOfDividends", "PaymentsOfDividendsCommonStock"],
+    # PaymentsOfOrdinaryDividends covers filers (e.g. ACN from FY2023) that
+    # switched away from PaymentsOfDividendsCommonStock. Excludes
+    # PaymentsOfDividendsMinorityInterest (dividends to subsidiary minority
+    # holders, not the company's own shareholders).
+    "dividends_paid": ["PaymentsOfDividends", "PaymentsOfDividendsCommonStock",
+                       "PaymentsOfOrdinaryDividends"],
     "buybacks_value": [
         "PaymentsForRepurchaseOfCommonStock",
         "StockRepurchasedAndRetiredDuringPeriodValue",
@@ -4629,6 +4634,15 @@ def analyze():
             d: _eq[d] / fy_get(_so, d[:4])
             for d in _eq if fy_get(_so, d[:4])
         } or financials.get("book_value_per_share")
+        # Tangible BVPS is recomputed here too — its build_financials pass runs
+        # before shares_outstanding_end is reconstructed, so without this the
+        # annual series can come out empty even when BVPS is fine.
+        _gw = financials.get("goodwill", {})
+        _ia = financials.get("intangibles", {})
+        financials["tangible_book_value_per_share"] = {
+            d: (_eq[d] - (fy_get(_gw, d[:4]) or 0) - (fy_get(_ia, d[:4]) or 0)) / fy_get(_so, d[:4])
+            for d in _eq if fy_get(_so, d[:4])
+        } or financials.get("tangible_book_value_per_share")
 
     # Recompute total_cash from component series when available, then refresh net_cash.
     _cash = financials.get("cash", {})
