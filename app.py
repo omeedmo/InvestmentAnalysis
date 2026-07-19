@@ -294,20 +294,10 @@ def all_filing_infos_from_submissions(submissions: dict, forms: set[str],
             "filing_date":  filing_date,
             "report_date":  report_date,
             "fiscal_year":  fy_year,
-            # url = the primary document itself (used internally to fetch/parse
-            # filing text). index_url = the filing's small index page, used for
-            # user-facing links: the raw primary document for a modern filing is
-            # a huge inline-XBRL file that browsers (esp. mobile) hang on, so
-            # links should land on the fast index page instead.
             "url": SEC_ARCHIVES.format(
                 cik_no_zero=cik_no_zero,
                 accession_no_dash=accession.replace("-", ""),
                 document=primary_doc,
-            ),
-            "index_url": SEC_ARCHIVES.format(
-                cik_no_zero=cik_no_zero,
-                accession_no_dash=accession.replace("-", ""),
-                document=f"{accession}-index.htm",
             ),
         })
     return results
@@ -1875,12 +1865,12 @@ def get_proxy_filing_url(submissions: dict) -> tuple[str, str]:
 
     for i, form in enumerate(forms):
         if form == "DEF 14A":
-            # Link to the filing index page (small/fast) rather than the raw
-            # proxy document, which is a large inline-XBRL/HTML file.
+            acc = accessions[i].replace("-", "")
+            doc = primary_docs[i]
             url = SEC_ARCHIVES.format(
                 cik_no_zero=cik_no_zero,
-                accession_no_dash=accessions[i].replace("-", ""),
-                document=f"{accessions[i]}-index.htm",
+                accession_no_dash=acc,
+                document=doc,
             )
             return url, dates[i]
     return "", ""
@@ -4452,10 +4442,9 @@ def analyze():
     latest_10k = all_10k_filings[0] if all_10k_filings else None
     latest_10q = all_10q_filings[0] if all_10q_filings else None
 
-    # Build {fiscal_year: 10-K URL} map for the frontend link headers (index
-    # page, not the huge primary document — see all_filing_infos_from_submissions)
+    # Build {fiscal_year: 10-K URL} map for the frontend link headers
     filing_links: dict[str, str] = {
-        f["fiscal_year"]: f["index_url"]
+        f["fiscal_year"]: f["url"]
         for f in all_10k_filings
         if f.get("fiscal_year")
     }
@@ -4781,7 +4770,7 @@ def analyze():
         # Match each quarter-end date to its 10-Q filing URL
         # 10-Q report_date is typically within a few days of the quarter end
         _10q_by_date: dict[str, str] = {
-            f["report_date"]: f["index_url"]
+            f["report_date"]: f["url"]
             for f in all_10q_filings
             if f.get("report_date")
         }
@@ -5644,12 +5633,7 @@ def analyze():
                 accession_no_dash=_accn.replace("-", ""),
                 document=_doc,
             ) if _accn and _doc else "",
-            # Filing index page — small/fast, unlike the raw primary document.
-            "index_url": SEC_ARCHIVES.format(
-                cik_no_zero=_cik_nz,
-                accession_no_dash=_accn.replace("-", ""),
-                document=f"{_accn}-index.htm",
-            ) if _accn else "",
+            "index_url": f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik}&type=&dateb=&owner=include&count=40",
         })
     all_filings_url = (
         f"https://www.sec.gov/cgi-bin/browse-edgar"

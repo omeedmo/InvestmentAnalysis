@@ -794,8 +794,8 @@ function render(data){
   </div>
   ${rangeHtml}
   <div class="vl-links">
-    ${co.latest_10k?`<a class="badge lk" href="${co.latest_10k.index_url||co.latest_10k.url}" target="_blank" rel="noreferrer">Latest ${co.latest_10k.form} (${co.latest_10k.filing_date})</a>`:''}
-    ${co.latest_10q?`<a class="badge lk" href="${co.latest_10q.index_url||co.latest_10q.url}" target="_blank" rel="noreferrer">Latest ${co.latest_10q.form} (${co.latest_10q.filing_date})</a>`:''}
+    ${co.latest_10k?`<a class="badge lk" href="${co.latest_10k.url}" target="_blank" rel="noreferrer">Latest ${co.latest_10k.form} (${co.latest_10k.filing_date})</a>`:''}
+    ${co.latest_10q?`<a class="badge lk" href="${co.latest_10q.url}" target="_blank" rel="noreferrer">Latest ${co.latest_10q.form} (${co.latest_10q.filing_date})</a>`:''}
   </div>
 </div>`;
 
@@ -1291,8 +1291,8 @@ function renderRecentFilings(filings, allUrl, ticker){
   }
   let rows = filings.map(f=>{
     const badge = `<span class="rf-badge ${badgeCls(f.form)}">${f.form}</span>`;
-    const link  = (f.index_url||f.url)
-      ? `<a class="rf-link" href="${f.index_url||f.url}" target="_blank" rel="noreferrer">View filing ↗</a>`
+    const link  = f.url
+      ? `<a class="rf-link" href="${f.url}" target="_blank" rel="noreferrer">View filing ↗</a>`
       : '—';
     const desc  = f.report_date ? `Period: ${f.report_date}` : '';
     return `<tr>
