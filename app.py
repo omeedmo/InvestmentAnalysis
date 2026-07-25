@@ -3064,6 +3064,25 @@ def build_financials(facts: dict) -> dict[str, dict[str, float]]:
         if series:
             raw[key] = normalize_to_fiscal_years(series)
 
+    # Interest expense fallback: some filers (e.g. CHTR from FY2014) stop
+    # tagging a dedicated InterestExpense and only report a combined
+    # "net interest income/expense" figure — signed negative-for-expense,
+    # unlike InterestExpense's positive convention every consumer here
+    # expects. Fill gap years from it, normalizing the sign with abs(); only
+    # applied where the primary tags are missing, so it never overrides a
+    # direct InterestExpense value.
+    _int_exp_existing = raw.get("interest_expense", {})
+    _int_net_signed = extract_annual_series(
+        facts, ["InterestIncomeExpenseNet", "InterestIncomeExpenseNonoperatingNet"])
+    if _int_net_signed:
+        _int_net_signed = normalize_to_fiscal_years(_int_net_signed)
+        _filled = dict(_int_exp_existing)
+        for d, v in _int_net_signed.items():
+            if d[:4] not in {k[:4] for k in _int_exp_existing} and v is not None and v < 0:
+                _filled[d] = abs(v)
+        if _filled != _int_exp_existing:
+            raw["interest_expense"] = _filled
+
     # ── Derived ──────────────────────────────────────────────────────────────
     ocf     = raw.get("operating_cash_flow", {})
     capex   = raw.get("capex", {})
@@ -4802,6 +4821,19 @@ def analyze():
                 existing = financials.setdefault(key, {})
                 for qk, v in q_vals.items():
                     existing[qk] = v
+
+        # Quarterly interest-expense fallback — same "net" tags as the annual
+        # fallback above, for filers (e.g. CHTR) that report only a combined,
+        # negative-for-expense net-interest figure in their 10-Qs too.
+        _q_int_exp_existing = {k for k in financials.get("interest_expense", {})}
+        _q_int_net = extract_post_annual_quarters(
+            facts, ["InterestIncomeExpenseNet", "InterestIncomeExpenseNonoperatingNet"],
+            _last_annual_date, False)
+        if _q_int_net:
+            _ie = financials.setdefault("interest_expense", {})
+            for qk, v in _q_int_net.items():
+                if qk not in _q_int_exp_existing and v is not None and v < 0:
+                    _ie[qk] = abs(v)
 
         # ── Cover-page shares override for quarterly periods ─────────────────
         # EntityCommonStockSharesOutstanding filed with 10-Q uses the *filing*
