@@ -403,8 +403,6 @@ const ROWS = [
   {lbl:'Operating Income',         key:'operating_income',        t:'$'},
   {lbl:'  Operating Margin',       key:'operating_margin',        t:'%', hi:true, ind:true},
   {lbl:'Depreciation & Amort.',    key:'depreciation',            t:'$'},
-  {lbl:'EBITDA',                   key:'ebitda',                  t:'$'},
-  {lbl:'  EBITDA Margin',          key:'ebitda_margin',           t:'%', hi:true, ind:true},
   {lbl:'Interest Expense',         key:'interest_expense',        t:'$'},
   {lbl:'Net Income',               key:'net_income',              t:'$', bld:true},
   {lbl:'  Net Margin',             key:'net_margin',              t:'%', hi:true, ind:true},
@@ -471,7 +469,7 @@ const ROWS = [
   {lbl:'Short-term Investments',  key:'short_term_investments',  t:'$'},
   {lbl:'Cash & Investments',       key:'total_cash',              t:'$'},
   {lbl:'  Operating Lease Liability', key:'operating_lease_liability', t:'$', ind:true},
-  {lbl:'Total Debt (incl. op. leases)', key:'total_debt',          t:'$'},
+  {lbl:'Total Debt',               key:'total_debt',              t:'$'},
   {lbl:'Net Cash / (Debt)',        key:'net_cash',                t:'$±'},
   {lbl:'  Operating Lease ROU Asset', key:'operating_lease_rou_asset', t:'$', ind:true},
   {lbl:"Shareholders' Equity / NAV", key:'equity',               t:'$'},
@@ -708,7 +706,8 @@ function applyDcf(){
 
 // ── Main render ───────────────────────────────────────────────────────────────
 function render(data){
-  const {company:co, market:mk, financials:fin, dcf, filing_links:fl={}, proxy:px={}} = data;
+  const {company:co, market:mk, financials:fin, dcf, filing_links:fl={}, proxy:px={},
+         metric_labels:mlabels={}} = data;
   // Guard against null (not just undefined) — a default only applies to undefined.
   const years = Array.isArray(data.years) ? data.years : [];
   const qtrs  = Array.isArray(data.quarters) ? data.quarters : [];
@@ -852,9 +851,26 @@ function render(data){
       continue;
     }
     const ser=fin[row.key]||{};
+    // Prefer the wording the company itself used in its latest 10-K, keeping
+    // our leading-space indentation so the row hierarchy still reads right.
+    // Very long filer labels would truncate to pure ellipsis in the fixed-width
+    // label column, so keep ours in that case — the tooltip still shows theirs.
+    const rawCoLbl = mlabels[row.key];
+    let coLbl = (rawCoLbl && rawCoLbl.length <= 45) ? rawCoLbl : null;
+    // A filer label can collide with a different row of ours (Apple calls
+    // gross profit "Gross margin", clashing with our computed Gross Margin %).
+    // Keep ours in that case so the two rows stay distinguishable.
+    if(coLbl){
+      const k = coLbl.trim().toLowerCase();
+      if(OWN_LBLS.has(k) && k !== row.lbl.trim().toLowerCase()) coLbl = null;
+    }
+    const indent = (row.lbl.match(/^\s*/)||[''])[0];
+    const shownLbl = coLbl ? indent + coLbl : row.lbl;
+    const lblTitle = rawCoLbl && rawCoLbl !== row.lbl.trim()
+      ? ` title="${row.lbl.trim()} — as reported: ${rawCoLbl.replace(/"/g,'&quot;')}"` : '';
     h+=`<tr class="dr">`;
-    h+=`<td class="${row.ind?'ind':''}" style="${row.bld?'font-weight:700':''}">`;
-    h+=`${row.lbl}</td>`;
+    h+=`<td class="${row.ind?'ind':''}" style="${row.bld?'font-weight:700':''}"${lblTitle}>`;
+    h+=`${shownLbl}</td>`;
     for(const col of allCols){
       const isQ = qtrs.includes(col);
       const isLat = col===latY;

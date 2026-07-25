@@ -123,6 +123,106 @@ def fetch_submissions(cik: str) -> dict:
     return r.json()
 
 
+def fetch_filing_labels(cik_no_zero: str, accession: str) -> dict:
+    """
+    {tag: label} using the wording the company itself used in that filing.
+
+    SEC's companyfacts API only carries the *standard* taxonomy label
+    ("Revenue from Contract with Customer, Excluding Assessed Tax"), not what
+    the filer actually printed. The filing's own label linkbase — exposed as
+    MetaLinks.json — has both, so this reads the company's presentation label
+    (Apple: "Net sales", "Cost of sales", "Gross margin").
+
+    Prefers totalLabel/terseLabel (what's shown on the statement) over the
+    generic standard label. Cached per accession, which is immutable.
+    """
+    cache_path = os.path.join(screener.CACHE_DIR, f"labels_{accession.replace('-', '')}.json")
+    try:
+        with open(cache_path) as f:
+            return json.load(f)
+    except Exception:
+        pass
+
+    out: dict[str, str] = {}
+    try:
+        an = accession.replace("-", "")
+        r = requests.get(
+            f"https://www.sec.gov/Archives/edgar/data/{cik_no_zero}/{an}/MetaLinks.json",
+            headers=HEADERS, timeout=40)
+        if r.status_code == 200:
+            instances = r.json().get("instance", {}) or {}
+            for inst in instances.values():
+                for key, meta in (inst.get("tag", {}) or {}).items():
+                    if not key.startswith("us-gaap_"):
+                        continue
+                    roles = (meta.get("lang", {}).get("en-us", {}) or {}).get("role", {})
+                    # totalLabel/terseLabel are what the filer actually printed.
+                    # The plain `label` role is usually the verbose standard
+                    # taxonomy wording ("Cash, Cash Equivalent, Restricted Cash,
+                    # and Restricted Cash Equivalent, Continuing Operation"),
+                    # which is worse than our own label — only take it if it's
+                    # short enough to be a real presentation label.
+                    label = roles.get("totalLabel") or roles.get("terseLabel")
+                    if not label:
+                        std = (roles.get("label") or "").strip()
+                        label = std if 0 < len(std) <= 40 else None
+                    if not label:
+                        continue
+                    tag = key[len("us-gaap_"):]
+                    # Prefer a label from an element presented on the face of a
+                    # primary statement over one from a footnote table.
+                    on_face = any(
+                        s in p.upper()
+                        for p in (meta.get("presentation") or [])
+                        for s in ("STATEMENTSOFOPERATIONS", "STATEMENTOFOPERATIONS",
+                                  "BALANCESHEET", "CASHFLOW", "STATEMENTSOFINCOME",
+                                  "STATEMENTSOFCASHFLOWS")
+                    )
+                    if tag not in out or on_face:
+                        out[tag] = label.strip()
+    except Exception:
+        return {}
+
+    try:
+        with open(cache_path, "w") as f:
+            json.dump(out, f)
+    except Exception:
+        pass
+    return out
+
+
+def company_metric_labels(cik_no_zero: str, accession: str) -> dict:
+    """
+    {metric_key: company's own label} for metrics sourced directly from a tag.
+
+    METRIC_TAGS lists are priority-ordered, and the label map only contains
+    tags this filer actually used, so the first match approximates the tag
+    that supplied the data. Derived metrics (FCF, margins, ROE) have no tag
+    and keep the app's own label — they're our calculations, not the
+    company's reported line items.
+    """
+    tag_labels = fetch_filing_labels(cik_no_zero, accession)
+    if not tag_labels:
+        return {}
+    # Per-share labels read as fragments because the filing nests them under a
+    # parent heading ("Earnings per share:" -> "Diluted (in dollars per
+    # share)"), which is meaningless as a standalone row. Keep ours for those.
+    context_dependent = {
+        "eps_diluted", "dividends_per_share", "revenue_per_share",
+        "book_value_per_share", "tangible_book_value_per_share",
+        "fcf_per_share", "nav_per_share", "nii_per_share", "float_per_share",
+    }
+    out: dict[str, str] = {}
+    for metric, tags in METRIC_TAGS.items():
+        if metric in context_dependent:
+            continue
+        for t in (tags or []):
+            if t in tag_labels:
+                out[metric] = tag_labels[t]
+                break
+    return out
+
+
 def sec_get_text(url: str) -> str:
     r = requests.get(url, headers=HEADERS, timeout=45)
     r.raise_for_status()
@@ -291,6 +391,7 @@ def all_filing_infos_from_submissions(submissions: dict, forms: set[str],
             fy_year = ""
         results.append({
             "form":         form,
+            "accession":    accession,
             "filing_date":  filing_date,
             "report_date":  report_date,
             "fiscal_year":  fy_year,
@@ -3308,13 +3409,8 @@ def build_financials(facts: dict) -> dict[str, dict[str, float]]:
                 _ol[d] = total
         raw["operating_lease_liability"] = _ol or None
 
-    # Total Debt = LT Debt + Current Debt.
-    # Operating leases are deliberately NOT added here — they're folded in
-    # later (see "Fold operating leases into total debt"), after the
-    # company-specific overrides have run. Adding them at this point would
-    # make total_debt look populated for filers that tag no debt at all
-    # (BRK tags none; it reports debt by segment), which suppresses the
-    # text-extraction fallback and silently understates debt by ~20x.
+    # Total Debt = LT Debt + Current Debt (operating leases excluded — see the
+    # note where net_cash is recomputed).
     if ltd or ctd:
         all_d = set(ltd) | set(ctd)
         raw["total_debt"] = {d: (fy_get(ltd, d[:4]) or 0) + (fy_get(ctd, d[:4]) or 0)
@@ -4714,29 +4810,11 @@ def analyze():
         existing_tc = financials.get("total_cash", {})
         financials["total_cash"] = {**existing_tc, **combined_cash} if existing_tc else combined_cash
 
-    # ── Fold operating leases into total debt ────────────────────────────────
-    # The debt tags already capture FINANCE leases; post-ASC 842 (2019)
-    # operating leases are recognized liabilities on the face of the balance
-    # sheet too, and 64% of the S&P 500 carries a material one, so leaving
-    # them out understated real obligations for lease-heavy filers (retail,
-    # restaurants, airlines).
-    #
-    # This runs AFTER the company-specific overrides on purpose: doing it in
-    # build_financials made total_debt non-empty for filers that tag no debt
-    # concepts at all, which made the BRK coverage check think debt was
-    # already present and skip the text-extraction fallback.
-    # (Annual keys only at this point; quarterly leases are folded in later,
-    # inside the quarterly block.)
-    _ol_liab = {d: v for d, v in (financials.get("operating_lease_liability") or {}).items()
-                if not d.startswith("Q")}
-    if _ol_liab:
-        _td_base = {d: v for d, v in (financials.get("total_debt") or {}).items()
-                    if not d.startswith("Q")}
-        _merged_td = dict(financials.get("total_debt") or {})
-        for _d in set(_td_base) | set(_ol_liab):
-            _merged_td[_d] = ((fy_get(_td_base, _d[:4]) or 0)
-                              + (fy_get(_ol_liab, _d[:4]) or 0))
-        financials["total_debt"] = _merged_td
+    # NOTE: operating lease liabilities are deliberately NOT added to
+    # total_debt or EV. EBITDA/EBIT are still after operating-lease cost, so
+    # capitalizing the liability without an offsetting rent add-back inflates
+    # EV/EBIT for lease-heavy filers and distorts cross-company comparison.
+    # The liability is surfaced as its own balance-sheet line instead.
 
     # Recompute net_cash after any BRK debt/cash injections
     _tc = financials.get("total_cash", {})
@@ -5045,15 +5123,11 @@ def analyze():
         if _q_ol:
             financials.setdefault("operating_lease_liability", {}).update(_q_ol)
 
-        # Quarterly total debt, including operating leases to match the annual
-        # basis. Safe to fold inline here because this runs after the BRK
-        # quarterly debt injection above (the annual path can't do the same —
-        # see the note on the annual fold).
-        if _q_ltd or _q_ctd or _q_ol:
+        # Quarterly total debt — operating leases excluded, matching annual.
+        if _q_ltd or _q_ctd:
             _td_q = financials.setdefault("total_debt", {})
-            for qk in set(_q_ltd) | set(_q_ctd) | set(_q_ol):
-                _td_q[qk] = ((_q_ltd.get(qk) or 0) + (_q_ctd.get(qk) or 0)
-                             + (_q_ol.get(qk) or 0))
+            for qk in set(_q_ltd) | set(_q_ctd):
+                _td_q[qk] = (_q_ltd.get(qk) or 0) + (_q_ctd.get(qk) or 0)
 
         _q_tc_all = {k: v for k, v in financials.get("total_cash", {}).items() if k.startswith("Q")}
         _q_td_all = {k: v for k, v in financials.get("total_debt", {}).items() if k.startswith("Q")}
@@ -5710,6 +5784,17 @@ def analyze():
     # ── Proxy statement link (DEF 14A) ────────────────────────────────────────
     proxy_url, proxy_date = get_proxy_filing_url(submissions)
 
+    # Row labels in the company's own wording, taken from the latest annual
+    # filing's label linkbase (Apple says "Net sales", not "Revenue").
+    metric_labels: dict[str, str] = {}
+    if all_10k_filings:
+        try:
+            _acc = all_10k_filings[0].get("accession") or ""
+            if _acc:
+                metric_labels = company_metric_labels(str(int(cik)), _acc)
+        except Exception:
+            metric_labels = {}
+
     # ── Investor relations URL ─────────────────────────────────────────────────
     # EDGAR submissions often carry the company's website; we prefer that and
     # append /investors as a best-effort IR path, then fall back to a Google
@@ -5801,6 +5886,7 @@ def analyze():
         "all_filings_url":    all_filings_url,
         "ir_url":             ir_url,
         "financials":         fin_data,
+        "metric_labels":      metric_labels,
         "filing_links":       filing_links,
         "proxy": {
             "url":  proxy_url,
