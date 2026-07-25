@@ -1,0 +1,37 @@
+{
+  "ticker": "ORCL",
+  "cik": 1341439,
+  "generated_by": "session-authored (Claude Opus 4.8) from ORCL 10-K XBRL + coverage audit",
+  "summary": "Enterprise software mid-transition into capital-intensive AI cloud. Two things break the standard template: years of buybacks drove shareholders' equity negative or near-zero, making ROE/P-B meaningless; and a capex surge ($40B construction in progress) is turning historically fat free cash flow negative. Judge it on EV-based multiples, RPO growth, and cash generation before versus after the buildout.",
+
+  "add_tags": {
+    "long_term_debt": ["DebtLongtermAndShorttermCombinedAmount", "UnsecuredDebt"]
+  },
+
+  "metrics": [
+    {
+      "key": "orcl_fcf_before_growth_capex",
+      "label": "Operating cash flow less D&A-level capex",
+      "type": "$",
+      "basis": "adjusted",
+      "reported_ref": "fcf",
+      "expr": "operating_cash_flow - depreciation",
+      "why": "Reported FCF now nets out a datacenter buildout far above maintenance needs, so it measures the investment cycle rather than the earning power of the installed base. Charging capex at the D&A run-rate approximates maintenance capex and shows what the business throws off before growth spending.",
+      "evidence": "FY2026 10-K: PropertyPlantAndEquipmentGross $122.7B with ConstructionInProgressGross $40.0B, versus PP&E net $100.0B — capex is running far ahead of depreciation.",
+      "confidence": "medium"
+    }
+  ],
+
+  "annotations": {
+    "equity": "Sustained buybacks have driven shareholders' equity to negative or near-zero. Book value carries no information here, and any ratio using it as a denominator is meaningless.",
+    "roe": "Not meaningful — equity is negative or near-zero from buybacks, so the ratio is an artifact of capital structure rather than a return.",
+    "gross_profit": "Oracle stopped tagging cost of revenue after FY2011 and gross profit after FY2018, so the gross-margin series is largely unavailable. This is a disclosure gap, not a deterioration.",
+    "fcf": "Depressed since FY2025 by AI/cloud capex, not by operating weakness — see the maintenance-capex-adjusted line."
+  },
+
+  "caveats": [
+    "cost_of_revenue is tagged only 2009-2011 and gross_profit only 2015-2018; long-run margin analysis is not possible from XBRL for this filer.",
+    "Remaining performance obligation reached $638B in FY2026 (RevenueRemainingPerformanceObligation) — larger than 2x total assets and the single most important forward indicator for Oracle, but it is not currently a tracked metric.",
+    "Debt is tagged under DebtLongtermAndShorttermCombinedAmount ($129.5B) which the global mapping missed; this template adds it."
+  ]
+}

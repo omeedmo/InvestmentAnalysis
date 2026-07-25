@@ -1,0 +1,19 @@
+{
+  "sector": "reit",
+  "add_tags": {
+    "revenue": ["OperatingLeaseLeaseIncome", "LeaseIncome"],
+    "real_estate_gross": ["RealEstateGrossAtCarryingValue", "RealEstateInvestmentPropertyAtCost"]
+  },
+  "point_in_time": ["real_estate_gross"],
+  "_note_add_tags": "Gross real-estate tags are deliberately a SEPARATE key, not appended to real_estate_assets: the extractor keeps the largest value per year across a metric's tag list, so mixing gross into the net series would silently convert it to gross and break anything measuring depreciated book value.",
+  "annotations": {
+    "equity": "GAAP book value understates a REIT: real estate is carried at depreciated historical cost, so long-held properties sit far below market value. Book-value and ROE measures are not meaningful here.",
+    "net_income": "Net income is depressed by real-estate depreciation, a non-cash charge on assets that often appreciate. FFO/AFFO are the sector's earnings measures.",
+    "roe": "Distorted by depreciated-cost book value; use FFO-based measures instead."
+  },
+  "suppress": ["roic", "pretax_roic"],
+  "caveats": [
+    "The coverage audit found RealEstateGrossAtCarryingValue unmapped for 96% of REITs and lease income (the actual revenue line) unmapped for 63% — this sector template closes both.",
+    "ROIC is suppressed: 'invested capital' is not a meaningful denominator for a property trust whose assets are carried at depreciated cost."
+  ]
+}

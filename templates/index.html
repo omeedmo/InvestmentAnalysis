@@ -100,6 +100,13 @@ body{font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:v
 
 /* ── Table ────────────────────────────────────────────────────────────── */
 .tbl-outer{position:relative;margin-bottom:22px}
+/* Company-template explainer */
+.tmpl-note{background:#fffbeb;border:1px solid #fcd34d;border-left:4px solid #d97706;border-radius:6px;padding:10px 14px;margin-bottom:12px;font-size:12px;line-height:1.6}
+.tmpl-hd{font-weight:700;color:#92400e;font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px}
+.tmpl-note p{margin:0 0 6px;color:var(--text)}
+.tmpl-note ul{margin:4px 0 0 16px;color:var(--muted)}
+.tmpl-note li{margin-bottom:3px}
+.tmpl-src{margin-top:6px;font-size:10px;color:var(--muted);font-style:italic}
 /* scroll hint fades out once user scrolls */
 .tbl-hint{display:none;font-size:11px;color:var(--muted);text-align:center;padding:4px;margin-bottom:4px;animation:fadeHint 3s ease 1s forwards}
 @keyframes fadeHint{0%{opacity:1}80%{opacity:1}100%{opacity:0;pointer-events:none}}
@@ -822,6 +829,17 @@ function render(data){
     <span class="sec-title">15-Year Financial Summary — ${co.name}</span>
     <button class="yr-toggle" id="yr-toggle-btn" onclick="toggleYearRange()">${startHidden ? '📅 Show All Years' : '📅 Show Recent (5yr)'}</button>
   </div>`;
+
+  // How to read THIS company: summary, plus the caveats that apply to it.
+  if(data.template && (data.template.summary || (data.template.caveats||[]).length)){
+    const t = data.template;
+    h+=`<div class="tmpl-note">
+      <div class="tmpl-hd">How to read ${co.ticker}${t.sector?` · ${t.sector} template`:''}</div>
+      ${t.summary?`<p>${t.summary}</p>`:''}
+      ${(t.caveats||[]).length?`<ul>${t.caveats.map(c=>`<li>${c}</li>`).join('')}</ul>`:''}
+      ${t.generated_by?`<div class="tmpl-src">${t.generated_by}</div>`:''}
+    </div>`;
+  }
   h+=`<div class="tbl-outer"><div class="tbl-hint">← Swipe table left/right →</div>`;
   h+=`<div class="tbl-wrap" id="main-tbl-wrap"><table id="main-tbl"><thead><tr class="yr-row"><th>Metric</th>`;
   // Determine which annual columns are "recent" (last 5)
@@ -848,11 +866,24 @@ function render(data){
   }
   h+=`</tr></thead><tbody>`;
 
-  for(const row of ROWS){
+  // Company-template rows are appended as their own section, so a
+  // company-specific metric never masquerades as one of the standard ones.
+  const tmpl = data.template || null;
+  const tmplRows = (tmpl && tmpl.rows) ? tmpl.rows : [];
+  const tmplAnnot = (tmpl && tmpl.annotations) ? tmpl.annotations : {};
+  const tmplSuppress = new Set((tmpl && tmpl.suppress) ? tmpl.suppress : []);
+  const allRows = tmplRows.length
+    ? ROWS.concat([{sec:`${co.ticker} — COMPANY-SPECIFIC`}],
+                  tmplRows.map(r => ({lbl:r.label, key:r.key, t:r.t, _tmpl:r})))
+    : ROWS;
+
+  for(const row of allRows){
     if(row.bdc  && !co.is_bdc)  continue;
     if(row.bank && !co.is_bank) continue;
     if(row.reit && !co.is_reit) continue;
     if(row.ins  && !co.is_insurance) continue;
+    // A template can hide metrics that are actively misleading for this filer.
+    if(row.key && tmplSuppress.has(row.key)) continue;
     if(row.sec){
       h+=`<tr class="sh"><td colspan="${allCols.length+1}">${row.sec}</td></tr>`;
       continue;
@@ -862,7 +893,7 @@ function render(data){
     // our leading-space indentation so the row hierarchy still reads right.
     // Very long filer labels would truncate to pure ellipsis in the fixed-width
     // label column, so keep ours in that case — the tooltip still shows theirs.
-    const rawCoLbl = mlabels[row.key];
+    const rawCoLbl = row._tmpl ? null : mlabels[row.key];
     let coLbl = (rawCoLbl && rawCoLbl.length <= 45) ? rawCoLbl : null;
     // A filer label can collide with a different row of ours (Apple calls
     // gross profit "Gross margin", clashing with our computed Gross Margin %).
@@ -873,11 +904,29 @@ function render(data){
     }
     const indent = (row.lbl.match(/^\s*/)||[''])[0];
     const shownLbl = coLbl ? indent + coLbl : row.lbl;
-    const lblTitle = rawCoLbl && rawCoLbl !== row.lbl.trim()
-      ? ` title="${row.lbl.trim()} — as reported: ${rawCoLbl.replace(/"/g,'&quot;')}"` : '';
+
+    // Tooltip precedence: a template metric explains its own derivation; an
+    // annotated standard row carries the company-specific caveat; otherwise
+    // fall back to showing the filer's exact wording.
+    const tRow = row._tmpl;
+    let tip = '';
+    if(tRow){
+      tip = [tRow.basis==='adjusted' ? 'ADJUSTED — reported figure also shown above' : '',
+             tRow.why, tRow.evidence ? 'Evidence: '+tRow.evidence : '',
+             tRow.confidence ? 'Confidence: '+tRow.confidence : '']
+            .filter(Boolean).join('\n\n');
+    } else if(tmplAnnot[row.key]){
+      tip = tmplAnnot[row.key];
+    } else if(rawCoLbl && rawCoLbl !== row.lbl.trim()){
+      tip = `${row.lbl.trim()} — as reported: ${rawCoLbl}`;
+    }
+    const lblTitle = tip ? ` title="${tip.replace(/"/g,'&quot;')}"` : '';
+    // Mark annotated rows so the caveat is discoverable, not hidden in a hover.
+    const flag = (!tRow && tmplAnnot[row.key])
+      ? ` <span style="color:#b45309;font-weight:700" title="${tmplAnnot[row.key].replace(/"/g,'&quot;')}">⚠</span>` : '';
     h+=`<tr class="dr">`;
     h+=`<td class="${row.ind?'ind':''}" style="${row.bld?'font-weight:700':''}"${lblTitle}>`;
-    h+=`${shownLbl}</td>`;
+    h+=`${shownLbl}${flag}</td>`;
     for(const col of allCols){
       const isQ = qtrs.includes(col);
       const isLat = col===latY;

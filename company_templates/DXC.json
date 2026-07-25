@@ -1,0 +1,49 @@
+{
+  "ticker": "DXC",
+  "cik": 1688568,
+  "generated_by": "session-authored (Claude Opus 4.8) from DXC 10-K XBRL + coverage audit",
+  "summary": "Shrinking IT-services roll-up formed from the CSC/HPE Enterprise Services merger. It has written off $9.6B of goodwill — roughly three quarters of its remaining total assets — and suspended the dividend. Earnings and book value are dominated by impairments and restructuring; the real questions are whether cash generation persists as revenue declines, and whether the contracted backlog is stabilising.",
+
+  "add_tags": {
+    "cost_of_revenue": ["CostOfGoodsSoldExcludingDepreciationDepletionAndAmortization"],
+    "goodwill_impairment_accumulated": ["GoodwillImpairedAccumulatedImpairmentLoss"],
+    "backlog_rpo": ["RevenueRemainingPerformanceObligation"]
+  },
+  "point_in_time": ["goodwill_impairment_accumulated", "backlog_rpo"],
+
+  "metrics": [
+    {
+      "key": "dxc_backlog_to_revenue",
+      "label": "Contracted backlog / revenue (years)",
+      "type": "x",
+      "basis": "derived",
+      "expr": "backlog_rpo / revenue",
+      "why": "For a services business in decline, contracted backlog relative to annual revenue is the most direct read on how much of the future is already committed and how fast the book is eroding.",
+      "evidence": "FY2026 10-K: RevenueRemainingPerformanceObligation $16.4B, which is 127% of total assets.",
+      "confidence": "high"
+    },
+    {
+      "key": "dxc_impairment_vs_assets",
+      "label": "Cumulative goodwill impairment / total assets",
+      "type": "%",
+      "basis": "derived",
+      "expr": "goodwill_impairment_accumulated / total_assets",
+      "why": "Quantifies how much of the merger-era purchase price has already been written off relative to what remains on the balance sheet — a direct measure of capital destroyed by the roll-up strategy.",
+      "evidence": "FY2026: GoodwillImpairedAccumulatedImpairmentLoss $9.6B against Assets $12.9B (74%).",
+      "confidence": "high"
+    }
+  ],
+
+  "annotations": {
+    "net_income": "Repeatedly swamped by goodwill impairments and restructuring charges rather than operations; operating cash flow is the more stable signal.",
+    "equity": "Reduced by $9.6B of cumulative goodwill write-offs. Book value reflects merger losses, not operating asset value.",
+    "dividends_per_share": "DXC paid a dividend only through FY2020 and then suspended it — the gap in this series is a real capital-allocation decision, not missing data.",
+    "revenue": "In secular decline; multi-year growth rates also embed divestitures, so they overstate organic erosion in some years."
+  },
+
+  "caveats": [
+    "dividends_per_share is tagged 2018-2020 only, and dividends_paid through 2023 — the dividend was suspended, so the absence is genuine.",
+    "DXC tags cost of revenue as CostOfGoodsSoldExcludingDepreciationDepletionAndAmortization, which the global mapping missed; this template adds it, but note it EXCLUDES D&A so the resulting gross margin is not comparable to filers who include it.",
+    "History begins FY2018 (the post-merger entity), so 15-year comparisons are not available."
+  ]
+}

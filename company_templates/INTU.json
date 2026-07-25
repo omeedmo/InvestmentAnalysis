@@ -1,0 +1,40 @@
+{
+  "ticker": "INTU",
+  "cik": 896878,
+  "generated_by": "session-authored (Claude Opus 4.8) from INTU 10-K XBRL + coverage audit",
+  "summary": "High-margin subscription software compounder. The distortion to watch is stock-based compensation: it is a real cost to owners that GAAP operating cash flow adds back, so headline FCF flatters per-share economics while the share count is only held flat by large buybacks. Judge Intuit on SBC-adjusted free cash flow per share and on whether buybacks are actually shrinking the count.",
+
+  "metrics": [
+    {
+      "key": "intu_sbc_pct_revenue",
+      "label": "SBC / revenue",
+      "type": "%",
+      "basis": "derived",
+      "expr": "stock_based_compensation / revenue",
+      "why": "Sizes the compensation cost that operating cash flow adds back. For software compounders this is the main gap between reported FCF and what actually accrues to existing shareholders.",
+      "evidence": "FY2022 10-K: AllocatedShareBasedCompensationExpenseNetOfTax $912M against revenue; SBC is among the largest non-cash add-backs in the cash-flow statement.",
+      "confidence": "high"
+    },
+    {
+      "key": "intu_buyback_vs_sbc",
+      "label": "Buybacks / SBC (dilution offset)",
+      "type": "%",
+      "basis": "derived",
+      "expr": "buybacks_value / stock_based_compensation",
+      "why": "Shows how much of the buyback is merely mopping up shares issued to employees rather than returning capital. Near 1x, repurchases are offsetting dilution, not compounding per-share value.",
+      "evidence": "FY2022: TreasuryStockValueAcquiredCostMethod $1.9B against SBC of similar order.",
+      "confidence": "medium"
+    }
+  ],
+
+  "annotations": {
+    "fcf": "Adds back stock-based compensation, a genuine cost to existing owners. Compare against Adj. FCF (FCF − SBC) rather than using this figure for per-share value.",
+    "gross_profit": "Intuit stopped separately tagging cost of goods and cost of services after FY2017, so the split components are unavailable for later years; the consolidated gross profit line continues."
+  },
+
+  "caveats": [
+    "cost_of_goods_component and cost_of_services_component are tagged only 2009-2017; the app already derives consolidated cost of revenue, but the product-versus-service split is not available after that.",
+    "Advertising expense runs ~$1.6B (FY2022) and is a major discretionary lever on reported margin; it is disclosed but not currently tracked as a metric.",
+    "treasury_stock_shares is tagged only 2010-2013, so cumulative buyback share counts are incomplete."
+  ]
+}

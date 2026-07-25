@@ -1,0 +1,48 @@
+{
+  "ticker": "LUMN",
+  "cik": 18926,
+  "generated_by": "session-authored (Claude Opus 4.8) from LUMN 10-K XBRL + coverage audit",
+  "summary": "Heavily indebted, shrinking telecom carrier that has written off most of its acquisition history — $22.3B of accumulated goodwill impairment. Equity and earnings are dominated by impairments and are close to worthless as signals. What matters is whether asset-heavy operating cash flow covers a $17.9B debt load against a $33.5B balance sheet, and whether the fiber capex is earning a return.",
+
+  "add_tags": {
+    "long_term_debt": ["DebtAndCapitalLeaseObligations"],
+    "goodwill_impairment_accumulated": ["GoodwillImpairedAccumulatedImpairmentLoss"]
+  },
+  "point_in_time": ["goodwill_impairment_accumulated"],
+
+  "metrics": [
+    {
+      "key": "lumn_ocf_less_capex_vs_debt",
+      "label": "Free cash flow / total debt",
+      "type": "%",
+      "basis": "derived",
+      "expr": "(operating_cash_flow - capex) / long_term_debt",
+      "why": "For a levered, declining carrier the central question is debt serviceability, not growth or margin. This is the share of borrowings the business could retire from a year of free cash flow — the cleanest single solvency read.",
+      "evidence": "FY2024: DebtAndCapitalLeaseObligations $17.9B against Assets $33.5B.",
+      "confidence": "medium"
+    },
+    {
+      "key": "lumn_impairment_vs_assets",
+      "label": "Cumulative goodwill impairment / total assets",
+      "type": "%",
+      "basis": "derived",
+      "expr": "goodwill_impairment_accumulated / total_assets",
+      "why": "Sizes the acquisition write-offs against the balance sheet that remains. Total assets is used as the denominator rather than equity because LUMN's equity has gone negative, which would make the ratio flip sign and become meaningless.",
+      "evidence": "FY2025: GoodwillImpairedAccumulatedImpairmentLoss $22.3B against Assets $33.5B (67%).",
+      "confidence": "high"
+    }
+  ],
+
+  "annotations": {
+    "equity": "Book equity reflects roughly $22.3B of cumulative goodwill write-offs from the CenturyLink/Level 3/Qwest acquisition history. It records past M&A destruction, not present asset value.",
+    "net_income": "Repeatedly dominated by goodwill impairments and asset sales rather than operations. Read operating cash flow instead.",
+    "goodwill": "GoodwillImpairedAccumulatedImpairmentLoss stands at $22.3B — larger than remaining total equity. Any goodwill-sensitive metric (ROTE, tangible book) should be read with that history in mind.",
+    "roe": "Not meaningful given impairment-driven equity and losses."
+  },
+
+  "caveats": [
+    "Revenue has been in secular decline; multi-year growth rates measure portfolio shrinkage and divestitures, not like-for-like performance.",
+    "PropertyPlantAndEquipmentGross ($41.1B) exceeds total assets ($33.5B), so accumulated depreciation on the network plant is very large — book asset values understate physical fiber footprint but say nothing about its earning power.",
+    "Debt is tagged as DebtAndCapitalLeaseObligations, which the global mapping partially misses."
+  ]
+}

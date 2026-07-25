@@ -1,0 +1,37 @@
+{
+  "ticker": "SPG",
+  "cik": 1063761,
+  "sector_template": "reit",
+  "generated_by": "session-authored (Claude Opus 4.8) from SPG 10-K XBRL + coverage audit",
+  "summary": "Mall REIT. Judge it on FFO and property NOI against enterprise value, not on GAAP earnings or book value — depreciation on decades-old malls makes both meaningless. Simon carries real estate at $50.3B gross versus $32.4B of total GAAP assets, the clearest possible illustration that accumulated depreciation, not economics, drives the balance sheet.",
+
+  "metrics": [
+    {
+      "key": "spg_accum_depreciation_re",
+      "label": "Accumulated depreciation on real estate",
+      "type": "$",
+      "basis": "derived",
+      "expr": "real_estate_gross - real_estate_assets",
+      "why": "Gross carrying value less net book value is the depreciation charged against properties still in service. It sizes how far GAAP book value has been written down below original cost on assets that have generally appreciated.",
+      "evidence": "FY2025 10-K: RealEstateGrossAtCarryingValue $50.3B against net investment property; total assets are only $32.4B.",
+      "confidence": "high"
+    },
+    {
+      "key": "spg_ffo_simple",
+      "label": "FFO (NI + RE depreciation − RE gains)",
+      "type": "$",
+      "basis": "adjusted",
+      "reported_ref": "net_income",
+      "expr": "net_income + real_estate_depreciation - gains_on_real_estate",
+      "why": "The NAREIT definition. Adds back real-estate depreciation (non-cash, on appreciating assets) and removes property sale gains (non-recurring) to get recurring property cash earnings.",
+      "evidence": "Derived from GAAP components; Simon's own reported FFO includes further adjustments (JV FFO, preferred distributions) that are not in XBRL — see caveat.",
+      "confidence": "medium"
+    }
+  ],
+
+  "caveats": [
+    "This FFO is DERIVED from GAAP components and will NOT tie exactly to Simon's reported FFO. Simon reports FFO as a non-GAAP measure in MD&A and its supplemental, layering on joint-venture FFO, preferred distributions and other adjustments that have no XBRL tag. Treat it as directional.",
+    "NOI and Comparable NOI are likewise non-GAAP and not tagged; the app's NOI (EBITDA + G&A) is a rough proxy.",
+    "shares_outstanding_end is tagged only 2010-2012; per-share figures after that rely on the app's reconstruction, so treat long-run per-share series with care."
+  ]
+}

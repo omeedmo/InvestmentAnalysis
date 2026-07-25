@@ -22,6 +22,7 @@ import requests
 from bs4 import BeautifulSoup
 from flask import Flask, jsonify, render_template, request
 
+import company_templates
 import screener
 
 app = Flask(__name__)
@@ -3133,7 +3134,11 @@ def fy_get(data: dict[str, float], year: str) -> Optional[float]:
 
 # ─── Derived metrics ─────────────────────────────────────────────────────────
 
-def build_financials(facts: dict) -> dict[str, dict[str, float]]:
+def build_financials(facts: dict, metric_tags: dict = None,
+                     extra_point_in_time: set = None) -> dict[str, dict[str, float]]:
+    """`metric_tags`/`extra_point_in_time` let a company template extend the
+    global mapping (see company_templates.apply_add_tags)."""
+    metric_tags = metric_tags if metric_tags is not None else METRIC_TAGS
     raw: dict[str, dict[str, float]] = {}
     point_in_time_metrics = {
         "total_assets",
@@ -3168,7 +3173,9 @@ def build_financials(facts: dict) -> dict[str, dict[str, float]]:
         "deferred_acquisition_costs",
         "reinsurance_recoverable",
     }
-    for key, tags in METRIC_TAGS.items():
+    if extra_point_in_time:
+        point_in_time_metrics |= set(extra_point_in_time)
+    for key, tags in metric_tags.items():
         if not tags:
             continue
         if key in point_in_time_metrics:
@@ -4584,7 +4591,14 @@ def analyze():
     except Exception as e:
         return jsonify({"error": f"Fetch error: {e}"}), 500
 
-    financials = build_financials(facts)
+    # Company template: per-company tag extensions, derived/adjusted metrics,
+    # annotations and suppressions. None for most tickers today.
+    ctemplate = company_templates.load_template(ticker)
+    financials = build_financials(
+        facts,
+        metric_tags=company_templates.apply_add_tags(METRIC_TAGS, ctemplate),
+        extra_point_in_time=set((ctemplate or {}).get("point_in_time", [])),
+    )
     if not financials:
         return jsonify({"error": "No XBRL financial data found for this company"}), 404
 
@@ -5629,7 +5643,26 @@ def analyze():
                     _nii_ps_q[qk] = _q_nii[qk] / _q_sb[qk]
 
     quarters = [f"Q{i+1}" for i in range(len(quarter_end_dates))]
+    # Template-defined metrics are computed from the finished series, then
+    # serialized alongside them so the UI renders them like any other row.
+    _tmpl_metrics = company_templates.compute_metrics(financials, ctemplate)
+    for _k, _s in _tmpl_metrics.items():
+        financials[_k] = _s
+
     fin_data = serialize(financials, years, quarters)
+
+    template_payload = None
+    if ctemplate:
+        template_payload = {
+            "ticker":        ctemplate.get("ticker"),
+            "sector":        ctemplate.get("sector_template"),
+            "summary":       ctemplate.get("summary", ""),
+            "generated_by":  ctemplate.get("generated_by", ""),
+            "rows":          company_templates.rows_for_ui(ctemplate, _tmpl_metrics),
+            "annotations":   ctemplate.get("annotations", {}),
+            "suppress":      ctemplate.get("suppress", []),
+            "caveats":       ctemplate.get("caveats", []),
+        }
 
     # ── Market price (Yahoo) + market stats (beta, 52w) ─────────────────────
     market = get_market_data(ticker)
@@ -5887,6 +5920,7 @@ def analyze():
         "ir_url":             ir_url,
         "financials":         fin_data,
         "metric_labels":      metric_labels,
+        "template":           template_payload,
         "filing_links":       filing_links,
         "proxy": {
             "url":  proxy_url,

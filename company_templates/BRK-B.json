@@ -1,0 +1,24 @@
+{
+  "ticker": "BRK-B",
+  "cik": 1067983,
+  "generated_by": "session-authored (Claude Opus 4.8) from BRK 10-K XBRL + coverage audit",
+  "summary": "Insurance-led conglomerate. Since ASU 2016-01 forced unrealized equity gains through the income statement in 2018, GAAP net income mostly measures the stock market, not the business — Buffett explicitly tells shareholders to ignore it. Judge Berkshire on operating earnings (ex investment gains), growth in book value per share, and float.",
+
+  "metrics": [],
+
+  "annotations": {
+    "total_debt": "A large share of Berkshire's debt sits at BNSF and Berkshire Hathaway Energy and is NON-RECOURSE to the parent — Berkshire does not guarantee it. Consolidated total debt therefore overstates holding-company leverage. The recourse/non-recourse split is disclosed only in 10-K text and segment tables, not in XBRL, so the app cannot compute the adjusted figure; read this line as consolidated, not parent-level.",
+    "net_income": "Dominated by unrealized investment gains/losses since 2018 (ASU 2016-01) — $89.0B reported in FY2024 against $47.4B of operating earnings. Berkshire reports operating earnings separately and the app already extracts that figure from the 10-K text (brk_operating_earnings); use it rather than net income. Note a naive net income minus investment_gains does NOT reproduce it ($39.7B vs $47.4B), because the tagged investment_gains series captures only unrealized equity marks, not all investment gains.",
+    "roe": "Distorted by the same mark-to-market swings in the numerator; a poor read on Berkshire's economics.",
+    "pe_ratio": "Distorted by mark-to-market earnings; price-to-book has historically been the more useful yardstick for Berkshire."
+  },
+
+  "suppress": ["roic", "pretax_roic"],
+
+  "caveats": [
+    "Berkshire tags NO standard long-term-debt concept in XBRL (it reports debt by segment), which is why the app text-extracts total debt from the 10-K. Debt figures here come from that extraction, not from tagged data.",
+    "ROIC is suppressed: 'invested capital' is not meaningful for an insurance conglomerate funded substantially by float.",
+    "Insurance float is a funding source, not debt, and should not be added to leverage measures.",
+    "premiums_earned is tagged only 2008-2012, so the long-run underwriting series is incomplete."
+  ]
+}
