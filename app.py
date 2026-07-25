@@ -2543,6 +2543,15 @@ METRIC_TAGS: dict[str, list[str]] = {
 
     # Balance Sheet – point-in-time
     "total_assets": ["Assets"],
+    # Operating leases (ASC 842, on-balance-sheet from 2019). Kept as separate
+    # component tags rather than one list, because OperatingLeaseLiability is
+    # the TOTAL while Current/Noncurrent are its parts — merging them into one
+    # candidate list would silently pick whichever is larger. The true total is
+    # derived below.
+    "operating_lease_liability_total":      ["OperatingLeaseLiability"],
+    "operating_lease_liability_current":    ["OperatingLeaseLiabilityCurrent"],
+    "operating_lease_liability_noncurrent": ["OperatingLeaseLiabilityNoncurrent"],
+    "operating_lease_rou_asset":            ["OperatingLeaseRightOfUseAsset"],
     # Loans held (denominator for net charge-off rate). Tag varies by era:
     # net-of-allowance pre-CECL, then the CECL-era financing-receivable tag.
     "bank_loans": ["LoansAndLeasesReceivableNetReportedAmount",
@@ -3028,6 +3037,10 @@ def build_financials(facts: dict) -> dict[str, dict[str, float]]:
     point_in_time_metrics = {
         "total_assets",
         "bank_loans",
+        "operating_lease_liability_total",
+        "operating_lease_liability_current",
+        "operating_lease_liability_noncurrent",
+        "operating_lease_rou_asset",
         "current_assets",
         "current_liabilities",
         "total_liabilities",
@@ -3275,7 +3288,33 @@ def build_financials(facts: dict) -> dict[str, dict[str, float]]:
         raw["total_cash"] = {d: (fy_get(cash, d[:4]) or 0) + (fy_get(st, d[:4]) or 0)
                              for d in all_d}
 
-    # Total Debt = LT Debt + Current Debt
+    # Operating lease liability — prefer the reported total; otherwise sum the
+    # current + noncurrent parts. (ASC 842 put these on the balance sheet from
+    # 2019; before that they were off-balance-sheet and the series simply
+    # starts then, which is correct, not a gap.)
+    _ol_tot = raw.get("operating_lease_liability_total", {})
+    _ol_cur = raw.get("operating_lease_liability_current", {})
+    _ol_non = raw.get("operating_lease_liability_noncurrent", {})
+    if _ol_tot or _ol_cur or _ol_non:
+        _ol: dict[str, float] = {}
+        for d in set(_ol_tot) | set(_ol_cur) | set(_ol_non):
+            y = d[:4]
+            total = fy_get(_ol_tot, y)
+            if total is None:
+                parts = [fy_get(_ol_cur, y), fy_get(_ol_non, y)]
+                if any(p is not None for p in parts):
+                    total = sum(p or 0 for p in parts)
+            if total is not None:
+                _ol[d] = total
+        raw["operating_lease_liability"] = _ol or None
+
+    # Total Debt = LT Debt + Current Debt.
+    # Operating leases are deliberately NOT added here — they're folded in
+    # later (see "Fold operating leases into total debt"), after the
+    # company-specific overrides have run. Adding them at this point would
+    # make total_debt look populated for filers that tag no debt at all
+    # (BRK tags none; it reports debt by segment), which suppresses the
+    # text-extraction fallback and silently understates debt by ~20x.
     if ltd or ctd:
         all_d = set(ltd) | set(ctd)
         raw["total_debt"] = {d: (fy_get(ltd, d[:4]) or 0) + (fy_get(ctd, d[:4]) or 0)
@@ -4675,6 +4714,30 @@ def analyze():
         existing_tc = financials.get("total_cash", {})
         financials["total_cash"] = {**existing_tc, **combined_cash} if existing_tc else combined_cash
 
+    # ── Fold operating leases into total debt ────────────────────────────────
+    # The debt tags already capture FINANCE leases; post-ASC 842 (2019)
+    # operating leases are recognized liabilities on the face of the balance
+    # sheet too, and 64% of the S&P 500 carries a material one, so leaving
+    # them out understated real obligations for lease-heavy filers (retail,
+    # restaurants, airlines).
+    #
+    # This runs AFTER the company-specific overrides on purpose: doing it in
+    # build_financials made total_debt non-empty for filers that tag no debt
+    # concepts at all, which made the BRK coverage check think debt was
+    # already present and skip the text-extraction fallback.
+    # (Annual keys only at this point; quarterly leases are folded in later,
+    # inside the quarterly block.)
+    _ol_liab = {d: v for d, v in (financials.get("operating_lease_liability") or {}).items()
+                if not d.startswith("Q")}
+    if _ol_liab:
+        _td_base = {d: v for d, v in (financials.get("total_debt") or {}).items()
+                    if not d.startswith("Q")}
+        _merged_td = dict(financials.get("total_debt") or {})
+        for _d in set(_td_base) | set(_ol_liab):
+            _merged_td[_d] = ((fy_get(_td_base, _d[:4]) or 0)
+                              + (fy_get(_ol_liab, _d[:4]) or 0))
+        financials["total_debt"] = _merged_td
+
     # Recompute net_cash after any BRK debt/cash injections
     _tc = financials.get("total_cash", {})
     _td = financials.get("total_debt", {})
@@ -4741,6 +4804,9 @@ def analyze():
         "cash", "short_term_investments", "long_term_debt", "current_debt",
         "total_liabilities", "goodwill", "intangibles", "inventory", "shares_outstanding_end",
         "treasury_stock", "treasury_stock_shares",
+        # Operating leases (ASC 842)
+        "operating_lease_liability_total", "operating_lease_liability_current",
+        "operating_lease_liability_noncurrent", "operating_lease_rou_asset",
         # BDC point-in-time
         "nav_per_share",
         # REIT point-in-time
@@ -4754,6 +4820,9 @@ def analyze():
         "equity", "cash", "short_term_investments", "long_term_debt", "current_debt",
         "goodwill", "intangibles", "inventory", "shares_outstanding_end", "buyback_remaining",
         "treasury_stock", "treasury_stock_shares",
+        # Operating leases (ASC 842)
+        "operating_lease_liability_total", "operating_lease_liability_current",
+        "operating_lease_liability_noncurrent", "operating_lease_rou_asset",
         # BDC point-in-time
         "nav_per_share",
         # REIT point-in-time
@@ -4962,10 +5031,29 @@ def analyze():
             for qk in set(_q_cash) | set(_q_st):
                 _tc_q[qk] = (_q_cash.get(qk) or 0) + (_q_st.get(qk) or 0)
 
-        if _q_ltd or _q_ctd:
+        # Quarterly operating lease liability (total tag, else current+noncurrent)
+        _q_olt = {k: v for k, v in financials.get("operating_lease_liability_total", {}).items() if k.startswith("Q")}
+        _q_olc = {k: v for k, v in financials.get("operating_lease_liability_current", {}).items() if k.startswith("Q")}
+        _q_oln = {k: v for k, v in financials.get("operating_lease_liability_noncurrent", {}).items() if k.startswith("Q")}
+        _q_ol: dict[str, float] = {}
+        for qk in set(_q_olt) | set(_q_olc) | set(_q_oln):
+            v = _q_olt.get(qk)
+            if v is None and (qk in _q_olc or qk in _q_oln):
+                v = (_q_olc.get(qk) or 0) + (_q_oln.get(qk) or 0)
+            if v is not None:
+                _q_ol[qk] = v
+        if _q_ol:
+            financials.setdefault("operating_lease_liability", {}).update(_q_ol)
+
+        # Quarterly total debt, including operating leases to match the annual
+        # basis. Safe to fold inline here because this runs after the BRK
+        # quarterly debt injection above (the annual path can't do the same —
+        # see the note on the annual fold).
+        if _q_ltd or _q_ctd or _q_ol:
             _td_q = financials.setdefault("total_debt", {})
-            for qk in set(_q_ltd) | set(_q_ctd):
-                _td_q[qk] = (_q_ltd.get(qk) or 0) + (_q_ctd.get(qk) or 0)
+            for qk in set(_q_ltd) | set(_q_ctd) | set(_q_ol):
+                _td_q[qk] = ((_q_ltd.get(qk) or 0) + (_q_ctd.get(qk) or 0)
+                             + (_q_ol.get(qk) or 0))
 
         _q_tc_all = {k: v for k, v in financials.get("total_cash", {}).items() if k.startswith("Q")}
         _q_td_all = {k: v for k, v in financials.get("total_debt", {}).items() if k.startswith("Q")}
