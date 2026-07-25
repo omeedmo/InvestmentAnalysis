@@ -498,6 +498,13 @@ const ROWS = [
   {lbl:'ROA',                       key:'roa',     t:'%', hi:true},
 ];
 
+// Our own row labels, used to detect when a filer's label would collide with a
+// different row (Apple calls gross profit "Gross margin", which clashes with
+// our computed Gross Margin %).
+const OWN_LBLS = new Set(
+  ROWS.filter(r => r.lbl).map(r => r.lbl.trim().toLowerCase())
+);
+
 function cellFmt(v, t){
   switch(t){
     case 'ps': return F.$ps(v);
