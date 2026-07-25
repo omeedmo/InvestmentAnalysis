@@ -251,6 +251,64 @@ def audit(facts: dict, threshold: float = 0.01, include_noise: bool = False) -> 
     }
 
 
+# ── History audit: era transitions ───────────────────────────────────────────
+# The unmapped-fact audit above is point-in-time. But the failure mode that has
+# actually bitten most often is temporal: a company switches tags mid-history
+# (CHTR InterestExpense -> InterestIncomeExpenseNet in FY2014; ACN
+# PaymentsOfDividendsCommonStock -> PaymentsOfOrdinaryDividends in FY2023; BAC
+# charge-offs across three tagging eras). The metric then just stops, and a
+# chart silently truncates. This finds those discontinuities by comparing each
+# metric's populated years against the years the company actually filed.
+
+def audit_history(facts: dict, min_run: int = 3) -> dict:
+    """Metrics that cover part of a company's filing history but stop or gap."""
+    gaap = facts.get("facts", {}).get("us-gaap", {})
+    dei  = facts.get("facts", {}).get("dei", {})
+
+    def years_for(tags: list[str]) -> set[int]:
+        out: set[int] = set()
+        for t in tags or []:
+            concept = gaap.get(t) or dei.get(t)
+            if not concept:
+                continue
+            for unit_entries in concept.get("units", {}).values():
+                for e in unit_entries:
+                    if e.get("form") in {"10-K", "10-K/A", "20-F", "20-F/A"} \
+                       and e.get("frame") and e.get("end"):
+                        out.add(int(e["end"][:4]))
+        return out
+
+    # Filing years = years the company reported total assets (a universal tag).
+    filed = years_for(["Assets"]) or years_for(["StockholdersEquity"])
+    if not filed:
+        return {"filed_years": [], "issues": []}
+    fmin, fmax = min(filed), max(filed)
+
+    issues = []
+    for metric, tags in app.METRIC_TAGS.items():
+        if not tags:
+            continue
+        ys = years_for(tags) & set(range(fmin, fmax + 1))
+        if len(ys) < min_run:
+            continue                      # never really covered; not a regression
+        missing = sorted(set(range(min(ys), fmax + 1)) - ys)
+        if not missing:
+            continue
+        # A trailing gap (metric stops and never resumes) is the classic
+        # tag-switch signature and the most damaging, so call it out.
+        trailing = [y for y in missing if y > max(ys)]
+        issues.append({
+            "metric": metric,
+            "covered": f"{min(ys)}-{max(ys)}",
+            "missing_years": missing,
+            "stops_early": bool(trailing) or max(ys) < fmax,
+            "last_covered": max(ys),
+            "filing_through": fmax,
+        })
+    issues.sort(key=lambda i: (not i["stops_early"], -len(i["missing_years"])))
+    return {"filed_years": [fmin, fmax], "issues": issues}
+
+
 def audit_ticker(ticker: str, threshold: float = 0.01,
                  include_noise: bool = False) -> dict:
     cik = screener.ticker_cik_map().get(ticker.upper())
@@ -262,6 +320,7 @@ def audit_ticker(ticker: str, threshold: float = 0.01,
         return {"ticker": ticker, "error": f"fetch failed: {e}"}
     res = audit(facts, threshold, include_noise)
     res["ticker"] = ticker.upper()
+    res["history"] = audit_history(facts)
     return res
 
 
@@ -290,6 +349,14 @@ def print_report(res: dict, top: int = 15, show_suppressed: bool = False) -> Non
               f"{f['kind']:<7} {f['tag']}  [{f['end']}]")
     if len(fl) > top:
         print(f"    … {len(fl)-top} more")
+    hist = res.get("history", {})
+    stops = [i for i in hist.get("issues", []) if i["stops_early"]]
+    if stops:
+        fy = hist.get("filed_years", [None, None])
+        print(f"    --- era gaps (filing {fy[0]}-{fy[1]}) ---")
+        for i in stops[:top]:
+            print(f"    {i['metric']:<32} covered {i['covered']}, "
+                  f"missing {len(i['missing_years'])}y through {i['filing_through']}")
     if show_suppressed:
         print("    --- filtered (not blind spots) ---")
         for f in res.get("suppressed", [])[:top]:
