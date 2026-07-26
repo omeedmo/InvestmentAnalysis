@@ -769,6 +769,18 @@ def _parse_sc13_ownership(cik_no_zero: str, accn_nodash: str, doc: str):
     # (submissions.json prefixes it with an XSL viewer path). Parse the raw
     # XML's typed fields — cleaner than text heuristics, and it names the
     # reporting person directly.
+    #
+    # Schedule 13D and Schedule 13G use TWO DIFFERENT XML schemas (different
+    # namespace, different element names for the same cover-page facts), not
+    # one shared format:
+    #   13G:  <coverPageHeaderReportingPersonDetails>  <classPercent>
+    #         <reportingPersonBeneficiallyOwnedAggregateNumberOfShares>
+    #   13D:  <reportingPersons><reportingPersonInfo>   <percentOfClass>
+    #         <aggregateAmountOwned>
+    # Only the 13G tags were handled here, so every structured-XML Schedule
+    # 13D / 13D-A silently fell through to _SC13_UNPARSEABLE and vanished from
+    # the holders list — including amendments as material as a 38.2%-stake
+    # Buffett 13D/A. Both schemas are tried; whichever actually matches wins.
     if doc.endswith("primary_doc.xml"):
         try:
             r = requests.get(f"https://www.sec.gov/Archives/edgar/data/{cik_no_zero}/{accn_nodash}/primary_doc.xml",
@@ -777,24 +789,32 @@ def _parse_sc13_ownership(cik_no_zero: str, accn_nodash: str, doc: str):
                 return None
             xml = re.sub(r'xmlns(:\w+)?="[^"]*"', "", r.text)   # drop namespace declarations
             xml = re.sub(r"<(/?)\w+:", r"<\1", xml)             # and tag prefixes (<sch:classPercent> → <classPercent>)
-            persons = re.findall(r"<coverPageHeaderReportingPersonDetails>(.*?)</coverPageHeaderReportingPersonDetails>",
-                                 xml, re.S)
+
+            block_pats = (r"<coverPageHeaderReportingPersonDetails>(.*?)</coverPageHeaderReportingPersonDetails>",
+                         r"<reportingPersonInfo>(.*?)</reportingPersonInfo>")
+            field_pats = (("classPercent", "reportingPersonBeneficiallyOwnedAggregateNumberOfShares"),
+                         ("percentOfClass", "aggregateAmountOwned"))
+
             best = None
-            for p in persons:
-                name_m = re.search(r"<reportingPersonName>(.*?)</reportingPersonName>", p, re.S)
-                pct_m = re.search(r"<classPercent>([\d.]+)</classPercent>", p)
-                sh_m = re.search(r"<reportingPersonBeneficiallyOwnedAggregateNumberOfShares>([\d.,]+)<", p)
-                if not (name_m and pct_m):
-                    continue
-                cand = {
-                    "pct": float(pct_m.group(1)) / 100.0,
-                    "shares": float(sh_m.group(1).replace(",", "")) if sh_m else None,
-                    "name": re.sub(r"\s+", " ", name_m.group(1)).strip(),
-                }
-                # Joint filings list several reporting persons (parent entities
-                # repeat the same stake); keep the largest as the lead row.
-                if best is None or cand["pct"] > best["pct"]:
-                    best = cand
+            for block_pat, (pct_tag, sh_tag) in zip(block_pats, field_pats):
+                persons = re.findall(block_pat, xml, re.S)
+                for p in persons:
+                    name_m = re.search(r"<reportingPersonName>(.*?)</reportingPersonName>", p, re.S)
+                    pct_m = re.search(rf"<{pct_tag}>([\d.]+)</{pct_tag}>", p)
+                    sh_m = re.search(rf"<{sh_tag}>([\d.,]+)<", p)
+                    if not (name_m and pct_m):
+                        continue
+                    cand = {
+                        "pct": float(pct_m.group(1)) / 100.0,
+                        "shares": float(sh_m.group(1).replace(",", "")) if sh_m else None,
+                        "name": re.sub(r"\s+", " ", name_m.group(1)).strip(),
+                    }
+                    # Joint filings list several reporting persons (parent entities
+                    # repeat the same stake); keep the largest as the lead row.
+                    if best is None or cand["pct"] > best["pct"]:
+                        best = cand
+                if best:
+                    break   # this filing's schema matched; don't also try the other
             return best if best else _SC13_UNPARSEABLE
         except Exception:
             return None
