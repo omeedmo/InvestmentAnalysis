@@ -2,36 +2,105 @@
   "ticker": "SPG",
   "cik": 1063761,
   "sector_template": "reit",
-  "generated_by": "session-authored (Claude Opus 4.8) from SPG 10-K XBRL + coverage audit",
-  "summary": "Mall REIT. Judge it on FFO and property NOI against enterprise value, not on GAAP earnings or book value — depreciation on decades-old malls makes both meaningless. Simon carries real estate at $50.3B gross versus $32.4B of total GAAP assets, the clearest possible illustration that accumulated depreciation, not economics, drives the balance sheet.",
-
+  "plugin": "SPG",
+  "generated_by": "session-authored (Claude Opus 5 / Sonnet 5) from SPG 10-K MD&A + statement_store verification",
+  "summary": "Mall REIT. Judge it on FFO against enterprise value, not on GAAP earnings or book value \u2014 depreciation on decades-old malls makes both close to meaningless. Simon carries real estate at ~$40B+ gross versus a much smaller net figure once decades of depreciation are subtracted, the clearest illustration that accumulated depreciation, not economics, drives the GAAP balance sheet here.",
   "metrics": [
     {
-      "key": "spg_accum_depreciation_re",
-      "label": "Accumulated depreciation on real estate",
+      "key": "real_estate_gross_row",
+      "label": "Real Estate, at Cost",
       "type": "$",
-      "basis": "derived",
-      "expr": "real_estate_gross - real_estate_assets",
-      "why": "Gross carrying value less net book value is the depreciation charged against properties still in service. It sizes how far GAAP book value has been written down below original cost on assets that have generally appreciated.",
-      "evidence": "FY2025 10-K: RealEstateGrossAtCarryingValue $50.3B against net investment property; total assets are only $32.4B.",
+      "after": "real_estate_assets",
+      "basis": "reported",
+      "expr": "real_estate_gross",
+      "why": "Original cost of the properties before depreciation. Comparing this to the net figure directly above shows how much of the balance sheet's real estate value is an accounting artifact of depreciation schedules rather than economics -- these are shopping malls, many of which have appreciated over the decades they've been held.",
+      "evidence": "us-gaap:RealEstateInvestmentPropertyAtCost, tagged directly by Simon every year 2010-2025.",
       "confidence": "high"
     },
     {
-      "key": "spg_ffo_simple",
-      "label": "FFO (NI + RE depreciation − RE gains)",
+      "key": "accumulated_depreciation_re_row",
+      "label": "Accumulated Depreciation on Real Estate",
       "type": "$",
-      "basis": "adjusted",
-      "reported_ref": "net_income",
-      "expr": "net_income + real_estate_depreciation - gains_on_real_estate",
-      "why": "The NAREIT definition. Adds back real-estate depreciation (non-cash, on appreciating assets) and removes property sale gains (non-recurring) to get recurring property cash earnings.",
-      "evidence": "Derived from GAAP components; Simon's own reported FFO includes further adjustments (JV FFO, preferred distributions) that are not in XBRL — see caveat.",
-      "confidence": "medium"
+      "after": "real_estate_assets",
+      "basis": "derived",
+      "expr": "real_estate_gross - real_estate_assets",
+      "why": "Gross carrying value less net book value is the depreciation charged against properties still in service.",
+      "evidence": "Both inputs are Simon's own tagged balance-sheet lines; this is arithmetic on two verified figures, not an estimate.",
+      "confidence": "high"
+    },
+    {
+      "key": "ffo_operating_partnership_row",
+      "label": "FFO of the Operating Partnership",
+      "type": "$",
+      "after": "ffo",
+      "basis": "reported",
+      "reported_ref": "ffo",
+      "expr": "ffo_operating_partnership",
+      "why": "Simon's FFO bridge produces two totals: this one covers the whole Operating Partnership (Simon plus the outside limited partners who hold OP units), and 'ffo' above is Simon's own allocable share after backing out the limited partners' portion \u2014 the one that actually ties to Simon's reported per-share FFO. Shown for completeness since this total is what Simon itself leads with in the reconciliation.",
+      "evidence": "Extracted from the same MD&A bridge as FFO, reconciled to Simon's own printed subtotal for every year 2011-2025.",
+      "confidence": "high"
     }
   ],
-
+  "annotations": {
+    "ffo": "Simon's own reported figure \u2014 \"Dilutive FFO allocable to common stockholders\" from the 10-K's Funds From Operations reconciliation \u2014 not a derived proxy. Dividing it by weighted average shares reproduces Simon's own disclosed \"Diluted FFO per share\" to the cent. Extracted from the MD&A bridge (Consolidated Net Income, plus real-estate depreciation and Simon's share of joint-venture depreciation, less gains on disposals/impairments and noncontrolling interests' share, less preferred dividends) and verified against Simon's own printed subtotal every year; overlapping filings restate three years each and none disagree across 2011-2025.",
+    "equity": "GAAP book value understates a REIT: real estate is carried at depreciated historical cost, so long-held malls sit far below current market value. Book value and ROE are not meaningful measures of what Simon's properties are actually worth.",
+    "net_income": "Depressed by real-estate depreciation, a large non-cash charge on assets that have generally appreciated, not declined. FFO is the sector's earnings measure; use it instead.",
+    "roe": "Distorted by depreciated-cost book value in the denominator; not a meaningful return measure for a REIT.",
+    "affo": "Not computed for Simon. AFFO layers a straight-line-rent adjustment and recurring capex estimate onto FFO, and Simon does not tag either cleanly enough to compute reliably \u2014 shown blank rather than as an uncertain derivation on top of an already-adjusted figure.",
+    "ffo_per_share": "Recomputed from Simon's own reported FFO (see the FFO annotation), not the generic proxy."
+  },
+  "suppress": [
+    "roic",
+    "pretax_roic",
+    "affo",
+    "affo_per_share",
+    "ffo_payout_ratio"
+  ],
   "caveats": [
-    "This FFO is DERIVED from GAAP components and will NOT tie exactly to Simon's reported FFO. Simon reports FFO as a non-GAAP measure in MD&A and its supplemental, layering on joint-venture FFO, preferred distributions and other adjustments that have no XBRL tag. Treat it as directional.",
-    "NOI and Comparable NOI are likewise non-GAAP and not tagged; the app's NOI (EBITDA + G&A) is a rough proxy.",
-    "shares_outstanding_end is tagged only 2010-2012; per-share figures after that rely on the app's reconstruction, so treat long-run per-share series with care."
-  ]
+    "FFO is Simon's own reported figure, extracted from the 10-K MD&A reconciliation and verified against the company's own printed subtotal every year 2011-2025 (see the FFO annotation) \u2014 not derived from GAAP components the way this template used to compute it.",
+    "AFFO is intentionally left blank: Simon does not cleanly tag straight-line rent or recurring capex, and layering an uncertain estimate on top of an already-adjusted figure would compound rather than reduce the uncertainty.",
+    "Real estate gross/net and accumulated depreciation now come directly from Simon's own tagged balance-sheet lines (RealEstateInvestmentPropertyAtCost / \u2026Net), verified against the company's own printed totals, not a coverage-audit workaround.",
+    "shares_outstanding_end is tagged only 2010-2012 in XBRL; per-share figures after that rely on the app's reconstruction from weighted-average diluted shares, so treat long-run per-share trends with some care."
+  ],
+  "history": {
+    "authored_from": "the 13 Simon Property Group 10-Ks on EDGAR (CIK 1063761) that contain the FFO reconciliation bridge (FY2013-FY2025 filings, covering FY2011-FY2025 via each filing's 3-year comparative)",
+    "why": "These filings are immutable, so the year-by-year reading of them is a fact that belongs in version control, not something to re-derive from filing text on every request. The plugin's extractor (company_plugins/SPG.py) still runs for any 10-K filed after this template was written.",
+    "method": "Each 10-K's MD&A 'Funds From Operations' section: Consolidated Net Income plus real-estate depreciation and Simon's share of joint-venture depreciation, less gains on disposals/impairments and noncontrolling interests, less preferred dividends, reconciling to Simon's own printed 'FFO of the Operating Partnership' subtotal, then further split to 'Dilutive FFO allocable to common stockholders'. Every column was reconciled against the printed total, and because each filing restates three years, every value below was confirmed by two or three independent filings with zero disagreements.",
+    "series": {
+      "ffo_operating_partnership": {
+        "2011-12-31": 2438765000,
+        "2012-12-31": 2884915000,
+        "2013-12-31": 3205693000,
+        "2014-12-31": 3235298000,
+        "2015-12-31": 3571237000,
+        "2016-12-31": 3792951000,
+        "2017-12-31": 4020505000,
+        "2018-12-31": 4324601000,
+        "2019-12-31": 4272271000,
+        "2020-12-31": 3236963000,
+        "2021-12-31": 4486964000,
+        "2022-12-31": 4480739000,
+        "2023-12-31": 4685866000,
+        "2024-12-31": 4876844000,
+        "2025-12-31": 4663305000
+      },
+      "ffo_allocable_to_common": {
+        "2011-12-31": 2021932000,
+        "2012-12-31": 2420348000,
+        "2013-12-31": 2744770000,
+        "2014-12-31": 2765819000,
+        "2015-12-31": 3057193000,
+        "2016-12-31": 3280590000,
+        "2017-12-31": 3490910000,
+        "2018-12-31": 3755784000,
+        "2019-12-31": 3708929000,
+        "2020-12-31": 2812900000,
+        "2021-12-31": 3922557000,
+        "2022-12-31": 3915793000,
+        "2023-12-31": 4088139000,
+        "2024-12-31": 4235958000,
+        "2025-12-31": 4027116000
+      }
+    }
+  }
 }

@@ -1,0 +1,54 @@
+{
+  "tier": "sector",
+  "note": "REIT-specific lines. The two things every mall/retail REIT needs and companyfacts-based mapping alone tends to miss are (1) real estate at GROSS carrying value, kept as its own key rather than folded into the net figure, and (2) lease income as the actual revenue line for filers who don't tag a plain Revenues concept. Simon itself tags Revenues directly (no fallback needed there), but this sector file exists for the REITs that don't.",
+  "metrics": [
+    {
+      "metric": "real_estate_gross",
+      "label": "Real Estate, at Cost",
+      "section": "Balance sheet",
+      "bind": [
+        {
+          "element": "us-gaap:RealEstateInvestmentPropertyAtCost"
+        },
+        {
+          "element": "us-gaap:RealEstateGrossAtCarryingValue"
+        }
+      ],
+      "note": "Kept as its own key rather than appended to the net real-estate series -- mixing gross into a net series would silently convert it and break anything measuring depreciated book value."
+    },
+    {
+      "metric": "real_estate_assets",
+      "label": "Real Estate Assets (Net)",
+      "section": "Balance sheet",
+      "bind": [
+        {
+          "element": "us-gaap:RealEstateInvestmentPropertyNet"
+        },
+        {
+          "element": "us-gaap:RealEstateInvestmentPropertyNetIncludingUnconsolidatedJointVentures"
+        }
+      ]
+    },
+    {
+      "metric": "accumulated_depreciation_real_estate",
+      "label": "Accumulated Depreciation on Real Estate",
+      "section": "Balance sheet",
+      "expr": "real_estate_gross - real_estate_assets",
+      "note": "Gross carrying value less net book value is the depreciation charged against properties still in service. It sizes how far GAAP book value sits below original cost on assets that have often appreciated."
+    },
+    {
+      "metric": "lease_income",
+      "label": "Lease Income",
+      "section": "Income statement",
+      "bind": [
+        {
+          "element": "us-gaap:OperatingLeaseLeaseIncome"
+        },
+        {
+          "element": "us-gaap:LeaseIncome"
+        }
+      ],
+      "note": "The post-ASC-842 (2019+) tag for what used to be split across MinimumLeaseRevenue and several percentage/recovery-rent concepts. Used as revenue only for filers that don't tag a plain Revenues line."
+    }
+  ]
+}

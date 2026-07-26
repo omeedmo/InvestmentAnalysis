@@ -49,10 +49,20 @@ HEADERS = {
 _SCALES = {"thousands": 1_000.0, "millions": 1_000_000.0, "billions": 1_000_000_000.0}
 
 # Per-share amounts are printed unscaled even when the statement is in
-# millions, so they must never take the header multiplier.
-_PER_SHARE = re.compile(r"PerShare|PerBasicShare|PerDilutedShare|PerUnit", re.I)
+# millions, so they must never take the header multiplier. The element name is
+# not always literally "...PerShare" — e.g.
+# IncomeLossFromContinuingOperationsPerBasicAndDilutedShare has "Share" at the
+# end but "Basic" and "Diluted" wedged in between "Per" and "Share", which the
+# earlier literal-substring match missed and scaled 1000x too large (SPG:
+# parsed 5,880 vs the correct 6 -- i.e. $5.88, not $5,880).
+_PER_SHARE = re.compile(r"Per\w*Share|PerUnit", re.I)
+# Share COUNTS (not dollars) must take the share-count multiplier, never the
+# money one. TreasuryStockShares/TreasuryStockCommonShares were missing here
+# and got scaled as if they were a dollar amount, coming out 1000x too large
+# (SPG: parsed 11,402,103,000 vs the correct 11,402,103 shares).
 _SHARE_COUNT = re.compile(
-    r"SharesOutstanding|SharesIssued|WeightedAverageNumberOf|SharesAuthorized", re.I)
+    r"SharesOutstanding|SharesIssued|WeightedAverageNumberOf|SharesAuthorized"
+    r"|TreasuryStockShares|TreasuryStockCommonShares", re.I)
 
 
 # Recognises a financial statement by the name the filer gave it, for filings

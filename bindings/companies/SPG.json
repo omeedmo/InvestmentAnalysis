@@ -1,0 +1,8 @@
+{
+  "tier": "company",
+  "ticker": "SPG",
+  "cik": 1063761,
+  "sector": "reit",
+  "note": "Simon needs no XBRL overrides beyond the sector tier -- it tags Revenues, real estate at cost/net, and the balance sheet directly, with full 16-year coverage on all of them. What it does NOT tag anywhere is FFO: that comes from the MD&A reconciliation bridge, extracted and self-verified in company_plugins/SPG.py, and authored into company_templates/SPG.json's history.series the same way Berkshire's operating earnings are.",
+  "metrics": []
+}
