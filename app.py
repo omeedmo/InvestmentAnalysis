@@ -5144,6 +5144,10 @@ def analyze():
             "caveats":       ctemplate.get("caveats", []),
             # Dated, filing-sourced facts about what changed and when.
             "comparability": (ctemplate.get("history") or {}).get("comparability", []),
+            # {metric: {year: [note, ...]}} — resolved against the years this
+            # filer actually has data for, so a fact like "2018 onward" reaches
+            # exactly as far as the fetched history does.
+            "year_notes":    company_templates.year_notes(financials, ctemplate),
         }
 
     # ── Market price (Yahoo) + market stats (beta, 52w) ─────────────────────

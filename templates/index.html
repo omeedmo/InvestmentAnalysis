@@ -871,6 +871,7 @@ function render(data){
   const tmpl = data.template || null;
   const tmplRows = (tmpl && tmpl.rows) ? tmpl.rows : [];
   const tmplAnnot = (tmpl && tmpl.annotations) ? tmpl.annotations : {};
+  const tmplYearNotes = (tmpl && tmpl.year_notes) ? tmpl.year_notes : {};
   const tmplSuppress = new Set((tmpl && tmpl.suppress) ? tmpl.suppress : []);
   const asRow = r => ({lbl:r.label, key:r.key, t:r.t, _tmpl:r});
   // A template row may name an `after` metric to sit directly beneath (e.g.
@@ -937,9 +938,11 @@ function render(data){
       tip = `${row.lbl.trim()} — as reported: ${rawCoLbl}`;
     }
     const lblTitle = tip ? ` title="${tip.replace(/"/g,'&quot;')}"` : '';
-    // Mark annotated rows so the caveat is discoverable, not hidden in a hover.
+    // A row-level flag for a general caveat (e.g. "non-recourse debt") that
+    // isn't tied to any one year; year-specific facts are marked per-cell below.
     const flag = (!tRow && tmplAnnot[row.key])
       ? ` <span style="color:#b45309;font-weight:700" title="${tmplAnnot[row.key].replace(/"/g,'&quot;')}">⚠</span>` : '';
+    const rowYearNotes = tmplYearNotes[row.key] || null;
     h+=`<tr class="dr">`;
     h+=`<td class="${row.ind?'ind':''}" style="${row.bld?'font-weight:700':''}"${lblTitle}>`;
     h+=`${shownLbl}${flag}</td>`;
@@ -953,7 +956,17 @@ function render(data){
       if(isOld && startHidden) cls=(cls?cls+' ':'')+'hidden-col';
       const qStyle = isQ ? 'background:var(--qtr-bg);color:var(--qtr-fg);border-left:' + (col===qtrs[0]?'2px solid #d97706':'none') + ';' : '';
       const yrAttr = isOld ? ' data-old="1"' : '';
-      h+=`<td class="${cls||''}" style="${qStyle}"${yrAttr}>${txt}</td>`;
+      // Facts that changed what THIS metric means in THIS specific year
+      // (an acquisition consolidated, an accounting standard adopted, a
+      // one-off charge) — surfaced on the year they actually apply to,
+      // not smeared across the whole row regardless of which column you're
+      // reading.
+      const yrNotes = !isQ ? rowYearNotes && rowYearNotes[col] : null;
+      const noteAttr = yrNotes
+        ? ` title="${yrNotes.join('\n\n').replace(/"/g,'&quot;')}" style="${qStyle}text-decoration:underline dotted;text-decoration-color:#b45309;text-underline-offset:3px;cursor:help;"`
+        : (qStyle ? ` style="${qStyle}"` : '');
+      const noteMark = yrNotes ? `<sup style="color:#b45309;font-weight:700">⚠</sup>` : '';
+      h+=`<td class="${cls||''}"${noteAttr}${yrAttr}>${txt}${noteMark}</td>`;
     }
     h+=`</tr>`;
   }

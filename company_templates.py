@@ -199,7 +199,7 @@ def load_template(ticker: str) -> Optional[dict]:
         company = {**parent, **{k: v for k, v in company.items() if k != "extends"}}
 
     sector = load_sector(company.get("sector_template", "")) if company.get("sector_template") else {}
-    _fold_comparability(company)
+    _fold_structural_facts(company)
     merged = {
         "ticker": tk,
         "sector_template": company.get("sector_template"),
@@ -221,32 +221,101 @@ def load_template(ticker: str) -> Optional[dict]:
     return merged
 
 
-def _fold_comparability(company: dict) -> None:
+def _fold_structural_facts(company: dict) -> None:
     """
-    Turn `history.comparability` facts into per-metric annotations.
+    Fold `history.comparability` facts marked `"years": "all"` into the
+    ordinary per-metric annotations.
 
-    A company is not the same company across fifteen years, and the things that
-    break comparability are knowable from the filings: an acquisition that gets
-    consolidated mid-history, an accounting standard that changes what a line
-    MEANS, a one-off tax or impairment item. Each fact names the metrics it
-    affects, so the reader gets warned at the row they are actually looking at
-    rather than having to find it in a footnote.
+    A structural fact (Berkshire's subsidiary debt is non-recourse; float is a
+    funding source, not leverage) is true in every year, so pinning it to one
+    year's cell would be arbitrary and repeating it in every cell would just be
+    noise. It belongs on the row, same as any other standing caveat. Facts tied
+    to a specific year or range are left out of this — see year_notes() below,
+    which is where those are surfaced instead.
     """
     facts = ((company.get("history") or {}).get("comparability")) or []
-    if not facts:
+    structural = [f for f in facts if (f.get("years") or "").strip() == "all"]
+    if not structural:
         return
-    by_metric: dict[str, list[str]] = {}
-    for f in facts:
-        line = f"{f.get('years','')}: {f.get('fact','')} — {f.get('detail','')}".strip()
-        for metric in f.get("affects", []):
-            by_metric.setdefault(metric, []).append(line)
-
     annotations = dict(company.get("annotations") or {})
-    for metric, lines in by_metric.items():
-        existing = annotations.get(metric)
-        block = "  ".join(lines)
-        annotations[metric] = f"{existing}  {block}" if existing else block
+    for f in structural:
+        note = f"{f.get('fact', '')} — {f.get('detail', '')}".strip(" —")
+        for metric in f.get("affects", []):
+            existing = annotations.get(metric)
+            annotations[metric] = f"{existing}  {note}" if existing else note
     company["annotations"] = annotations
+
+
+def _parse_fact_years(spec: str, all_years: list[int]) -> set[int]:
+    """
+    Parse a comparability fact's `years` field against the calendar years
+    actually present in this filer's data.
+
+      "2016"        a single year
+      "2018,2019,2020"  a discrete list
+      "2018-"       2018 onward — open-ended, so it always extends to
+                    whatever the newest fetched year turns out to be
+      "all"         every year in the data
+    """
+    spec = (spec or "").strip()
+    if not spec:
+        return set()
+    if spec == "all":
+        return set(all_years)
+    if spec.endswith("-"):
+        try:
+            start = int(spec[:-1])
+        except ValueError:
+            return set()
+        return {y for y in all_years if y >= start}
+    out = set()
+    for part in spec.split(","):
+        part = part.strip()
+        if part.isdigit():
+            out.add(int(part))
+    return out
+
+
+def year_notes(financials: dict, template: Optional[dict]) -> dict:
+    """
+    {metric: {year_str: [note, ...]}} from `history.comparability`.
+
+    A company is not the same company across fifteen years — an acquisition
+    gets consolidated mid-history, an accounting standard changes what a line
+    MEANS, a one-off tax or impairment item lands in a single year — and the
+    read on a metric should change at the year it's actually affected, not as
+    a blanket caveat stapled to the whole row regardless of which year you're
+    looking at. This resolves each fact's `years` spec against the calendar
+    years actually present in the data (open-ended specs like "2018-" need
+    that to know how far "onward" currently reaches).
+    """
+    facts = ((template or {}).get("history") or {}).get("comparability") or []
+    if not facts:
+        return {}
+
+    all_years: set[int] = set()
+    for series in financials.values():
+        if not isinstance(series, dict):
+            continue
+        for period in series:
+            if len(period) >= 4 and period[:4].isdigit() and not period.startswith("Q"):
+                all_years.add(int(period[:4]))
+    all_years_list = sorted(all_years)
+
+    out: dict[str, dict[str, list[str]]] = {}
+    for f in facts:
+        spec = (f.get("years") or "").strip()
+        if spec == "all":
+            continue   # structural, not dated — folded into the row annotation instead
+        years = _parse_fact_years(spec, all_years_list)
+        if not years:
+            continue
+        note = f"{f.get('fact', '')} — {f.get('detail', '')}".strip(" —")
+        for metric in f.get("affects", []):
+            by_year = out.setdefault(metric, {})
+            for y in years:
+                by_year.setdefault(str(y), []).append(note)
+    return out
 
 
 def _dedupe_by_key(metrics: list) -> list:
