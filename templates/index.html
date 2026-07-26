@@ -123,7 +123,14 @@ thead tr.yr-row th.qtr-col{background:#78350f;color:#fef3c7;font-style:italic;bo
 tr.sh td{background:var(--section-bg);color:var(--navy);font-size:10px;font-weight:800;letter-spacing:1px;text-transform:uppercase;padding:5px 9px;border-top:2px solid var(--navy)}
 tr.sh td:first-child{position:sticky;left:0;background:var(--section-bg)}
 tr.dr td{padding:4px 9px;border-bottom:1px solid #f1f5f9;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;font-size:12px}
-tr.dr td:first-child{text-align:left;position:sticky;left:0;background:var(--card);z-index:2;font-size:11px;font-weight:500;border-right:1px solid var(--border);padding-left:10px;width:var(--lbl-w);min-width:var(--lbl-w);max-width:var(--lbl-w);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+tr.dr td:first-child{text-align:left;position:sticky;left:0;background:var(--card);z-index:2;font-size:11px;font-weight:500;border-right:1px solid var(--border);padding-left:10px;width:var(--lbl-w);min-width:var(--lbl-w);max-width:var(--lbl-w);display:flex;align-items:center;gap:3px;overflow:hidden}
+/* The row-level warning glyph must never be inside the part that ellipsizes —
+   with a plain nowrap+ellipsis td, a long label pushed the trailing ⚠ span
+   past the clip point, so on the narrower mobile --lbl-w it never rendered at
+   all. Splitting the label text into its own shrinking span and the flag into
+   a non-shrinking sibling keeps the flag visible at every width. */
+tr.dr td:first-child .lbl-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1 1 auto}
+tr.dr td:first-child .lbl-flag{flex:0 0 auto}
 tr.dr:nth-child(even) td{background:var(--row-alt)}
 tr.dr:nth-child(even) td:first-child{background:var(--row-alt)}
 tr.dr:hover td{background:var(--row-hover)!important}
@@ -925,11 +932,11 @@ function render(data){
     // A row-level flag for a general caveat (e.g. "non-recourse debt") that
     // isn't tied to any one year; year-specific facts are marked per-cell below.
     const flag = (!tRow && tmplAnnot[row.key])
-      ? ` <span style="color:#b45309;font-weight:700" title="${tmplAnnot[row.key].replace(/"/g,'&quot;')}">⚠</span>` : '';
+      ? `<span class="lbl-flag" style="color:#b45309;font-weight:700" title="${tmplAnnot[row.key].replace(/"/g,'&quot;')}">⚠</span>` : '';
     const rowYearNotes = tmplYearNotes[row.key] || null;
     h+=`<tr class="dr">`;
     h+=`<td class="${row.ind?'ind':''}" style="${row.bld?'font-weight:700':''}"${lblTitle}>`;
-    h+=`${shownLbl}${flag}</td>`;
+    h+=`<span class="lbl-text">${shownLbl}</span>${flag}</td>`;
     for(const col of allCols){
       const isQ = qtrs.includes(col);
       const isLat = col===latY;

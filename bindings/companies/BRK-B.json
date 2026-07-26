@@ -130,8 +130,8 @@
       "expr": "cash + short_term_investments"
     },
     {
-      "metric": "intangibles",
-      "label": "Other Intangible Assets",
+      "metric": "intangibles_insurance_other",
+      "label": "Other Intangible Assets \u2014 Insurance and Other",
       "section": "Balance sheet",
       "bind": [
         {
@@ -139,6 +139,28 @@
           "dimension": "Insurance and Other"
         }
       ]
+    },
+    {
+      "metric": "intangibles_railroad_utilities_energy",
+      "label": "Other Intangible Assets \u2014 Railroad, Utilities and Energy",
+      "section": "Balance sheet",
+      "bind": [
+        {
+          "element": "us-gaap:IntangibleAssetsNetExcludingGoodwill",
+          "dimension": "Railroad, Utilities and Energy"
+        }
+      ],
+      "note": "Broken out only for FY2020-FY2021; small (~$1.2B) relative to the insurance segment's $30-36B."
+    },
+    {
+      "metric": "intangibles",
+      "label": "Total Other Intangible Assets",
+      "section": "Balance sheet",
+      "expr": "intangibles_insurance_other + intangibles_railroad_utilities_energy",
+      "zero_if_absent": [
+        "intangibles_railroad_utilities_energy"
+      ],
+      "note": "Sum across segment columns. Berkshire tags no consolidated intangibles line, same as debt; binding only the insurance-segment figure understated total intangibles (and therefore overstated tangible equity and every ratio built on it) in the two years the railroad/utilities/energy segment carried its own intangibles balance."
     },
     {
       "metric": "sga_expense",

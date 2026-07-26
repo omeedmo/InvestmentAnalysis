@@ -283,11 +283,19 @@ def year_notes(financials: dict, template: Optional[dict]) -> dict:
     A company is not the same company across fifteen years — an acquisition
     gets consolidated mid-history, an accounting standard changes what a line
     MEANS, a one-off tax or impairment item lands in a single year — and the
-    read on a metric should change at the year it's actually affected, not as
-    a blanket caveat stapled to the whole row regardless of which year you're
-    looking at. This resolves each fact's `years` spec against the calendar
-    years actually present in the data (open-ended specs like "2018-" need
-    that to know how far "onward" currently reaches).
+    read on a metric should change at the year it's actually affected. This
+    resolves each fact's `years` spec against the calendar years actually
+    present in the data (open-ended specs like "2018-" need that to know how
+    far "onward" currently reaches).
+
+    Each fact is surfaced ONCE: on its earliest affected year, on the first
+    metric named in `affects`. A fact like ASU 2016-01 runs 2018 onward and
+    touches net_income, eps_diluted, roe and net_margin — flagging every one of
+    those cells in every one of eight years is eight-times-four repetition of
+    the same sentence, which teaches a reader to stop reading it. One cell is
+    enough to make the fact discoverable; the row-level annotation (see
+    _fold_structural_facts) still carries it for anyone reading that metric on
+    a later year.
     """
     facts = ((template or {}).get("history") or {}).get("comparability") or []
     if not facts:
@@ -308,13 +316,13 @@ def year_notes(financials: dict, template: Optional[dict]) -> dict:
         if spec == "all":
             continue   # structural, not dated — folded into the row annotation instead
         years = _parse_fact_years(spec, all_years_list)
-        if not years:
+        affects = f.get("affects", [])
+        if not years or not affects:
             continue
         note = f"{f.get('fact', '')} — {f.get('detail', '')}".strip(" —")
-        for metric in f.get("affects", []):
-            by_year = out.setdefault(metric, {})
-            for y in years:
-                by_year.setdefault(str(y), []).append(note)
+        first_year = str(min(years))
+        canonical_metric = affects[0]
+        out.setdefault(canonical_metric, {}).setdefault(first_year, []).append(note)
     return out
 
 

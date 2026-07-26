@@ -16,14 +16,65 @@
       "why": "The figure Berkshire itself presents and tells shareholders to judge the business on: earnings of the operating subsidiaries and insurance underwriting/investment income, excluding investment and derivative gains. Since ASU 2016-01 forced unrealized equity marks through the income statement in 2018, GAAP net income mostly tracks the stock market rather than the businesses \u2014 FY2024 was $89.0B reported against $47.4B of operating earnings.",
       "evidence": "Authored into this template from the MD&A earnings-attribution table of every 10-K FY2011-FY2025; see history.method. Berkshire tags no XBRL concept for it.",
       "confidence": "high"
+    },
+    {
+      "key": "roe_operating_row",
+      "label": "ROE (operating earnings basis)",
+      "type": "%",
+      "after": "roe",
+      "basis": "adjusted",
+      "reported_ref": "roe",
+      "expr": "brk_operating_earnings / equity",
+      "why": "Reported ROE uses net income, which since ASU 2016-01 (2018) is dominated by unrealized swings in a $270B+ equity portfolio rather than the return the businesses actually earned. Operating earnings \u2014 Berkshire's own measure, excluding investment and derivative gains \u2014 is the more stable and more decision-useful numerator for judging how the underlying businesses performed on shareholders' capital.",
+      "evidence": "FY2022: reported net income was -$22.8B (a market-driven loss) while operating earnings were $30.9B; reported ROE of -4.8% in a year the businesses were solidly profitable illustrates why the GAAP figure is unreliable here.",
+      "confidence": "high"
+    },
+    {
+      "key": "roa_operating_row",
+      "label": "ROA (operating earnings basis)",
+      "type": "%",
+      "after": "roa",
+      "basis": "adjusted",
+      "reported_ref": "roa",
+      "expr": "brk_operating_earnings / total_assets",
+      "why": "Same substitution as ROE: operating earnings over total assets, so a market-driven swing in the investment portfolio does not masquerade as a change in how productively the balance sheet is being used.",
+      "evidence": "See ROE (operating earnings basis).",
+      "confidence": "high"
+    },
+    {
+      "key": "rote_operating_row",
+      "label": "ROTE (operating earnings basis)",
+      "type": "%",
+      "after": "rote",
+      "basis": "adjusted",
+      "reported_ref": "rote",
+      "expr": "brk_operating_earnings / tangible_equity",
+      "why": "Reported ROTE (net income / tangible equity) inherits the same ASU 2016-01 distortion as ROE, and additionally swings on tangible equity that already excludes goodwill and intangibles - the combination makes single-year GAAP ROTE nearly uninformative for Berkshire (it was -6.3% in 2022 despite genuinely profitable operating businesses). Operating earnings over the same tangible-equity base is the version worth reading.",
+      "evidence": "FY2022: GAAP ROTE -6.3% vs operating-earnings ROTE positive; FY2018 GAAP ROTE 1.7% (the year ASU 2016-01 first applied and equity markets fell in Q4) vs a much more representative operating figure.",
+      "confidence": "high"
+    },
+    {
+      "key": "net_margin_operating_row",
+      "label": "Net Margin (operating earnings basis)",
+      "type": "%",
+      "after": "net_margin",
+      "basis": "adjusted",
+      "reported_ref": "net_margin",
+      "expr": "brk_operating_earnings / revenue",
+      "why": "Reported net margin runs from 1.6% to 32.5% year to year purely on investment gains/losses, which is not a margin on the operating businesses at all. Operating earnings over revenue is the stable, comparable version.",
+      "evidence": "Reported net margin: 1.6% (2018), 32.0% (2019), -7.6% (2022) - the swings track the stock market, not Berkshire's operations.",
+      "confidence": "high"
     }
   ],
   "annotations": {
     "total_debt": "A large share of Berkshire's debt sits at BNSF and Berkshire Hathaway Energy and is NON-RECOURSE to the parent \u2014 the 10-K states Berkshire \"does not guarantee the repayment of debt issued by BNSF, BHE or any of their subsidiaries\". Consolidated total debt therefore overstates holding-company leverage. The split IS available: Berkshire's balance sheet reports notes payable separately for \"Insurance and Other\" and \"Railroad, Utilities and Energy\", and the scorecard binds both (bindings/companies/BRK-B.json). Recourse debt has run about 35% of consolidated borrowings in recent years.",
     "net_income": "Dominated by unrealized investment gains/losses since 2018 (ASU 2016-01) \u2014 $89.0B reported in FY2024 against $47.4B of operating earnings. Berkshire reports operating earnings separately and the app already extracts that figure from the 10-K text (brk_operating_earnings); use it rather than net income. Note a naive net income minus investment_gains does NOT reproduce it ($39.7B vs $47.4B), because the tagged investment_gains series captures only unrealized equity marks, not all investment gains.",
-    "roe": "Distorted by the same mark-to-market swings in the numerator; a poor read on Berkshire's economics.",
+    "roe": "Distorted by unrealized investment gains/losses since 2018 (ASU 2016-01) \u2014 the numerator is net income, which is dominated by mark-to-market swings in the equity portfolio (FY2022: -$22.8B net loss against $30.9B of operating earnings). Read ROE (operating earnings basis) directly below, which uses Berkshire's own operating earnings instead.",
     "pe_ratio": "Distorted by mark-to-market earnings; price-to-book has historically been the more useful yardstick for Berkshire.",
-    "insurance_float": "Berkshire's own float figure from the 10-K MD&A, not a reconstruction. Float is policyholder money the insurer holds and invests before claims are paid: it is a funding source, NOT debt, and must never be added to leverage. Reconstructing it from balance-sheet components understates it materially \u2014 that approach gave $159B for FY2025 against the $176B Berkshire reports \u2014 because the company's definition includes items not separable from the face of the balance sheet."
+    "insurance_float": "Berkshire's own float figure from the 10-K MD&A, not a reconstruction. Float is policyholder money the insurer holds and invests before claims are paid: it is a funding source, NOT debt, and must never be added to leverage. Reconstructing it from balance-sheet components understates it materially \u2014 that approach gave $159B for FY2025 against the $176B Berkshire reports \u2014 because the company's definition includes items not separable from the face of the balance sheet.",
+    "roa": "Same distortion as ROE: the numerator is net income, dominated by unrealized investment gains/losses since 2018 (ASU 2016-01). Read ROA (operating earnings basis) directly below.",
+    "rote": "Net-income-based ROTE compounds the ASU 2016-01 distortion (see Net Income) with a tangible-equity base that already strips goodwill and intangibles, making single-year swings extreme (-6.3% in FY2022 despite profitable operations). Read ROTE (operating earnings basis) directly below.",
+    "net_margin": "Swings from 1.6% to 32.5% year to year purely on unrealized investment gains/losses (ASU 2016-01), not on the profitability of the operating businesses. Read Net Margin (operating earnings basis) directly below."
   },
   "suppress": [
     "roic",
