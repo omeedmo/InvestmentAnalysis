@@ -120,17 +120,140 @@
       ]
     },
     {
-      "metric": "free_cash_flow",
-      "label": "Free cash flow (OCF \u2212 capex)",
-      "section": "Derived",
-      "expr": "operating_cash_flow - capex",
-      "note": "Values are taken from the raw XBRL fact, where a Payments* concept is a positive outflow, so this subtracts. The rendered statement prints the same line as negative \u2014 a presentation choice that must not decide the arithmetic."
-    },
-    {
       "metric": "effective_tax_rate",
       "label": "Effective tax rate",
       "section": "Derived",
       "expr": "income_tax / pretax_income"
+    },
+    {
+      "metric": "cash",
+      "label": "Cash & Cash Equivalents",
+      "section": "Balance sheet",
+      "bind": [
+        {
+          "element": "us-gaap:CashAndCashEquivalentsAtCarryingValue"
+        }
+      ]
+    },
+    {
+      "metric": "intangibles",
+      "label": "Intangible Assets",
+      "section": "Balance sheet",
+      "bind": [
+        {
+          "element": "us-gaap:IntangibleAssetsNetExcludingGoodwill"
+        },
+        {
+          "element": "us-gaap:FiniteLivedIntangibleAssetsNet"
+        }
+      ]
+    },
+    {
+      "metric": "sga_expense",
+      "label": "SG&A Expense",
+      "section": "Income statement",
+      "bind": [
+        {
+          "element": "us-gaap:SellingGeneralAndAdministrativeExpense"
+        },
+        {
+          "element": "us-gaap:GeneralAndAdministrativeExpense"
+        }
+      ]
+    },
+    {
+      "metric": "interest_expense",
+      "label": "Interest Expense",
+      "section": "Income statement",
+      "bind": [
+        {
+          "element": "us-gaap:InterestExpense"
+        },
+        {
+          "element": "us-gaap:InterestExpenseNonoperating"
+        }
+      ]
+    },
+    {
+      "metric": "stock_based_compensation",
+      "label": "Stock-Based Comp (SBC)",
+      "section": "Cash flow",
+      "bind": [
+        {
+          "element": "us-gaap:ShareBasedCompensation"
+        }
+      ]
+    },
+    {
+      "metric": "dividends_paid",
+      "label": "Dividends Paid",
+      "section": "Cash flow",
+      "bind": [
+        {
+          "element": "us-gaap:PaymentsOfDividendsCommonStock"
+        },
+        {
+          "element": "us-gaap:PaymentsOfDividends"
+        }
+      ]
+    },
+    {
+      "metric": "buybacks_value",
+      "label": "Share Repurchases ($)",
+      "section": "Cash flow",
+      "bind": [
+        {
+          "element": "us-gaap:PaymentsForRepurchaseOfCommonStock"
+        }
+      ]
+    },
+    {
+      "metric": "roe",
+      "label": "Return on Equity",
+      "section": "Derived",
+      "expr": "net_income / equity"
+    },
+    {
+      "metric": "roa",
+      "label": "Return on Assets",
+      "section": "Derived",
+      "expr": "net_income / total_assets"
+    },
+    {
+      "metric": "net_margin",
+      "label": "Net Margin",
+      "section": "Derived",
+      "expr": "net_income / revenue"
+    },
+    {
+      "metric": "fcf",
+      "label": "Free Cash Flow",
+      "section": "Derived",
+      "expr": "operating_cash_flow - capex"
+    },
+    {
+      "metric": "fcf_margin",
+      "label": "FCF Margin",
+      "section": "Derived",
+      "expr": "(operating_cash_flow - capex) / revenue"
+    },
+    {
+      "metric": "adj_fcf",
+      "label": "Adj. FCF (FCF \u2212 SBC)",
+      "section": "Derived",
+      "expr": "operating_cash_flow - capex - stock_based_compensation"
+    },
+    {
+      "metric": "adj_fcf_margin",
+      "label": "Adj. FCF Margin",
+      "section": "Derived",
+      "expr": "(operating_cash_flow - capex - stock_based_compensation) / revenue"
+    },
+    {
+      "metric": "adj_fcf_roe",
+      "label": "Adj. FCF ROE",
+      "section": "Derived",
+      "expr": "(operating_cash_flow - capex - stock_based_compensation) / equity"
     }
   ]
 }

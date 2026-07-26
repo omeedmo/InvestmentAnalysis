@@ -1,54 +1,297 @@
 {
   "tier": "sector",
-  "note": "Insurance lines. These are the clearest case for dimension-aware binding: a conglomerate with insurance inside it reports premiums only within its insurance segment column, so companyfacts — which holds undimensioned facts only — has nothing at all, and the metric renders empty. `dimension_pattern` finds the insurance segment by name and refuses when more than one segment matches.",
-
+  "note": "Insurance lines. This is the clearest case for dimension-aware binding: a conglomerate with insurance inside it reports premiums, underwriting expenses and policyholder liabilities only within its insurance segment column, so companyfacts \u2014 which holds undimensioned facts only \u2014 has nothing at all and every one of these metrics renders empty. `dimension_pattern` finds the insurance segment by name and refuses when more than one segment matches.",
   "metrics": [
     {
       "metric": "premiums_earned",
-      "label": "Insurance premiums earned",
+      "label": "Net Premiums Earned",
       "section": "Insurance",
-      "bind": [{"element": "us-gaap:PremiumsEarnedNet",
-                "dimension_pattern": "insurance"},
-               {"element": "us-gaap:PremiumsEarnedNet"}]
+      "bind": [
+        {
+          "element": "us-gaap:PremiumsEarnedNet",
+          "dimension_pattern": "insurance"
+        },
+        {
+          "element": "us-gaap:PremiumsEarnedNet"
+        },
+        {
+          "element": "us-gaap:PremiumsEarnedNetPropertyAndCasualty"
+        }
+      ]
+    },
+    {
+      "metric": "premiums_written",
+      "label": "Net Premiums Written",
+      "section": "Insurance",
+      "bind": [
+        {
+          "element": "us-gaap:PremiumsWrittenNet",
+          "dimension_pattern": "insurance"
+        },
+        {
+          "element": "us-gaap:PremiumsWrittenNet"
+        },
+        {
+          "element": "us-gaap:PremiumsWrittenNetPropertyAndCasualty"
+        }
+      ],
+      "note": "Many insurers inside a conglomerate never tag written premium at all; the cell stays blank rather than being approximated from earned premium."
     },
     {
       "metric": "losses_incurred",
-      "label": "Insurance losses and loss adjustment expenses",
+      "label": "Losses & LAE Incurred (P&C)",
       "section": "Insurance",
-      "bind": [{"element": "us-gaap:PolicyholderBenefitsAndClaimsIncurredNet",
-                "dimension_pattern": "insurance"},
-               {"element": "us-gaap:PolicyholderBenefitsAndClaimsIncurredNet"},
-               {"element": "us-gaap:LiabilityForClaimsAndClaimsAdjustmentExpenseIncurredClaims1",
-                "dimension_pattern": "insurance"}]
+      "bind": [
+        {
+          "element": "us-gaap:LiabilityForUnpaidClaimsAndClaimsAdjustmentExpenseIncurredClaims1",
+          "dimension_pattern": "insurance",
+          "statement": "statements? of (earnings|operations|income)"
+        },
+        {
+          "element": "us-gaap:IncurredClaimsPropertyCasualtyAndLiability",
+          "dimension_pattern": "insurance",
+          "statement": "statements? of (earnings|operations|income)"
+        },
+        {
+          "element": "us-gaap:PolicyholderBenefitsAndClaimsIncurredNet",
+          "dimension_pattern": "insurance",
+          "statement": "statements? of (earnings|operations|income)"
+        }
+      ],
+      "note": "Bound to the INCOME STATEMENT only. The similarly named LiabilityForClaimsAndClaimsAdjustmentExpensePropertyCasualtyLiability is the balance-sheet reserve BALANCE, and binding to it without a statement constraint took the $63.8B stock of unpaid losses as if it were the year's expense, giving a combined ratio of 2.18. The concept switched from IncurredClaimsPropertyCasualtyAndLiability to LiabilityForUnpaidClaimsAndClaimsAdjustmentExpenseIncurredClaims1 in 2018."
+    },
+    {
+      "metric": "losses_incurred_life",
+      "label": "Life, Annuity & Health Benefits Incurred",
+      "section": "Insurance",
+      "bind": [
+        {
+          "element": "brka:PolicyholderBenefitsAndClaimsIncurredLifeAnnuityAndHealth",
+          "dimension_pattern": "insurance",
+          "statement": "statements? of (earnings|operations|income)"
+        },
+        {
+          "element": "us-gaap:PolicyholderBenefitsAndClaimsIncurredLifeAndAnnuity",
+          "dimension_pattern": "insurance",
+          "statement": "statements? of (earnings|operations|income)"
+        },
+        {
+          "element": "us-gaap:PolicyholderBenefitsAndClaimsIncurredNet",
+          "dimension_pattern": "insurance",
+          "statement": "statements? of (earnings|operations|income)"
+        }
+      ]
     },
     {
       "metric": "underwriting_expenses",
-      "label": "Insurance underwriting expenses",
+      "label": "Underwriting Expenses",
       "section": "Insurance",
-      "bind": [{"element": "us-gaap:OtherUnderwritingExpense",
-                "dimension_pattern": "insurance"},
-               {"element": "us-gaap:OtherUnderwritingExpense"}]
+      "bind": [
+        {
+          "element": "brka:InsuranceUnderwritingExpenses",
+          "dimension_pattern": "insurance"
+        },
+        {
+          "element": "us-gaap:OtherUnderwritingExpense",
+          "dimension_pattern": "insurance"
+        },
+        {
+          "element": "us-gaap:OtherUnderwritingExpense"
+        }
+      ],
+      "note": "Berkshire tags this as a company extension (brka:), which is invisible to companyfacts \u2014 the reason the expense and combined ratios were empty."
+    },
+    {
+      "metric": "net_investment_income",
+      "label": "Net Investment Income",
+      "section": "Insurance",
+      "bind": [
+        {
+          "element": "brka:InvestmentIncomeInterestDividendAndOther",
+          "dimension_pattern": "insurance"
+        },
+        {
+          "element": "us-gaap:NetInvestmentIncome",
+          "dimension_pattern": "insurance"
+        },
+        {
+          "element": "us-gaap:NetInvestmentIncome"
+        },
+        {
+          "element": "us-gaap:InvestmentIncomeInterestAndDividend",
+          "dimension_pattern": "insurance"
+        }
+      ]
+    },
+    {
+      "metric": "loss_ratio",
+      "label": "Loss Ratio",
+      "section": "Insurance",
+      "expr": "(losses_incurred + losses_incurred_life) / premiums_earned"
+    },
+    {
+      "metric": "expense_ratio",
+      "label": "Expense Ratio",
+      "section": "Insurance",
+      "expr": "underwriting_expenses / premiums_earned"
+    },
+    {
+      "metric": "combined_ratio",
+      "label": "Combined Ratio",
+      "section": "Insurance",
+      "expr": "(losses_incurred + losses_incurred_life + underwriting_expenses) / premiums_earned",
+      "note": "Below 1.0 means the underwriting operation was paid to hold the float."
+    },
+    {
+      "metric": "underwriting_profit",
+      "label": "Underwriting Profit",
+      "section": "Insurance",
+      "expr": "premiums_earned - losses_incurred - losses_incurred_life - underwriting_expenses"
     },
     {
       "metric": "unpaid_losses",
-      "label": "Unpaid losses and loss adjustment expenses",
-      "section": "Insurance",
-      "bind": [{"element": "us-gaap:LiabilityForClaimsAndClaimsAdjustmentExpense"},
-               {"element": "us-gaap:LiabilityForUnpaidClaimsAndClaimsAdjustmentExpenseNet"}]
+      "label": "Unpaid Losses & LAE",
+      "section": "Insurance float",
+      "bind": [
+        {
+          "element": "us-gaap:LiabilityForClaimsAndClaimsAdjustmentExpense",
+          "dimension_pattern": "insurance",
+          "statement": "balance sheet"
+        },
+        {
+          "element": "us-gaap:LiabilityForClaimsAndClaimsAdjustmentExpense",
+          "statement": "balance sheet"
+        },
+        {
+          "element": "us-gaap:LiabilityForClaimsAndClaimsAdjustmentExpensePropertyCasualtyLiability",
+          "dimension_pattern": "insurance",
+          "statement": "balance sheet"
+        },
+        {
+          "element": "us-gaap:LiabilityForClaimsAndClaimsAdjustmentExpensePropertyCasualtyLiability",
+          "statement": "balance sheet"
+        }
+      ],
+      "note": "Balance-sheet reserve balance, constrained to the balance sheet so it can never be confused with the income-statement loss expense."
+    },
+    {
+      "metric": "unpaid_losses_retro",
+      "label": "Unpaid Losses \u2014 Retroactive Reinsurance",
+      "section": "Insurance float",
+      "bind": [
+        {
+          "element": "brka:LiabilityForUnpaidClaimsAndClaimAdjustmentExpenseRetroactiveReinsuranceContracts",
+          "dimension_pattern": "insurance",
+          "statement": "balance sheet"
+        },
+        {
+          "element": "brka:LiabilityForUnpaidClaimsAndClaimAdjustmentExpenseRetroactiveReinsuranceContracts",
+          "statement": "balance sheet"
+        },
+        {
+          "element": "brka:LiabilityForUnpaidClaimsAndClaimAdjustmentExpenseRetroactiveReinsurance",
+          "dimension_pattern": "insurance",
+          "statement": "balance sheet"
+        },
+        {
+          "element": "brka:LiabilityForUnpaidClaimsAndClaimAdjustmentExpenseRetroactiveReinsurance",
+          "statement": "balance sheet"
+        }
+      ],
+      "note": "Berkshire began reporting retroactive reinsurance reserves on their own line in 2016; before that they sat inside the main reserve balance. The float calculation treats this as zero when absent, which is declared explicitly rather than inferred."
     },
     {
       "metric": "unearned_premiums",
-      "label": "Unearned premiums",
-      "section": "Insurance",
-      "bind": [{"element": "us-gaap:UnearnedPremiums"}]
+      "label": "Unearned Premiums",
+      "section": "Insurance float",
+      "bind": [
+        {
+          "element": "us-gaap:UnearnedPremiums",
+          "dimension_pattern": "insurance",
+          "statement": "balance sheet"
+        },
+        {
+          "element": "us-gaap:UnearnedPremiums",
+          "statement": "balance sheet"
+        }
+      ]
     },
-
     {
-      "metric": "underwriting_margin",
-      "label": "Underwriting result / premiums earned",
-      "section": "Insurance",
-      "expr": "(premiums_earned - losses_incurred - underwriting_expenses) / premiums_earned",
-      "note": "Positive means the insurer was paid to hold the float. Computes only for years where all three components resolved, so it can never be built on a missing expense line."
+      "metric": "future_policy_benefits",
+      "label": "Life, Annuity & Health Benefits",
+      "section": "Insurance float",
+      "bind": [
+        {
+          "element": "us-gaap:LiabilityForFuturePolicyBenefits",
+          "dimension_pattern": "insurance",
+          "statement": "balance sheet"
+        },
+        {
+          "element": "us-gaap:LiabilityForFuturePolicyBenefits",
+          "statement": "balance sheet"
+        }
+      ]
+    },
+    {
+      "metric": "policyholder_funds",
+      "label": "Other Policyholder Liabilities",
+      "section": "Insurance float",
+      "bind": [
+        {
+          "element": "us-gaap:PolicyholderFunds",
+          "dimension_pattern": "insurance",
+          "statement": "balance sheet"
+        },
+        {
+          "element": "us-gaap:PolicyholderFunds",
+          "statement": "balance sheet"
+        }
+      ]
+    },
+    {
+      "metric": "premium_receivables",
+      "label": "Premium & Other Receivables",
+      "section": "Insurance float",
+      "bind": [
+        {
+          "element": "us-gaap:PremiumsAndOtherReceivablesNet",
+          "dimension_pattern": "insurance",
+          "statement": "balance sheet"
+        },
+        {
+          "element": "us-gaap:PremiumsAndOtherReceivablesNet",
+          "statement": "balance sheet"
+        }
+      ]
+    },
+    {
+      "metric": "deferred_reinsurance_charges",
+      "label": "Deferred Charges \u2014 Retroactive Reinsurance",
+      "section": "Insurance float",
+      "bind": [
+        {
+          "element": "brka:UnamortizedDeferredChargesOnReinsuranceAssumed",
+          "dimension_pattern": "insurance",
+          "statement": "balance sheet"
+        },
+        {
+          "element": "brka:UnamortizedDeferredChargesOnReinsuranceAssumed",
+          "statement": "balance sheet"
+        }
+      ]
+    },
+    {
+      "metric": "insurance_float",
+      "label": "Insurance Float",
+      "section": "Insurance float",
+      "expr": "unpaid_losses + unpaid_losses_retro + unearned_premiums + future_policy_benefits + policyholder_funds - premium_receivables - deferred_reinsurance_charges",
+      "note": "Buffett's definition: policyholder money the insurer holds and invests before claims are paid, less the receivables and deferred reinsurance charges that offset it. Float is a funding source, NOT debt, and must never be added to leverage. Built from balance-sheet components \u2014 Berkshire's own float figure appears only in MD&A prose and will differ somewhat. Computed only where every component resolved, so a missing liability line cannot silently shrink it.",
+      "zero_if_absent": [
+        "unpaid_losses_retro",
+        "policyholder_funds",
+        "deferred_reinsurance_charges",
+        "premium_receivables"
+      ]
     }
   ]
 }

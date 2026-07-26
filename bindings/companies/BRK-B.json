@@ -3,31 +3,42 @@
   "ticker": "BRK-B",
   "cik": 1067983,
   "sector": "insurance",
-  "note": "Berkshire presents its balance sheet and income statement as stacked segment columns — Insurance and Other, Railroad Utilities and Energy, and (through 2017) Finance and Financial Products — so most of what matters about it is dimensional and therefore invisible to companyfacts. That is the entire reason its insurance and debt lines came back empty.",
-
+  "note": "Berkshire presents its balance sheet and income statement as stacked segment columns \u2014 Insurance and Other, Railroad Utilities and Energy, and (through 2017) Finance and Financial Products \u2014 so most of what matters about it is dimensional and therefore invisible to companyfacts. That is the entire reason its insurance and debt lines came back empty.",
   "metrics": [
     {
       "metric": "debt_insurance_and_other",
-      "label": "Notes payable — Insurance and Other",
+      "label": "Notes payable \u2014 Insurance and Other",
       "section": "Debt by segment",
-      "bind": [{"element": "us-gaap:DebtAndCapitalLeaseObligations",
-                "dimension": "Insurance and Other"}],
+      "bind": [
+        {
+          "element": "us-gaap:DebtAndCapitalLeaseObligations",
+          "dimension": "Insurance and Other"
+        }
+      ],
       "note": "Borrowings at the parent and the insurance/other subsidiaries. This is the part of consolidated debt that is genuinely Berkshire's own obligation."
     },
     {
       "metric": "debt_railroad_utilities_energy",
-      "label": "Notes payable — Railroad, Utilities and Energy",
+      "label": "Notes payable \u2014 Railroad, Utilities and Energy",
       "section": "Debt by segment",
-      "bind": [{"element": "us-gaap:DebtAndCapitalLeaseObligations",
-                "dimension": "Railroad, Utilities and Energy"}],
-      "note": "BNSF and Berkshire Hathaway Energy borrowings. Berkshire states in its 10-K that it 'does not guarantee the repayment of debt issued by BNSF, BHE or any of their subsidiaries' — this is the NON-RECOURSE portion."
+      "bind": [
+        {
+          "element": "us-gaap:DebtAndCapitalLeaseObligations",
+          "dimension": "Railroad, Utilities and Energy"
+        }
+      ],
+      "note": "BNSF and Berkshire Hathaway Energy borrowings. Berkshire states in its 10-K that it 'does not guarantee the repayment of debt issued by BNSF, BHE or any of their subsidiaries' \u2014 this is the NON-RECOURSE portion."
     },
     {
       "metric": "debt_finance_products",
-      "label": "Notes payable — Finance and Financial Products",
+      "label": "Notes payable \u2014 Finance and Financial Products",
       "section": "Debt by segment",
-      "bind": [{"element": "us-gaap:DebtAndCapitalLeaseObligations",
-                "dimension": "Finance and Financial Products"}],
+      "bind": [
+        {
+          "element": "us-gaap:DebtAndCapitalLeaseObligations",
+          "dimension": "Finance and Financial Products"
+        }
+      ],
       "note": "Reported as its own segment column through FY2017 only; from FY2018 these businesses sit inside the other columns, so the series ends rather than going to zero."
     },
     {
@@ -44,26 +55,37 @@
       "expr": "debt_insurance_and_other / (debt_insurance_and_other + debt_railroad_utilities_energy)",
       "note": "The share of consolidated borrowings Berkshire actually stands behind. Every consolidated leverage ratio for Berkshire overstates holding-company leverage by roughly the inverse of this."
     },
-
     {
       "metric": "revenue_insurance_and_other",
-      "label": "Revenues — Insurance and Other",
+      "label": "Revenues \u2014 Insurance and Other",
       "section": "Segment revenues",
-      "bind": [{"element": "us-gaap:Revenues", "dimension": "Insurance and Other"}]
+      "bind": [
+        {
+          "element": "us-gaap:Revenues",
+          "dimension": "Insurance and Other"
+        }
+      ]
     },
     {
       "metric": "revenue_railroad_utilities_energy",
-      "label": "Revenues — Railroad, Utilities and Energy",
+      "label": "Revenues \u2014 Railroad, Utilities and Energy",
       "section": "Segment revenues",
-      "bind": [{"element": "us-gaap:Revenues",
-                "dimension": "Railroad, Utilities and Energy"}]
+      "bind": [
+        {
+          "element": "us-gaap:Revenues",
+          "dimension": "Railroad, Utilities and Energy"
+        }
+      ]
     },
-
     {
       "metric": "investment_gains",
       "label": "Investment gains (losses)",
       "section": "Income statement",
-      "bind": [{"element": "us-gaap:GainLossOnInvestments"}],
+      "bind": [
+        {
+          "element": "us-gaap:GainLossOnInvestments"
+        }
+      ],
       "note": "From 2018 this carries unrealized marks on the equity portfolio (ASU 2016-01) and is the reason reported net income swings by tens of billions."
     },
     {
@@ -71,7 +93,113 @@
       "label": "Net earnings excluding investment gains",
       "section": "Income statement",
       "expr": "net_income - investment_gains",
-      "note": "A pre-tax-gains subtraction from two reported lines, NOT Berkshire's own operating earnings figure — its published number nets tax on the gains and differs. Berkshire's own figure is text-only in MD&A and is carried separately in company_templates/BRK-B.json."
+      "note": "A pre-tax-gains subtraction from two reported lines, NOT Berkshire's own operating earnings figure \u2014 its published number nets tax on the gains and differs. Berkshire's own figure is text-only in MD&A and is carried separately in company_templates/BRK-B.json."
+    },
+    {
+      "metric": "short_term_investments",
+      "label": "Short-term Investments (U.S. T-Bills)",
+      "section": "Balance sheet",
+      "bind": [
+        {
+          "element": "brka:USTreasuryBills",
+          "dimension": "Insurance and Other"
+        }
+      ],
+      "note": "Berkshire's T-bill pile is a company extension tag under the insurance segment column, so companyfacts cannot see it."
+    },
+    {
+      "metric": "cash",
+      "label": "Cash & Cash Equivalents",
+      "section": "Balance sheet",
+      "bind": [
+        {
+          "element": "us-gaap:CashAndCashEquivalentsAtCarryingValue",
+          "dimension": "Insurance and Other"
+        },
+        {
+          "element": "us-gaap:CashAndCashEquivalentsAtCarryingValue",
+          "dimension": "Railroad, Utilities and Energy"
+        }
+      ],
+      "note": "Berkshire prints cash per segment column and no consolidated line; the insurance-and-other column is the holding-company pile that matters."
+    },
+    {
+      "metric": "total_cash",
+      "label": "Cash + Short-term Investments",
+      "section": "Balance sheet",
+      "expr": "cash + short_term_investments"
+    },
+    {
+      "metric": "intangibles",
+      "label": "Other Intangible Assets",
+      "section": "Balance sheet",
+      "bind": [
+        {
+          "element": "us-gaap:IntangibleAssetsNetExcludingGoodwill",
+          "dimension": "Insurance and Other"
+        }
+      ]
+    },
+    {
+      "metric": "sga_expense",
+      "label": "Selling, General & Administrative",
+      "section": "Income statement",
+      "bind": [
+        {
+          "element": "us-gaap:SellingGeneralAndAdministrativeExpense",
+          "dimension": "Insurance and Other"
+        }
+      ]
+    },
+    {
+      "metric": "interest_expense",
+      "label": "Interest Expense",
+      "section": "Income statement",
+      "bind": [
+        {
+          "element": "us-gaap:InterestExpense"
+        },
+        {
+          "element": "us-gaap:InterestExpense",
+          "dimension": "Insurance and Other"
+        }
+      ]
+    },
+    {
+      "metric": "equity",
+      "label": "Berkshire shareholders' equity",
+      "section": "Balance sheet",
+      "bind": [
+        {
+          "element": "us-gaap:StockholdersEquity"
+        }
+      ]
+    },
+    {
+      "metric": "unta",
+      "label": "Unlevered Net Tangible Assets",
+      "section": "Capital quality",
+      "expr": "total_assets - goodwill - intangibles - total_debt",
+      "note": "Tangible assets net of borrowings. Goodwill and intangibles are removed because they are purchase-accounting artefacts, not deployable capital."
+    },
+    {
+      "metric": "tangible_equity",
+      "label": "Tangible Equity",
+      "section": "Capital quality",
+      "expr": "equity - goodwill - intangibles"
+    },
+    {
+      "metric": "rote",
+      "label": "Return on Tangible Equity",
+      "section": "Capital quality",
+      "expr": "net_income / (equity - goodwill - intangibles)"
+    },
+    {
+      "metric": "float_to_equity",
+      "label": "Float / Equity",
+      "section": "Capital quality",
+      "expr": "insurance_float / equity",
+      "note": "How much investable policyholder money Berkshire runs per dollar of its own capital \u2014 the leverage that actually matters here, and the one no debt ratio captures."
     }
   ]
 }

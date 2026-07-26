@@ -4140,6 +4140,98 @@ def holders():
                         "total_value": 0, "total_count": 0, "rate_limited": True}), 200
 
 
+
+_SCORECARD_ANNUAL_RE = re.compile(r"^(19|20)\d\d$")
+
+
+def apply_scorecard_overlay(ticker: str, cik: str, submissions: dict,
+                            facts: dict, financials: dict) -> Optional[dict]:
+    """
+    Overlay as-filed scorecard values onto `financials`.
+
+    Only runs for tickers with an authored binding file, so every other company
+    is untouched. Scorecard values WIN over the companyfacts-derived ones where
+    both exist: they were read from the filing's own statements, checked against
+    the subtotals the company printed, and cross-checked against companyfacts
+    wherever both carry the concept. Where the scorecard has nothing, whatever
+    the existing path produced is left alone.
+
+    Returns a small provenance summary for the response, or None when the
+    ticker has no bindings.
+    """
+    tk = ticker.upper().replace(".", "-")
+    binding_path = os.path.join(scorecard.BINDING_DIR, "companies", f"{tk}.json")
+    binding = scorecard._read_json(binding_path)
+    if not binding:
+        return None
+
+    filings = all_filing_infos_from_submissions(
+        submissions, {"10-K", "10-K/A", "20-F"}, max_count=18)
+    if not filings:
+        return None
+
+    sc = scorecard.build(cik, filings, sector=binding.get("sector"),
+                         ticker=tk, facts=facts)
+
+    # The app keys annual series by period-end date ("2013-12-31"), not by bare
+    # year. Writing bare years would leave BOTH keys in the series and the
+    # downstream fiscal-year lookup would keep the original, so the overlay
+    # would silently do nothing on exactly the metrics that already had a
+    # value. Reuse the existing key for a year wherever there is one.
+    fiscal_end = {}
+    for series in financials.values():
+        if isinstance(series, dict):
+            for key in series:
+                if len(key) == 10 and key[4] == "-":
+                    fiscal_end.setdefault(key[:4], key[4:])
+
+    applied: dict[str, int] = {}
+    sources: dict[str, dict] = {}
+    for metric, data in sc["metrics"].items():
+        series = financials.setdefault(metric, {})
+        n = 0
+        for year, cell in data["years"].items():
+            if not _SCORECARD_ANNUAL_RE.match(year):
+                continue
+            existing = next((k for k in series if k[:4] == year and len(k) == 10), None)
+            key = existing or (year + fiscal_end.get(year, "-12-31"))
+            series.pop(year, None)          # drop any bare-year duplicate
+            series[key] = cell["value"]
+            n += 1
+            sources.setdefault(metric, {})[year] = {
+                "as_reported": cell.get("as_reported"),
+                "element":     cell.get("element"),
+                "dimension":   cell.get("dimension"),
+                "statement":   cell.get("statement"),
+                "from_10k_fy": cell.get("from_10k_fy"),
+                "restated_from": cell.get("restated_from"),
+            }
+        # A DERIVED scorecard metric owns its whole row. The app computes some
+        # of these its own way (its unlevered-NTA formula differs from the one
+        # bound here), and leaving those values in the years the scorecard
+        # cannot cover would splice two different definitions into one series —
+        # a row that silently changes meaning partway across is worse than a
+        # row with gaps. Directly-bound lines are left alone, since there the
+        # definition is the same reported line either way.
+        if n and data.get("derived"):
+            covered = {y for y in data["years"] if _SCORECARD_ANNUAL_RE.match(y)}
+            for key in [k for k in series if len(k) == 10 and k[:4] not in covered]:
+                del series[key]
+        if n:
+            applied[metric] = n
+
+    return {
+        "applied":   applied,
+        "sources":   sources,
+        "skipped":   sc["skipped"],
+        "filings":   len(sc["provenance"]),
+        "sector":    binding.get("sector"),
+        "labels":    {m: d["label"] for m, d in sc["metrics"].items()},
+        "tiers":     {m: d["tier"] for m, d in sc["metrics"].items()},
+        "notes":     {m: d["note"] for m, d in sc["metrics"].items() if d.get("note")},
+    }
+
+
 @app.route("/scorecard")
 def scorecard_page():
     resp = app.make_response(render_template("scorecard.html"))
@@ -4302,6 +4394,24 @@ def analyze():
              "min_year": datetime.now().year - MAX_YEARS},
         )
 
+    # ── As-reported scorecard overlay ────────────────────────────────────────
+    # Where a company has authored bindings, its metrics are read from the
+    # statements it actually filed (statement_store) instead of the
+    # companyfacts API, which carries no company extension tags and no
+    # dimensional facts at all. For Berkshire that is the difference between
+    # empty insurance rows and a full fifteen-year history: premiums earned,
+    # underwriting expenses and the policyholder liabilities behind float are
+    # every one of them either a brka: extension or reported only inside the
+    # "Insurance and Other" segment column.
+    #
+    # This runs BEFORE the per-share, margin and return recomputation below, so
+    # those derive from the verified figures rather than being layered on top.
+    scorecard_meta = None
+    try:
+        scorecard_meta = apply_scorecard_overlay(ticker, cik, submissions,
+                                                 facts, financials)
+    except Exception:
+        scorecard_meta = None       # never let this path break the response
 
     shares_end_series = financials.get("shares_outstanding_end", {})
     shares_diluted_series = financials.get("shares_diluted_wtd", {})
@@ -4396,6 +4506,18 @@ def analyze():
             d: (_eq[d] - (fy_get(_gw, d[:4]) or 0) - (fy_get(_ia, d[:4]) or 0)) / fy_get(_so, d[:4])
             for d in _eq if fy_get(_so, d[:4])
         } or financials.get("tangible_book_value_per_share")
+
+        # Float per share for the same reason: build_financials computes it
+        # before the share count is reconstructed and before the scorecard
+        # overlay fills the float series, so it has to be redone once both are
+        # final. Float is the money an insurer invests on someone else's
+        # behalf, so per-share float is a real part of what a share owns.
+        _flo = financials.get("insurance_float", {})
+        if _flo:
+            financials["float_per_share"] = {
+                d: _flo[d] / fy_get(_so, d[:4])
+                for d in _flo if fy_get(_so, d[:4])
+            } or financials.get("float_per_share")
 
     # Recompute total_cash from component series when available, then refresh net_cash.
     _cash = financials.get("cash", {})
@@ -5487,6 +5609,9 @@ def analyze():
         "financials":         fin_data,
         "metric_labels":      metric_labels,
         "template":           template_payload,
+        # Present only for tickers with authored bindings: which metrics were
+        # read from the filed statements, and the provenance of each cell.
+        "scorecard":          scorecard_meta,
         "filing_links":       filing_links,
         "proxy": {
             "url":  proxy_url,

@@ -296,16 +296,30 @@ def _match_fact(slot: dict, b: dict) -> Optional[dict]:
     prevent.
     """
     element = b["element"]
+    want_stmt = b.get("statement")
+
+    def ok(fact) -> bool:
+        # A binding may require which statement the line came from. This is not
+        # decoration: the same element name can appear as a BALANCE SHEET stock
+        # and an INCOME STATEMENT flow, and Berkshire's
+        # LiabilityForClaimsAndClaimsAdjustmentExpensePropertyCasualtyLiability
+        # does exactly that. Binding it without the constraint took the $63.8B
+        # reserve balance as if it were the year's loss expense and produced a
+        # combined ratio of 2.18 — a stock/flow mixup is the most dangerous
+        # error available here, because the number still looks like a number.
+        return (not want_stmt) or bool(re.search(want_stmt, fact["statement"], re.I))
+
     if b.get("dimension_pattern"):
         pat = re.compile(b["dimension_pattern"], re.I)
         matches = [f for (el, dim), f in slot.items()
-                   if el == element and dim and pat.search(dim)]
+                   if el == element and dim and pat.search(dim) and ok(f)]
         if len(matches) == 1:
             return matches[0]
         # Ambiguous: several segments matched, so we cannot know which the
         # metric meant. Refuse rather than pick one.
         return None
-    return slot.get((element, b.get("dimension")))
+    fact = slot.get((element, b.get("dimension")))
+    return fact if (fact is not None and ok(fact)) else None
 
 
 def resolve(factbase: dict, bindings: list) -> dict:
@@ -374,8 +388,18 @@ def compute_derived(resolved: dict, bindings: list) -> dict:
         if not expr:
             continue
         metric = spec["metric"]
+        # Some components legitimately do not exist in some years — Berkshire
+        # only began breaking out retroactive reinsurance reserves in 2016, and
+        # before that they sat inside the main reserve line. Treating those as
+        # zero is correct; treating a component that FAILED TO RESOLVE as zero
+        # would silently understate the total. So the author must name which
+        # ones are genuinely optional, per metric, and everything else still
+        # blanks the whole cell when missing.
+        optional = set(spec.get("zero_if_absent", []))
         series: dict[str, dict] = {}
         for year, vals in values_by_year.items():
+            if optional:
+                vals = {**{k: 0.0 for k in optional if vals.get(k) is None}, **vals}
             v = company_templates.eval_expr(expr, vals)
             if v is None:
                 continue
@@ -392,6 +416,13 @@ def compute_derived(resolved: dict, bindings: list) -> dict:
                 "derived": True,
                 "years":   series,
             }
+            # Feed the result back so later metrics can build on it. Berkshire's
+            # unlevered net tangible assets need total_debt, which is itself
+            # derived (the sum of its segment debt columns), and float/equity
+            # needs the derived float. Bindings are evaluated global -> sector
+            # -> company, so a later tier can always build on an earlier one.
+            for year, cell in series.items():
+                values_by_year.setdefault(year, {})[metric] = cell["value"]
     return resolved
 
 
