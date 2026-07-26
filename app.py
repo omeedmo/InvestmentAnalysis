@@ -361,47 +361,95 @@ def get_earnings_materials(
     return result
 
 
+def _older_submission_pages(submissions: dict) -> list[dict]:
+    """
+    The `recent` block of submissions.json holds only the newest ~1000 filings.
+
+    Prolific filers blow through that in a few years — Berkshire's `recent`
+    page reaches back only to 2016 — so its older filings live in the extra
+    pages listed under filings.files. Fetch those, newest page first.
+    """
+    pages = []
+    for f in submissions.get("filings", {}).get("files", []) or []:
+        name = f.get("name")
+        if not name:
+            continue
+        try:
+            r = requests.get(f"{EDGAR_BASE}/submissions/{name}",
+                             headers=HEADERS, timeout=30)
+            r.raise_for_status()
+            pages.append(r.json())
+        except Exception:
+            continue
+    # These pages carry the same parallel-array shape as `recent`.
+    pages.sort(key=lambda p: (p.get("filingDate") or [""])[0], reverse=True)
+    return pages
+
+
 def all_filing_infos_from_submissions(submissions: dict, forms: set[str],
                                       max_count: int = 25) -> list[dict]:
     """Return a list of all matching filings (most-recent first), up to max_count."""
     recent = submissions.get("filings", {}).get("recent", {})
-    form_list    = recent.get("form", [])
-    accessions   = recent.get("accessionNumber", [])
-    primary_docs = recent.get("primaryDocument", [])
-    filing_dates = recent.get("filingDate", [])
-    report_dates = recent.get("reportDate", [])
     cik_no_zero  = str(int(submissions.get("cik", "0")))
 
+    blocks = [recent]
+
     results = []
-    for idx, form in enumerate(form_list):
-        if form not in forms:
-            continue
-        if len(results) >= max_count:
-            break
-        accession    = accessions[idx]
-        primary_doc  = primary_docs[idx]
-        filing_date  = filing_dates[idx] if idx < len(filing_dates) else ""
-        report_date  = report_dates[idx] if idx < len(report_dates) else ""
-        # Fiscal year = year of the report period end date
-        if report_date:
-            fy_year = report_date[:4]
-        elif filing_date:
-            # Heuristic: 10-K filed Jan-Jun covers the prior fiscal year
-            fy_year = str(int(filing_date[:4]) - 1) if filing_date[5:7] <= "06" else filing_date[:4]
-        else:
-            fy_year = ""
-        results.append({
-            "form":         form,
-            "accession":    accession,
-            "filing_date":  filing_date,
-            "report_date":  report_date,
-            "fiscal_year":  fy_year,
-            "url": SEC_ARCHIVES.format(
-                cik_no_zero=cik_no_zero,
-                accession_no_dash=accession.replace("-", ""),
-                document=primary_doc,
-            ),
-        })
+    _seen_accessions: set[str] = set()
+
+    def _harvest(block: dict) -> None:
+        form_list    = block.get("form", [])
+        accessions   = block.get("accessionNumber", [])
+        primary_docs = block.get("primaryDocument", [])
+        filing_dates = block.get("filingDate", [])
+        report_dates = block.get("reportDate", [])
+        _scan(form_list, accessions, primary_docs, filing_dates, report_dates)
+
+    def _scan(form_list, accessions, primary_docs, filing_dates, report_dates):
+      for idx, form in enumerate(form_list):
+          if form not in forms:
+              continue
+          if len(results) >= max_count:
+              break
+          accession    = accessions[idx]
+          if accession in _seen_accessions:
+              continue
+          _seen_accessions.add(accession)
+          primary_doc  = primary_docs[idx] if idx < len(primary_docs) else ""
+          filing_date  = filing_dates[idx] if idx < len(filing_dates) else ""
+          report_date  = report_dates[idx] if idx < len(report_dates) else ""
+          # Fiscal year = year of the report period end date
+          if report_date:
+              fy_year = report_date[:4]
+          elif filing_date:
+              # Heuristic: 10-K filed Jan-Jun covers the prior fiscal year
+              fy_year = str(int(filing_date[:4]) - 1) if filing_date[5:7] <= "06" else filing_date[:4]
+          else:
+              fy_year = ""
+          results.append({
+              "form":         form,
+              "accession":    accession,
+              "filing_date":  filing_date,
+              "report_date":  report_date,
+              "fiscal_year":  fy_year,
+              "url": SEC_ARCHIVES.format(
+                  cik_no_zero=cik_no_zero,
+                  accession_no_dash=accession.replace("-", ""),
+                  document=primary_doc,
+              ),
+          })
+
+    for block in blocks:
+        _harvest(block)
+
+    # Only pay for the older pages when `recent` didn't satisfy the request —
+    # for most filers it always does, and each page is a separate HTTP fetch.
+    if len(results) < max_count:
+        for page in _older_submission_pages(submissions):
+            _harvest(page)
+            if len(results) >= max_count:
+                break
+
     return results
 
 

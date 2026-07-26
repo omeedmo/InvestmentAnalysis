@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
+from itertools import combinations, product
+from typing import Optional
 
 
 def normalize_to_fiscal_years(*args, **kwargs):
@@ -316,142 +318,153 @@ def extract_brk_quarterly_cash(text: str, q_key: str, quarter_end_date: str) -> 
 
 
 
+_OE_ANCHOR = re.compile(
+    r"disaggregated in the table that follows"
+    r"(?:(?!\d{4}\s+\d{4}\s+\d{4}).){0,400}?"     # preamble prose
+    r"(\d{4})\s+(\d{4})\s+(\d{4})"                 # the three column headers
+    r"(.+?)"                                          # segment rows
+    r"Net earnings(?:\s*\(loss\))?\s+attributable to Berkshire"
+    r"(?:\s+Hathaway)?(?:\s+shareholders?)?"
+    r"(.{0,120})",                                    # the total row's values
+    re.IGNORECASE | re.DOTALL,
+)
+
+# Rows that are NOT operating earnings. Berkshire has reworded this line many
+# times ("Investment and derivative gains/losses", "Investment and derivative
+# contract gains (losses)", "Investment gains (losses)"), and in some years
+# added one-off non-operating lines.
+_OE_EXCLUDE = re.compile(
+    r"investment (?:and derivative )?(?:contract )?gains"
+    r"|derivative gains"
+    r"|investment gains"
+    r"|impairment"
+    r"|tax cuts and jobs act",
+    re.IGNORECASE,
+)
+
+_OE_NUM = re.compile(r"\(\s*[\d,]+\s*\)|[\d,]*\d")
+
+
+def _oe_num(tok: str) -> float:
+    tok = tok.strip()
+    if tok.startswith("("):
+        return -float(tok[1:-1].strip().replace(",", ""))
+    return float(tok.replace(",", ""))
+
+
+def _oe_rows(body: str, drop_footnotes: bool) -> list[tuple[str, list[float]]]:
+    """Split the table body into (label, [values]) pairs."""
+    out = []
+    # A new row begins where a letter follows the previous row's last number.
+    for part in re.split(r"(?<=[\d)])\s+(?=[A-Za-z])", body):
+        m = re.search(r"[\d(]", part)
+        if not m:
+            continue
+        label, tail = part[:m.start()], part[m.start():]
+        vals: list[float] = []
+        for tk in _OE_NUM.findall(tail):
+            tk = tk.strip()
+            if not tk:
+                continue
+            if drop_footnotes and vals and re.fullmatch(r"\(\s*\d\s*\)", tk):
+                continue    # footnote marker like "(1)" trailing a value
+            # A bare 4-digit number is a year inside the label ("Tax Cuts and
+            # Jobs Act of 2017"), never a figure — every real value in this
+            # table is in millions and carries a thousands separator.
+            if re.fullmatch(r"(19|20)\d\d", tk):
+                continue
+            vals.append(_oe_num(tk))
+        if label.strip() and vals:
+            out.append((label.strip(), vals))
+    return out
+
+
+def _oe_solve(rows: list, totals: list[float]) -> Optional[list[float]]:
+    """
+    Assign each row's values to year columns such that every column sums to the
+    reported net-earnings total, then return the operating (non-excluded) part.
+
+    Rows with three values are unambiguous. Ragged rows are common and their
+    column is genuinely lost when the HTML table is flattened to text — a
+    segment that existed for only one year (Pilot Travel Centers in 2023), a
+    one-off charge (the 2025 Kraft Heinz/Occidental impairment), or the "Tax
+    Cuts and Jobs Act of 2017" line, which sits in a DIFFERENT column in each
+    of the three filings that show it. So enumerate the placements and accept
+    only an assignment that reconciles against the printed total.
+
+    That check is the whole point: if the table was misread the sums won't tie,
+    and we return None rather than a plausible-looking wrong number.
+    """
+    fixed = [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]   # [operating, excluded]
+    ragged = []
+    for label, vals in rows:
+        band = 1 if _OE_EXCLUDE.search(label) else 0
+        if len(vals) == 3:
+            for i in range(3):
+                fixed[band][i] += vals[i]
+        elif 1 <= len(vals) <= 2:
+            ragged.append((band, vals))
+        else:
+            return None
+
+    if len(ragged) > 4:      # too ambiguous to resolve with confidence
+        return None
+
+    choices = [list(combinations(range(3), len(v))) for _, v in ragged]
+    for combo in (product(*choices) if choices else [()]):
+        cols = [list(fixed[0]), list(fixed[1])]
+        for (band, vals), slots in zip(ragged, combo):
+            for v, i in zip(vals, slots):
+                cols[band][i] += v
+        if all(abs(cols[0][i] + cols[1][i] - totals[i]) < 0.5 for i in range(3)):
+            return cols[0]
+    return None
+
+
 def extract_berkshire_operating_earnings(text: str, filing_date: str = "") -> dict[str, float]:
     """
-    Extract BRK's operating earnings from the per-segment earnings attribution table
-    that Berkshire includes in its 10-K MD&A section.
+    Berkshire's operating earnings — the figure Buffett tells shareholders to
+    judge the company on — from the MD&A earnings-attribution table.
 
-    The table (in millions, after-tax, excl. noncontrolling interests) looks like:
-        2025    2024    2023
-        Insurance – underwriting          $  7,258   $  9,020   $  5,428
-        Insurance – investment income       12,513     13,670      9,567
-        BNSF                                 5,476      5,031      5,087
-        Berkshire Hathaway Energy (BHE)      3,979      3,730      2,331
-        Manufacturing, service/retailing    13,647     13,072     13,362
-        Investment gains (losses)           30,737     41,558     58,873   ← stop here
-        ...
-        Net earnings attributable…          66,968     88,995     96,223
+    Berkshire tags no XBRL concept for this, so it comes from the filing text.
+    The table gives three years of after-tax, post-noncontrolling-interest
+    earnings by segment, plus investment/derivative gains, footing to net
+    earnings. Operating earnings are the total less the investment-gain and
+    other non-operating lines.
 
-    Operating earnings = sum of segment rows BEFORE "Investment gains".
-    Returns {date_str: value_in_dollars} for curr, prior, and prior-prior year.
+    The table's wording, its segments and even its row ORDER change across the
+    fifteen-plus years covered, so nothing here keys off a fixed segment list;
+    the parse is validated by reconciling to the printed total instead.
+
+    Returns {date_str: value_in_dollars} keyed by the table's own column years,
+    which is what makes overlapping filings cross-check each other.
     """
-    try:
-        fy = int(filing_date[:4])
-        fm = int(filing_date[5:7])
-        curr_year  = fy - 1 if fm <= 6 else fy
-        prior_year = curr_year - 1
-        prior2_year = curr_year - 2
-    except (ValueError, IndexError):
-        return {}
-
     txt = re.sub(r"<[^>]+>", " ", text)
-    txt = re.sub(r"&#160;|&nbsp;", " ", txt)
-    txt = re.sub(r"&#8211;|&#8212;", "-", txt)
-    txt = re.sub(r"&#\d+;", " ", txt)   # strip all remaining numeric HTML entities
-    txt = re.sub(r"&[a-z]+;", " ", txt)
+    txt = re.sub(r"&#x[0-9a-fA-F]+;|&#\d+;|&[a-zA-Z]+;", " ", txt)
     txt = re.sub(r"\s+", " ", txt)
 
-    # Anchor: find the full 3-year shareholder-earnings attribution table.
-    # Capture everything from the year headers to "Net earnings attributable".
-    anchor_pat = re.compile(
-        r"earnings attributable to berkshire shareholders[^2]*"
-        r"(?:in millions)[^2]*"
-        r"(\d{4})\s+(\d{4})\s+(\d{4})"      # year headers
-        r"(.+?)"                              # all segment rows
-        r"net earnings attributable",         # stop at the net-earnings total
-        re.IGNORECASE | re.DOTALL,
-    )
-    m = anchor_pat.search(txt)
+    m = _OE_ANCHOR.search(txt)
     if not m:
         return {}
+    years = [int(m.group(i)) for i in (1, 2, 3)]
+    body, tail = m.group(4), m.group(5)
 
-    yr0 = int(m.group(1))   # typically curr_year
-    yr1 = int(m.group(2))   # prior_year
-    yr2 = int(m.group(3))   # prior_prior_year
-    body = m.group(4)
-
-    # Rows to EXCLUDE from operating earnings (investment gains, impairments)
-    exclude_pat = re.compile(
-        r"investment gains|investment losses|impairment|unrealized",
-        re.IGNORECASE,
-    )
-
-    # Value tokens: parenthesized negative "(1,234)", plain number "1,234",
-    # or standalone dash " - " meaning zero/NA.
-    val_tok = re.compile(r"\(\s*([\d,]+)\s*\)|([\d,]+)|\s(-)\s")
-
-    def parse_tok(s: str) -> float:
-        s = s.strip()
-        if not s or s == "-":
-            return 0.0
-        if s.startswith("(") and s.endswith(")"):
-            return -float(s[1:-1].replace(",", ""))
-        return float(s.replace(",", ""))
-
-    col = [0.0, 0.0, 0.0]
-
-    # Walk through the body line-by-line (we re-split on keyword boundaries).
-    # Each segment row looks like:  LABEL  VAL0  VAL1  VAL2
-    # We extract runs of 3 consecutive value tokens after non-excluded labels.
-    segments = re.split(
-        r"(?="
-        r"insurance\s*[-–]"
-        r"|bnsf"
-        r"|berkshire hathaway energy"
-        r"|manufacturing"
-        r"|investment gains"
-        r"|impairment"
-        r"|other\b"
-        r")",
-        body,
-        flags=re.IGNORECASE,
-    )
-
-    for seg in segments:
-        if not seg.strip():
-            continue
-        if exclude_pat.search(seg[:80]):     # check only the label portion
-            continue
-        # Strip the label (everything before the first digit or opening paren)
-        # so that dashes in label text like "Insurance - underwriting" are ignored.
-        num_start = re.search(r"[\d(]", seg)
-        values_text = seg[num_start.start():] if num_start else seg
-
-        # Extract up to first 3 value tokens from the numeric portion
-        toks = val_tok.findall(values_text)
-        vals = []
-        for t in toks:
-            if t[0]:                          # parenthesized negative
-                vals.append(-float(t[0].replace(",", "")))
-            elif t[1]:                        # plain number
-                stripped = t[1].replace(",", "")
-                if not stripped:
-                    continue
-                # Skip 4-digit years that appear in the label portion
-                if len(stripped) == 4 and 2000 <= int(stripped) <= 2100:
-                    continue
-                vals.append(float(stripped))
-            else:                             # standalone dash = zero
-                vals.append(0.0)
-            if len(vals) == 3:
-                break
-        if len(vals) == 3:
-            col[0] += vals[0]
-            col[1] += vals[1]
-            col[2] += vals[2]
-
-    if all(v == 0.0 for v in col):
+    totals: list[float] = []
+    for tk in _OE_NUM.findall(tail):
+        if tk.strip():
+            totals.append(_oe_num(tk))
+        if len(totals) == 3:
+            break
+    if len(totals) != 3:
         return {}
 
-    result = {}
-    for hdr_yr, canon_yr, v in [
-        (yr0, curr_year,   col[0]),
-        (yr1, prior_year,  col[1]),
-        (yr2, prior2_year, col[2]),
-    ]:
-        if v > 0:
-            result[f"{canon_yr}-12-31"] = v * 1_000_000
-    return result
+    # Footnote markers are indistinguishable from small negative values in
+    # flattened text, so try it both ways and let reconciliation decide.
+    for drop_footnotes in (True, False):
+        cols = _oe_solve(_oe_rows(body, drop_footnotes), totals)
+        if cols:
+            return {f"{y}-12-31": v * 1_000_000 for y, v in zip(years, cols)}
+    return {}
 
 
 def extract_berkshire_equivalent_b_shares_from_facts(facts: dict) -> dict[str, float]:
@@ -554,7 +567,14 @@ def apply_annual_filings(filings: list, financials: dict, ctx: dict) -> None:
             fy_get(existing_st, str(fy_int - i)) is not None
             for i in range(2)
         )
-        if sh_covered and td_covered and tc_covered and cash_components_covered:
+        # Operating earnings come three years at a time from the MD&A table,
+        # and are the reason we keep walking back even once the balance-sheet
+        # items are satisfied — otherwise the series stops after a few years.
+        existing_oe = financials.get("brk_operating_earnings", {})
+        oe_covered = all(fy_get(existing_oe, str(fy_int - i)) is not None
+                         for i in range(3))
+        if (sh_covered and td_covered and tc_covered
+                and cash_components_covered and oe_covered):
             continue
         try:
             text = get_text(filing)
