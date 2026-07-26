@@ -19,7 +19,7 @@
     }
   ],
   "annotations": {
-    "total_debt": "A large share of Berkshire's debt sits at BNSF and Berkshire Hathaway Energy and is NON-RECOURSE to the parent \u2014 Berkshire does not guarantee it. Consolidated total debt therefore overstates holding-company leverage. The recourse/non-recourse split is disclosed only in 10-K text and segment tables, not in XBRL, so the app cannot compute the adjusted figure; read this line as consolidated, not parent-level.",
+    "total_debt": "A large share of Berkshire's debt sits at BNSF and Berkshire Hathaway Energy and is NON-RECOURSE to the parent \u2014 the 10-K states Berkshire \"does not guarantee the repayment of debt issued by BNSF, BHE or any of their subsidiaries\". Consolidated total debt therefore overstates holding-company leverage. The split IS available: Berkshire's balance sheet reports notes payable separately for \"Insurance and Other\" and \"Railroad, Utilities and Energy\", and the scorecard binds both (bindings/companies/BRK-B.json). Recourse debt has run about 35% of consolidated borrowings in recent years.",
     "net_income": "Dominated by unrealized investment gains/losses since 2018 (ASU 2016-01) \u2014 $89.0B reported in FY2024 against $47.4B of operating earnings. Berkshire reports operating earnings separately and the app already extracts that figure from the 10-K text (brk_operating_earnings); use it rather than net income. Note a naive net income minus investment_gains does NOT reproduce it ($39.7B vs $47.4B), because the tagged investment_gains series captures only unrealized equity marks, not all investment gains.",
     "roe": "Distorted by the same mark-to-market swings in the numerator; a poor read on Berkshire's economics.",
     "pe_ratio": "Distorted by mark-to-market earnings; price-to-book has historically been the more useful yardstick for Berkshire."
@@ -29,7 +29,7 @@
     "pretax_roic"
   ],
   "caveats": [
-    "Berkshire tags NO standard long-term-debt concept in XBRL (it reports debt by segment), which is why the app text-extracts total debt from the 10-K. Debt figures here come from that extraction, not from tagged data.",
+    "Berkshire tags no single consolidated debt concept \u2014 it reports notes payable by segment column. Total debt is therefore the sum of those columns, not a tagged total.",
     "ROIC is suppressed: 'invested capital' is not meaningful for an insurance conglomerate funded substantially by float.",
     "Insurance float is a funding source, not debt, and should not be added to leverage measures.",
     "premiums_earned is tagged only 2008-2012, so the long-run underwriting series is incomplete."
