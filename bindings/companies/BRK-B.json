@@ -195,18 +195,48 @@
       ]
     },
     {
-      "metric": "interest_expense",
-      "label": "Interest Expense",
+      "metric": "interest_expense_insurance_other",
+      "label": "Interest Expense \u2014 Insurance and Other",
       "section": "Income statement",
       "bind": [
-        {
-          "element": "us-gaap:InterestExpense"
-        },
         {
           "element": "us-gaap:InterestExpense",
           "dimension": "Insurance and Other"
         }
       ]
+    },
+    {
+      "metric": "interest_expense_railroad_utilities_energy",
+      "label": "Interest Expense \u2014 Railroad, Utilities and Energy",
+      "section": "Income statement",
+      "bind": [
+        {
+          "element": "us-gaap:InterestExpense",
+          "dimension": "Railroad, Utilities and Energy"
+        }
+      ]
+    },
+    {
+      "metric": "interest_expense_finance_products",
+      "label": "Interest Expense \u2014 Finance and Financial Products",
+      "section": "Income statement",
+      "bind": [
+        {
+          "element": "us-gaap:InterestExpense",
+          "dimension": "Finance and Financial Products"
+        }
+      ],
+      "note": "Reported as its own segment column through FY2017 only."
+    },
+    {
+      "metric": "interest_expense",
+      "label": "Interest Expense",
+      "section": "Income statement",
+      "expr": "interest_expense_insurance_other + interest_expense_railroad_utilities_energy + interest_expense_finance_products",
+      "zero_if_absent": [
+        "interest_expense_finance_products"
+      ],
+      "note": "Sum across segment columns for every year, rather than the consolidated tag where one exists (2013 on) and a fallback to a single segment otherwise (the prior binding). The segment sum ties exactly to the consolidated tag in 13 of 15 years; it runs about $400M (~10%) above the consolidated figure in FY2016-FY2017 specifically, which looks like a cross-filing restatement-timing artifact around the Finance-and-Financial-Products segment's 2018 wind-down rather than a real gap. Using one formula for the whole history was judged better than switching sources mid-series."
     },
     {
       "metric": "equity",

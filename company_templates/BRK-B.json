@@ -74,7 +74,10 @@
     "insurance_float": "Berkshire's own float figure from the 10-K MD&A, not a reconstruction. Float is policyholder money the insurer holds and invests before claims are paid: it is a funding source, NOT debt, and must never be added to leverage. Reconstructing it from balance-sheet components understates it materially \u2014 that approach gave $159B for FY2025 against the $176B Berkshire reports \u2014 because the company's definition includes items not separable from the face of the balance sheet.",
     "roa": "Same distortion as ROE: the numerator is net income, dominated by unrealized investment gains/losses since 2018 (ASU 2016-01). Read ROA (operating earnings basis) directly below.",
     "rote": "Net-income-based ROTE compounds the ASU 2016-01 distortion (see Net Income) with a tangible-equity base that already strips goodwill and intangibles, making single-year swings extreme (-6.3% in FY2022 despite profitable operations). Read ROTE (operating earnings basis) directly below.",
-    "net_margin": "Swings from 1.6% to 32.5% year to year purely on unrealized investment gains/losses (ASU 2016-01), not on the profitability of the operating businesses. Read Net Margin (operating earnings basis) directly below."
+    "net_margin": "Swings from 1.6% to 32.5% year to year purely on unrealized investment gains/losses (ASU 2016-01), not on the profitability of the operating businesses. Read Net Margin (operating earnings basis) directly below.",
+    "nopat": "BRK-specific: (Operating Earnings grossed up by actual tax paid, minus interest expense and intangible amortization) x (1 - implied tax rate), using Berkshire's own operating earnings (excludes investment/derivative gains) rather than the generic Operating Income proxy, which for Berkshire is itself dominated by those same gains. See company_plugins/BRK_B.py:postprocess for the exact construction, confirmed with the user rather than assumed.",
+    "economic_goodwill": "BRK-specific: (Operating Earnings grossed up by actual tax paid, minus interest expense and intangible amortization) x (1 - implied tax rate), using Berkshire's own operating earnings (excludes investment/derivative gains) rather than the generic Operating Income proxy, which for Berkshire is itself dominated by those same gains. See company_plugins/BRK_B.py:postprocess for the exact construction, confirmed with the user rather than assumed. Economic Goodwill = this NOPAT / UNTA.",
+    "pretax_economic_goodwill": "BRK-specific: (Operating Earnings grossed up by actual tax paid, minus interest expense and intangible amortization), before the tax multiplier, divided by UNTA. See the NOPAT annotation for the full construction."
   },
   "suppress": [
     "roic",
@@ -516,6 +519,16 @@
         ],
         "detail": "Consolidated debt includes large borrowings at BNSF and BHE that Berkshire does not guarantee. Every leverage figure in this app is consolidated and therefore overstates holding-company leverage. The recourse/non-recourse split is not in XBRL, so the adjusted figure cannot be computed - read the caveat, do not assume the number is parent-level.",
         "source": "FY2018 10-K: Berkshire \"does not guarantee the repayment of debt issued by BNSF, BHE or any of their subsidiaries and is not committed to provide capital to support BNSF, BHE or any of their subsidiaries\""
+      },
+      {
+        "years": "2017",
+        "fact": "NOPAT / Economic Goodwill: the same TCJA benefit flips this SPIKE, not down",
+        "affects": [
+          "economic_goodwill",
+          "nopat",
+          "pretax_economic_goodwill"
+        ],
+        "detail": "NOPAT here is built from operating earnings grossed up by ACTUAL tax paid (not a normalized rate), per the approved construction. In 2017 the one-time $29.1B Tax Cuts and Jobs Act benefit is LARGER than operating earnings itself, so adding it back flips the pretax base negative; that negative, multiplied by (1 - an implied rate that is also negative from the same arithmetic), produces a DOUBLE NEGATIVE -- NOPAT and Economic Goodwill hit their highest point in the 15-year window (12.3%) in 2017, the opposite of what the distortion would suggest. Pre-tax Economic Goodwill, built from the identical inputs but without the final tax multiplier, goes NEGATIVE (-6.0%) instead. Both are the literal, unsmoothed output of the same formula and the same cause; they diverge in direction only because of where the tax multiplier falls."
       }
     ]
   }

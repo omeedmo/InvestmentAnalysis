@@ -2210,6 +2210,8 @@ METRIC_TAGS: dict[str, list[str]] = {
     ],
     "stock_based_compensation": ["ShareBasedCompensation", "AllocatedShareBasedCompensationExpense",
                                   "StockBasedCompensation", "EmployeeBenefitsAndShareBasedCompensation"],
+    "intangible_amortization": ["AmortizationOfIntangibleAssets",
+                                "AmortizationOfIntangibleAssetsExcludingGoodwill"],
     # Unrealized investment gains / (losses) only — positive = gain, negative = loss.
     # Realized gains are kept in net income (they represent actual cash transactions).
     # Unrealized gains are stripped out because they are pure mark-to-market noise
@@ -4535,6 +4537,13 @@ def analyze():
                 d: _flo[d] / fy_get(_so, d[:4])
                 for d in _flo if fy_get(_so, d[:4])
             } or financials.get("float_per_share")
+
+    # Company-specific overrides that need the FULLY finished picture (as-
+    # reported scorecard values, authored history, per-share recompute all
+    # done). Berkshire's NOPAT / Economic Goodwill / Pre-tax Economic Goodwill
+    # need its own operating earnings series, which only exists on `financials`
+    # from this point on -- see company_plugins.BRK_B.postprocess.
+    company_templates.call_hook(_plugin, "postprocess", financials)
 
     # Recompute total_cash from component series when available, then refresh net_cash.
     _cash = financials.get("cash", {})

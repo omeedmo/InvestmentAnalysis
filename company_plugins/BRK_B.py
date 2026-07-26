@@ -666,6 +666,13 @@ def apply_quarterly(financials: dict, quarter_end_dates: dict,
             if qdebt:
                 for dk in ("total_debt", "long_term_debt"):
                     financials.setdefault(dk, {}).update(qdebt)
+            # Berkshire's own float figure as of the quarter-end, preferred
+            # over any balance-sheet reconstruction for the same reason as the
+            # annual series: the company states the number, and the stated
+            # number is the accurate one.
+            qflo = extract_brk_quarterly_float(text, qk, qdate)
+            if qflo is not None:
+                financials.setdefault("insurance_float", {})[qk] = qflo
         except Exception:
             pass
 
@@ -682,11 +689,31 @@ def apply_quarterly(financials: dict, quarter_end_dates: dict,
 
 # ── Insurance float, as Berkshire states it ──────────────────────────────────
 
+# Capture a window after the anchor rather than "to the next period" — a
+# figure like "$176.9 billion" has its own decimal point, which previously
+# made the sentence appear to end mid-number and silently dropped the match.
 _FLOAT_SENTENCE = re.compile(
-    r"Float\s+(?:approximated|was\s+approximately)\s+(.{0,320}?)(?:\.|\bThe\s+cost\b)",
+    r"Float\s+(?:approximated|was\s+approximately)\s+(.{0,320}?)(?:\bThe\s+cost\b|\bOur\s)",
     re.IGNORECASE | re.DOTALL)
+# 10-Ks always give December 31 year-ends; 10-Qs give the quarter-end date
+# ("September 30, 2023") alongside the prior December 31. One pattern handles
+# both — it just captures whatever month/day/year the filing actually printed.
 _FLOAT_PAIR = re.compile(
-    r"\$\s*([\d,]+(?:\.\d+)?)\s*billion\s+at\s+December\s+31,\s*(\d{4})", re.IGNORECASE)
+    r"\$\s*([\d,]+(?:\.\d+)?)\s*billion\s+at\s+([A-Z][a-z]+\s+\d{1,2},\s*\d{4})",
+    re.IGNORECASE)
+_MONTHS = {m: i + 1 for i, m in enumerate(
+    ["January", "February", "March", "April", "May", "June", "July",
+     "August", "September", "October", "November", "December"])}
+
+
+def _float_date_to_iso(date_str: str) -> Optional[str]:
+    m = re.match(r"([A-Z][a-z]+)\s+(\d{1,2}),\s*(\d{4})", date_str.strip())
+    if not m:
+        return None
+    month = _MONTHS.get(m.group(1).capitalize())
+    if not month:
+        return None
+    return f"{m.group(3)}-{month:02d}-{int(m.group(2)):02d}"
 
 
 def extract_berkshire_float(text: str, filing_date: str = "") -> dict[str, float]:
@@ -718,13 +745,151 @@ def extract_berkshire_float(text: str, filing_date: str = "") -> dict[str, float
 
     out: dict[str, float] = {}
     for m in _FLOAT_SENTENCE.finditer(txt):
-        for amount, year in _FLOAT_PAIR.findall(m.group(1)):
+        for amount, date_str in _FLOAT_PAIR.findall(m.group(1)):
             try:
                 value = float(amount.replace(",", "")) * 1_000_000_000
             except ValueError:
                 continue
+            iso = _float_date_to_iso(date_str)
+            if not iso:
+                continue
             # Sanity band: Berkshire's float has never been below $20B in this
             # era nor above $500B. A match outside that is a misread sentence.
-            if 20e9 <= value <= 500e9:
-                out.setdefault(f"{year}-12-31", value)
+            if not (20e9 <= value <= 500e9):
+                continue
+            if iso.endswith("-12-31"):
+                out.setdefault(iso, value)
     return out
+
+
+def extract_brk_quarterly_float(text: str, q_key: str, q_end_date: str) -> Optional[float]:
+    """
+    Berkshire's own float figure as of a quarter-end, from the same MD&A
+    sentence in the 10-Q — worded identically to the 10-K version except the
+    date is the quarter-end rather than always December 31:
+
+        "Float was approximately $176 billion at September 30, 2025 and
+         $171 billion at December 31, 2024"
+
+    Returns the single value matching `q_end_date` (an ISO date), or None.
+    """
+    txt = re.sub(r"<[^>]+>", " ", text)
+    txt = re.sub(r"&#x[0-9a-fA-F]+;|&#\d+;|&[a-zA-Z]+;", " ", txt)
+    txt = re.sub(r"\s+", " ", txt)
+
+    for m in _FLOAT_SENTENCE.finditer(txt):
+        for amount, date_str in _FLOAT_PAIR.findall(m.group(1)):
+            iso = _float_date_to_iso(date_str)
+            if iso != q_end_date:
+                continue
+            try:
+                value = float(amount.replace(",", "")) * 1_000_000_000
+            except ValueError:
+                continue
+            if 20e9 <= value <= 500e9:
+                return value
+    return None
+
+
+# ── NOPAT / Economic Goodwill, BRK-specific ──────────────────────────────────
+
+def postprocess(financials: dict) -> None:
+    """
+    Override NOPAT, Economic Goodwill and Pre-tax Economic Goodwill for
+    Berkshire specifically.
+
+    The app's generic formula is NOPAT = Operating Income x (1 - effective tax
+    rate), where "Operating Income" is a generic revenue-minus-costs proxy.
+    For Berkshire that proxy includes investment and derivative gains (there is
+    no clean GAAP operating-income line for a conglomerate structured this
+    way), so it swings from -$32.4B to +$102.7B year to year on stock-market
+    moves — the same distortion documented on Net Income, just one line lower
+    in the statement. Economic Goodwill (NOPAT / UNTA) inherited that noise.
+
+    The replacement starts from Berkshire's OWN operating earnings (excludes
+    investment/derivative gains, extracted and cross-validated from the MD&A
+    table — see extract_berkshire_operating_earnings) and reconstructs a
+    NOPAT the same way analysts bridge from an after-tax figure to a clean
+    unlevered one:
+
+      1. Berkshire's operating earnings are already AFTER TAX (the 10-K states
+         "Amounts are after deducting income taxes"). To gross it back up to
+         pretax without dividing by Berkshire's CONSOLIDATED effective tax
+         rate -- which is dominated by investment-gain tax effects and even
+         went negative in 2017 (the Tax Cuts and Jobs Act one-time benefit) --
+         add back the actual dollar amount of tax the company paid:
+             pretax_operating_earnings = operating_earnings + income_tax
+         and derive an implied rate from that same pair:
+             implied_tax_rate = income_tax / pretax_operating_earnings
+         This uses the real tax the company wrote a check for, but measures
+         the RATE against a stable operating base instead of Berkshire's
+         volatile consolidated pretax income.
+      2. Subtract net interest expense and intangible amortization from the
+         pretax operating figure -- both real, pretax, recurring charges that
+         Buffett does not include in the segment table's earnings-power view
+         but that a NOPAT figure should account for.
+      3. Tax-effect the result once, at the implied rate from step 1.
+
+    NOPAT = (operating_earnings + income_tax - interest_expense
+             - intangible_amortization) x (1 - income_tax / (operating_earnings + income_tax))
+
+    This was a deliberate choice among several defensible readings of the same
+    English sentence -- confirmed with the user rather than assumed, because
+    the alternatives (taxing the figure twice, or grossing it up with the
+    consolidated rate) would have produced materially different numbers.
+    """
+    from datetime import datetime
+
+    oe   = financials.get("brk_operating_earnings", {})
+    tax  = financials.get("income_tax", {})
+    ie   = financials.get("interest_expense", {})
+    amort = financials.get("intangible_amortization", {})
+    unta = financials.get("unta", {})
+    if not oe:
+        return
+
+    def by_year(series: dict) -> dict:
+        return {k[:4]: v for k, v in series.items()
+                if len(k) >= 4 and k[:4].isdigit() and v is not None}
+
+    oe_y, tax_y, ie_y, amort_y, unta_y = map(by_year, (oe, tax, ie, amort, unta))
+
+    nopat: dict[str, float] = {}
+    pretax_nopat: dict[str, float] = {}
+    econ_gw: dict[str, float] = {}
+    pretax_econ_gw: dict[str, float] = {}
+
+    for year, operating_earnings in oe_y.items():
+        tax_paid = tax_y.get(year)
+        if tax_paid is None:
+            continue
+        pretax_operating_earnings = operating_earnings + tax_paid
+        if pretax_operating_earnings == 0:
+            continue
+        # No clamp: 2017 carries Berkshire's one-time $29.1B Tax Cuts and Jobs
+        # Act deferred-tax benefit through the consolidated tax line, which
+        # swamps operating earnings and pushes the implied rate past 100% and
+        # the pretax base negative. That is a real, disclosed event, not a
+        # data error, and it is captured here rather than smoothed away.
+        implied_rate = tax_paid / pretax_operating_earnings
+
+        interest = ie_y.get(year, 0.0) or 0.0
+        amortization = amort_y.get(year, 0.0) or 0.0
+        pretax_figure = pretax_operating_earnings - interest - amortization
+
+        key = f"{year}-12-31"
+        pretax_nopat[key] = pretax_figure
+        nopat[key] = pretax_figure * (1 - implied_rate)
+
+        u = unta_y.get(year)
+        if u and u > 0:
+            econ_gw[key] = nopat[key] / u
+            pretax_econ_gw[key] = pretax_figure / u
+
+    if nopat:
+        financials["nopat"] = nopat
+        financials["pretax_nopat_brk"] = pretax_nopat   # not a UI row; kept for provenance/debugging
+    if econ_gw:
+        financials["economic_goodwill"] = econ_gw
+    if pretax_econ_gw:
+        financials["pretax_economic_goodwill"] = pretax_econ_gw
