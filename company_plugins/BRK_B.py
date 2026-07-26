@@ -881,17 +881,21 @@ def postprocess(financials: dict) -> None:
         # a financing cost, not an operating one) and to undo the non-cash
         # purchase-accounting amortization charge Buffett does not treat as a
         # real economic cost. Both come off what was already deducted in
-        # arriving at operating earnings.
-        pretax_figure = pretax_operating_earnings + interest + amortization
+        # arriving at operating earnings. This sum IS Berkshire's EBIT:
+        # Operating Earnings + Income Tax + Net Interest Expense + Intangible
+        # Amortization -- earnings before interest and taxes, reconstructed
+        # from the after-tax operating earnings figure rather than read off a
+        # GAAP operating-income line Berkshire doesn't report.
+        ebit = pretax_operating_earnings + interest + amortization
 
         key = f"{year}-12-31"
-        pretax_nopat[key] = pretax_figure
-        nopat[key] = pretax_figure * (1 - implied_rate)
+        pretax_nopat[key] = ebit
+        nopat[key] = ebit * (1 - implied_rate)
 
         u = unta_y.get(year)
         if u and u > 0:
             econ_gw[key] = nopat[key] / u
-            pretax_econ_gw[key] = pretax_figure / u
+            pretax_econ_gw[key] = ebit / u   # Pre-tax Economic Goodwill = EBIT / UNTA
 
     if nopat:
         financials["nopat"] = nopat
