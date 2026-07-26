@@ -2,10 +2,8 @@
   "ticker": "BRK-B",
   "cik": 1067983,
   "generated_by": "session-authored (Claude Opus 4.8) from BRK 10-K XBRL + coverage audit",
-  "summary": "Insurance-led conglomerate. Since ASU 2016-01 forced unrealized equity gains through the income statement in 2018, GAAP net income mostly measures the stock market, not the business — Buffett explicitly tells shareholders to ignore it. Judge Berkshire on operating earnings (ex investment gains), growth in book value per share, and float.",
-
+  "summary": "Insurance-led conglomerate. Since ASU 2016-01 forced unrealized equity gains through the income statement in 2018, GAAP net income mostly measures the stock market, not the business \u2014 Buffett explicitly tells shareholders to ignore it. Judge Berkshire on operating earnings (ex investment gains), growth in book value per share, and float.",
   "plugin": "BRK_B",
-
   "metrics": [
     {
       "key": "brk_operating_earnings_row",
@@ -15,25 +13,441 @@
       "basis": "reported",
       "reported_ref": "net_income",
       "expr": "brk_operating_earnings",
-      "why": "The figure Berkshire itself presents and tells shareholders to judge the business on: earnings of the operating subsidiaries and insurance underwriting/investment income, excluding investment and derivative gains. Since ASU 2016-01 forced unrealized equity marks through the income statement in 2018, GAAP net income mostly tracks the stock market rather than the businesses — FY2024 was $89.0B reported against $47.4B of operating earnings.",
-      "evidence": "Extracted by the BRK_B plugin from the 'Earnings (loss) before income taxes'/operating earnings table in the 10-K MD&A. Berkshire tags no XBRL concept for it, so this comes from filing text, not from tagged data.",
+      "why": "The figure Berkshire itself presents and tells shareholders to judge the business on: earnings of the operating subsidiaries and insurance underwriting/investment income, excluding investment and derivative gains. Since ASU 2016-01 forced unrealized equity marks through the income statement in 2018, GAAP net income mostly tracks the stock market rather than the businesses \u2014 FY2024 was $89.0B reported against $47.4B of operating earnings.",
+      "evidence": "Authored into this template from the MD&A earnings-attribution table of every 10-K FY2011-FY2025; see history.method. Berkshire tags no XBRL concept for it.",
       "confidence": "high"
     }
   ],
-
   "annotations": {
-    "total_debt": "A large share of Berkshire's debt sits at BNSF and Berkshire Hathaway Energy and is NON-RECOURSE to the parent — Berkshire does not guarantee it. Consolidated total debt therefore overstates holding-company leverage. The recourse/non-recourse split is disclosed only in 10-K text and segment tables, not in XBRL, so the app cannot compute the adjusted figure; read this line as consolidated, not parent-level.",
-    "net_income": "Dominated by unrealized investment gains/losses since 2018 (ASU 2016-01) — $89.0B reported in FY2024 against $47.4B of operating earnings. Berkshire reports operating earnings separately and the app already extracts that figure from the 10-K text (brk_operating_earnings); use it rather than net income. Note a naive net income minus investment_gains does NOT reproduce it ($39.7B vs $47.4B), because the tagged investment_gains series captures only unrealized equity marks, not all investment gains.",
+    "total_debt": "A large share of Berkshire's debt sits at BNSF and Berkshire Hathaway Energy and is NON-RECOURSE to the parent \u2014 Berkshire does not guarantee it. Consolidated total debt therefore overstates holding-company leverage. The recourse/non-recourse split is disclosed only in 10-K text and segment tables, not in XBRL, so the app cannot compute the adjusted figure; read this line as consolidated, not parent-level.",
+    "net_income": "Dominated by unrealized investment gains/losses since 2018 (ASU 2016-01) \u2014 $89.0B reported in FY2024 against $47.4B of operating earnings. Berkshire reports operating earnings separately and the app already extracts that figure from the 10-K text (brk_operating_earnings); use it rather than net income. Note a naive net income minus investment_gains does NOT reproduce it ($39.7B vs $47.4B), because the tagged investment_gains series captures only unrealized equity marks, not all investment gains.",
     "roe": "Distorted by the same mark-to-market swings in the numerator; a poor read on Berkshire's economics.",
     "pe_ratio": "Distorted by mark-to-market earnings; price-to-book has historically been the more useful yardstick for Berkshire."
   },
-
-  "suppress": ["roic", "pretax_roic"],
-
+  "suppress": [
+    "roic",
+    "pretax_roic"
+  ],
   "caveats": [
     "Berkshire tags NO standard long-term-debt concept in XBRL (it reports debt by segment), which is why the app text-extracts total debt from the 10-K. Debt figures here come from that extraction, not from tagged data.",
     "ROIC is suppressed: 'invested capital' is not meaningful for an insurance conglomerate funded substantially by float.",
     "Insurance float is a funding source, not debt, and should not be added to leverage measures.",
     "premiums_earned is tagged only 2008-2012, so the long-run underwriting series is incomplete."
-  ]
+  ],
+  "history": {
+    "authored_from": "the 20 Berkshire Hathaway 10-Ks on EDGAR (CIK 1067983) covering FY2006-FY2025",
+    "why": "These filings are immutable, so the year-by-year reading of them is a fact that belongs in version control, not something to re-derive by regex on every request. The runtime uses these values directly; the plugin's parser now only has to handle 10-Ks filed after this template was written.",
+    "method": "From each 10-K's MD&A earnings-attribution table: operating earnings = the printed net-earnings total less the investment/derivative gain and other non-operating rows. Every column was reconciled against the printed total, and because each filing restates three years, every value below was confirmed by two or three independent filings.",
+    "segment_lineage": {
+      "insurance_underwriting": {
+        "labels": [
+          "Insurance underwriting (FY2007-FY2021)",
+          "Insurance - underwriting (FY2022-)"
+        ],
+        "years": "2007-2025",
+        "note": "Continuous. The label gained an en dash in the FY2022 10-K; the segment did not change."
+      },
+      "insurance_investment_income": {
+        "labels": [
+          "Insurance investment income (FY2007-FY2021)",
+          "Insurance - investment income (FY2022-)"
+        ],
+        "years": "2007-2025",
+        "note": "Continuous. Dividend and interest income on the float-funded portfolio, excluding gains on the securities themselves."
+      },
+      "railroad_bnsf": {
+        "labels": [
+          "Railroad (FY2010-FY2022)",
+          "BNSF (FY2023-)"
+        ],
+        "years": "2010-2025",
+        "note": "Berkshire acquired the remainder of BNSF in February 2010. There is NO railroad segment before 2010 - the blank years are a fact about the business, not missing data, and a growth rate spanning 2009-2010 measures an acquisition."
+      },
+      "utilities_bhe": {
+        "labels": [
+          "Utilities and energy (FY2007-FY2022)",
+          "Berkshire Hathaway Energy (BHE) (FY2023-)"
+        ],
+        "years": "2007-2025",
+        "note": "Same segment throughout, renamed in the FY2023 10-K. Berkshire's ownership rose from ~89% to ~92% in 2024, so the attributable share is not constant."
+      },
+      "manufacturing_service_retail": {
+        "labels": [
+          "Manufacturing, service and retailing"
+        ],
+        "years": "2007-2025",
+        "note": "Continuous, but the most frequently restated line: it absorbed the finance and financial products businesses after FY2017 and Pilot Travel Centers after FY2023, so its multi-year growth mixes organic performance with reclassification."
+      },
+      "finance_products": {
+        "labels": [
+          "Finance and financial products"
+        ],
+        "years": "2007-2017",
+        "note": "Reported separately through FY2017 only. From the FY2018 10-K these businesses are inside manufacturing, service and retailing and 'other'; the series ENDS rather than going to zero."
+      },
+      "non_controlled_businesses": {
+        "labels": [
+          "Non-controlled businesses"
+        ],
+        "years": "2021-2024",
+        "note": "Berkshire's share of businesses held between 20% and 50% (Kraft Heinz, Pilot pre-control, Berkadia), broken out only in the FY2023 and FY2024 10-Ks and folded back into 'other' in FY2025."
+      },
+      "pilot_travel_centers": {
+        "labels": [
+          "Pilot Travel Centers (PTC)"
+        ],
+        "years": "2023",
+        "note": "Broken out for FY2023 alone, the year Berkshire took control. From FY2024 it sits inside manufacturing, service and retailing."
+      },
+      "investment_and_derivative_gains": {
+        "labels": [
+          "Investment and derivative gains/losses (FY2007-FY2021)",
+          "Investment and derivative contract gains (losses) (FY2022-FY2023)",
+          "Investment gains (losses) (FY2024-)"
+        ],
+        "years": "2007-2025",
+        "note": "EXCLUDED from operating earnings. From 2018 this line carries unrealized marks on the equity portfolio (ASU 2016-01) and is the reason GAAP net income swings by tens of billions a year."
+      },
+      "impairment_kraft_occidental": {
+        "labels": [
+          "Other-than-temporary impairment of investments in Kraft Heinz and Occidental"
+        ],
+        "years": "2025",
+        "note": "EXCLUDED. A one-off $8.3B write-down disclosed in the FY2025 10-K only."
+      },
+      "tax_cuts_and_jobs_act_2017": {
+        "labels": [
+          "Tax Cuts and Jobs Act of 2017"
+        ],
+        "years": "2017",
+        "note": "EXCLUDED. A $29.1B one-time deferred-tax remeasurement benefit. It appears in the FY2017, FY2018 and FY2019 10-Ks, each time in a different column, and is the single largest distortion of 2017 GAAP net income."
+      }
+    },
+    "restatements_note": "Berkshire periodically moves businesses between segments and restates prior years. Where filings disagree, the value used is the one from the MOST RECENT 10-K that reports that year, with the originally-reported figure kept below. In every case the restatements are reclassifications between segments: the operating-earnings TOTAL for a given year is identical across filings.",
+    "restatements": {
+      "finance_products": {
+        "2012": {
+          "used": 899000000,
+          "used_from_10k_fy": "2014",
+          "as_first_reported": {
+            "2012": 557000000,
+            "2013": 557000000
+          }
+        },
+        "2013": {
+          "used": 1008000000,
+          "used_from_10k_fy": "2015",
+          "as_first_reported": {
+            "2013": 657000000
+          }
+        }
+      },
+      "insurance_investment_income": {
+        "2017": {
+          "used": 3887000000,
+          "used_from_10k_fy": "2019",
+          "as_first_reported": {
+            "2017": 3917000000
+          }
+        }
+      },
+      "insurance_underwriting": {
+        "2021": {
+          "used": 870000000,
+          "used_from_10k_fy": "2023",
+          "as_first_reported": {
+            "2021": 728000000,
+            "2022": 728000000
+          }
+        },
+        "2022": {
+          "used": -30000000,
+          "used_from_10k_fy": "2024",
+          "as_first_reported": {
+            "2022": -90000000
+          }
+        }
+      },
+      "manufacturing_service_retail": {
+        "2012": {
+          "used": 3357000000,
+          "used_from_10k_fy": "2014",
+          "as_first_reported": {
+            "2012": 3699000000,
+            "2013": 3699000000
+          }
+        },
+        "2013": {
+          "used": 3877000000,
+          "used_from_10k_fy": "2015",
+          "as_first_reported": {
+            "2013": 4230000000
+          }
+        },
+        "2016": {
+          "used": 6803000000,
+          "used_from_10k_fy": "2018",
+          "as_first_reported": {
+            "2016": 5631000000,
+            "2017": 5631000000
+          }
+        },
+        "2017": {
+          "used": 7282000000,
+          "used_from_10k_fy": "2019",
+          "as_first_reported": {
+            "2017": 6208000000
+          }
+        },
+        "2023": {
+          "used": 13362000000,
+          "used_from_10k_fy": "2025",
+          "as_first_reported": {
+            "2023": 12759000000
+          }
+        }
+      },
+      "other": {
+        "2013": {
+          "used": -712000000,
+          "used_from_10k_fy": "2015",
+          "as_first_reported": {
+            "2013": -714000000
+          }
+        },
+        "2016": {
+          "used": -31000000,
+          "used_from_10k_fy": "2018",
+          "as_first_reported": {
+            "2016": -343000000,
+            "2017": -343000000
+          }
+        },
+        "2017": {
+          "used": -485000000,
+          "used_from_10k_fy": "2019",
+          "as_first_reported": {
+            "2017": -826000000
+          }
+        },
+        "2020": {
+          "used": -11368000000,
+          "used_from_10k_fy": "2022",
+          "as_first_reported": {
+            "2020": -11318000000,
+            "2021": -11318000000
+          }
+        },
+        "2021": {
+          "used": 434000000,
+          "used_from_10k_fy": "2023",
+          "as_first_reported": {
+            "2021": 1315000000,
+            "2022": 1238000000
+          }
+        },
+        "2022": {
+          "used": 509000000,
+          "used_from_10k_fy": "2024",
+          "as_first_reported": {
+            "2022": 2037000000
+          }
+        },
+        "2023": {
+          "used": 1575000000,
+          "used_from_10k_fy": "2025",
+          "as_first_reported": {
+            "2023": -175000000,
+            "2024": -175000000
+          }
+        },
+        "2024": {
+          "used": 2914000000,
+          "used_from_10k_fy": "2025",
+          "as_first_reported": {
+            "2024": 1395000000
+          }
+        }
+      },
+      "utilities_bhe": {
+        "2016": {
+          "used": 2230000000,
+          "used_from_10k_fy": "2018",
+          "as_first_reported": {
+            "2016": 2287000000,
+            "2017": 2287000000
+          }
+        },
+        "2017": {
+          "used": 2033000000,
+          "used_from_10k_fy": "2019",
+          "as_first_reported": {
+            "2017": 2083000000
+          }
+        },
+        "2020": {
+          "used": 3141000000,
+          "used_from_10k_fy": "2022",
+          "as_first_reported": {
+            "2020": 3091000000,
+            "2021": 3091000000
+          }
+        },
+        "2021": {
+          "used": 3572000000,
+          "used_from_10k_fy": "2023",
+          "as_first_reported": {
+            "2021": 3495000000
+          }
+        }
+      }
+    },
+    "series": {
+      "brk_operating_earnings": {
+        "2011-12-31": 10775000000,
+        "2012-12-31": 12597000000,
+        "2013-12-31": 15139000000,
+        "2014-12-31": 16551000000,
+        "2015-12-31": 17358000000,
+        "2016-12-31": 17577000000,
+        "2017-12-31": 14457000000,
+        "2018-12-31": 21758000000,
+        "2019-12-31": 23972000000,
+        "2020-12-31": 10930000000,
+        "2021-12-31": 27597000000,
+        "2022-12-31": 30853000000,
+        "2023-12-31": 37350000000,
+        "2024-12-31": 47437000000,
+        "2025-12-31": 44486000000
+      }
+    },
+    "comparability": [
+      {
+        "years": "2010",
+        "fact": "BNSF consolidated from 12 February 2010",
+        "affects": [
+          "revenue",
+          "total_assets",
+          "total_debt",
+          "operating_income",
+          "depreciation",
+          "capex"
+        ],
+        "detail": "Berkshire bought the ~77.5% of BNSF it did not own and stopped using the equity method. Revenue, assets, PP&E, depreciation and debt all step up in 2010 for that reason alone, and the railroad segment does not exist before 2010. Any growth rate spanning 2009-2010 measures an acquisition, not the business.",
+        "source": "FY2010 10-K: \"As a result of our acquisition of the remaining outstanding stock of BNSF on February 12, 2010, we discontinued the use of the equity method and since that date, BNSF's accounts have been consolidated\""
+      },
+      {
+        "years": "2010",
+        "fact": "50-for-1 Class B stock split effective 21 January 2010",
+        "affects": [
+          "shares_outstanding_end",
+          "eps_diluted",
+          "book_value_per_share",
+          "dividends_per_share"
+        ],
+        "detail": "The Class A shares were NOT split; only Class B. This app reports every per-share figure in post-split B-equivalents (Class A x 1500 + Class B) across the whole history, so the series is already consistent - but any per-B-share figure quoted from a pre-2010 filing is on a 50x different basis.",
+        "source": "FY2009 10-K: shareholders approved \"a 50-for-1 split of the Class B common stock which became effective on January 21, 2010. The Class A common stock was not split.\""
+      },
+      {
+        "years": "2016",
+        "fact": "Precision Castparts acquired 29 January 2016",
+        "affects": [
+          "revenue",
+          "operating_income",
+          "goodwill",
+          "intangibles",
+          "total_debt"
+        ],
+        "detail": "A ~$32B acquisition, the largest in Berkshire's history at the time, funded partly with new debt. It steps up the manufacturing, service and retailing segment and the goodwill and intangibles balances.",
+        "source": "FY2016 10-K: \"Berkshire acquired Precision Castparts Corp. ('PCC') on January 29, 2016.\""
+      },
+      {
+        "years": "2017",
+        "fact": "Tax Cuts and Jobs Act: one-time $29.1B net benefit",
+        "affects": [
+          "net_income",
+          "effective_tax_rate",
+          "roe",
+          "eps_diluted"
+        ],
+        "detail": "A non-cash remeasurement of deferred tax liabilities, worth about two-thirds of 2017 reported net earnings. 2017 net income, EPS, ROE and the effective tax rate are all uninformative about the business. Operating earnings for 2017 in this template EXCLUDE it.",
+        "source": "FY2017 10-K: \"Net earnings in 2017 includes a one-time net benefit of $29.1 billion attributable to the enactment of the Tax Cuts and Jobs Act of 2017.\""
+      },
+      {
+        "years": "2018-",
+        "fact": "ASU 2016-01 adopted 1 January 2018: unrealized equity marks run through earnings",
+        "affects": [
+          "net_income",
+          "eps_diluted",
+          "roe",
+          "net_margin"
+        ],
+        "detail": "THE most important break in this company's history for comparability. Before 2018, changes in the market value of the equity portfolio went to other comprehensive income; from 2018 they go through net earnings. Net income before and after 2018 are not the same measure, and the difference is tens of billions a year on a portfolio of this size. Use operating earnings for any comparison spanning 2018.",
+        "source": "FY2018 10-K: ASU 2016-01 \"does not affect our consolidated shareholders' equity or total comprehensive income, [but] it has significantly increased the volatility of our periodic net earnings due to the magnitude of our equity securities portfolio\""
+      },
+      {
+        "years": "2018-",
+        "fact": "Buyback program liberalised 17 July 2018",
+        "affects": [
+          "shares_outstanding_end",
+          "eps_diluted",
+          "book_value_per_share"
+        ],
+        "detail": "The old program capped repurchases at a 20% premium to book value, which in practice meant almost no buybacks. From July 2018 Berkshire may buy back whenever Buffett judges the price below intrinsic value. Per-share growth from 2019 onward therefore contains a share-count effect that earlier years do not.",
+        "source": "FY2018 10-K: \"On July 17, 2018, Berkshire's Board of Directors authorized an amendment to the program, permitting Berkshire to repurchase shares any time that Warren Buffett... believes the repurchase price is below Berkshire's intrinsic value\""
+      },
+      {
+        "years": "2018,2019,2020",
+        "fact": "Goodwill and intangible impairments of $3.0B, $0.4B and $11.0B",
+        "affects": [
+          "net_income",
+          "operating_income",
+          "goodwill"
+        ],
+        "detail": "Mostly Berkshire's share of Kraft Heinz write-downs, reported inside the 'Other' line of the earnings-attribution table rather than as a separate segment. The 2020 charge alone is roughly the size of that year's entire operating earnings.",
+        "source": "FY2020 10-K: \"after-tax goodwill and indefinite-lived intangible asset impairment charges of $11.0 billion in 2020, $435 million in 2019 and $3.0 billion in 2018\""
+      },
+      {
+        "years": "2022",
+        "fact": "Alleghany acquired 19 October 2022",
+        "affects": [
+          "revenue",
+          "premiums_earned",
+          "total_assets"
+        ],
+        "detail": "An $11.6B insurance acquisition folded into the BH Primary and BHRG underwriting results from that date, so 2023 insurance revenue and underwriting results are not like-for-like against 2022 and earlier.",
+        "source": "FY2022 10-K: \"On October 19, 2022, Berkshire acquired Alleghany Corporation... These businesses were included in the BH Primary and BHRG underwriting results beginning as of\" the acquisition date"
+      },
+      {
+        "years": "2023",
+        "fact": "Pilot Travel Centers consolidated from January 2023",
+        "affects": [
+          "revenue",
+          "operating_income",
+          "total_assets"
+        ],
+        "detail": "Berkshire moved from a minority stake to control. Pilot is a very high-revenue, thin-margin fuel business, so consolidated revenue steps up far more than earnings do - 2023 revenue growth substantially overstates the underlying business. It is broken out separately for FY2023 only and sits inside manufacturing, service and retailing from FY2024.",
+        "source": "FY2023 10-K MD&A earnings-attribution table, which shows 'Pilot Travel Centers (PTC)' for 2023 alone"
+      },
+      {
+        "years": "2025",
+        "fact": "$8.3B other-than-temporary impairment on Kraft Heinz and Occidental",
+        "affects": [
+          "net_income"
+        ],
+        "detail": "A one-off write-down disclosed as its own line in the FY2025 attribution table and excluded from operating earnings here.",
+        "source": "FY2025 10-K: 'Other-than-temporary impairment of investments in Kraft Heinz and Occidental'"
+      },
+      {
+        "years": "all",
+        "fact": "Subsidiary debt is non-recourse to the parent",
+        "affects": [
+          "total_debt",
+          "net_cash"
+        ],
+        "detail": "Consolidated debt includes large borrowings at BNSF and BHE that Berkshire does not guarantee. Every leverage figure in this app is consolidated and therefore overstates holding-company leverage. The recourse/non-recourse split is not in XBRL, so the adjusted figure cannot be computed - read the caveat, do not assume the number is parent-level.",
+        "source": "FY2018 10-K: Berkshire \"does not guarantee the repayment of debt issued by BNSF, BHE or any of their subsidiaries and is not committed to provide capital to support BNSF, BHE or any of their subsidiaries\""
+      }
+    ]
+  }
 }

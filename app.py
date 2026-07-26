@@ -4200,6 +4200,10 @@ def analyze():
     # than special-case them here, the company template names a plugin module
     # and we call its hooks generically; see company_templates.load_plugin.
     _plugin = company_templates.load_plugin(ctemplate)
+    # Authored history first: it is read from filings that can never change, so
+    # it is the authority for the years it covers and it spares the plugin from
+    # re-fetching those filings at all.
+    company_templates.apply_history(financials, ctemplate)
     if _plugin is not None:
         company_templates.call_hook(_plugin, "seed_from_facts", facts, financials)
 
@@ -5138,6 +5142,8 @@ def analyze():
             "annotations":   ctemplate.get("annotations", {}),
             "suppress":      ctemplate.get("suppress", []),
             "caveats":       ctemplate.get("caveats", []),
+            # Dated, filing-sourced facts about what changed and when.
+            "comparability": (ctemplate.get("history") or {}).get("comparability", []),
         }
 
     # ── Market price (Yahoo) + market stats (beta, 52w) ─────────────────────

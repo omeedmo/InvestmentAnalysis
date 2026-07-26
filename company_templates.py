@@ -199,6 +199,7 @@ def load_template(ticker: str) -> Optional[dict]:
         company = {**parent, **{k: v for k, v in company.items() if k != "extends"}}
 
     sector = load_sector(company.get("sector_template", "")) if company.get("sector_template") else {}
+    _fold_comparability(company)
     merged = {
         "ticker": tk,
         "sector_template": company.get("sector_template"),
@@ -214,9 +215,38 @@ def load_template(ticker: str) -> Optional[dict]:
         "summary":     company.get("summary", ""),
         "generated_by": company.get("generated_by", ""),
         "plugin":      company.get("plugin") or sector.get("plugin"),
+        "history":     company.get("history", {}),
     }
     _CACHE[tk] = merged
     return merged
+
+
+def _fold_comparability(company: dict) -> None:
+    """
+    Turn `history.comparability` facts into per-metric annotations.
+
+    A company is not the same company across fifteen years, and the things that
+    break comparability are knowable from the filings: an acquisition that gets
+    consolidated mid-history, an accounting standard that changes what a line
+    MEANS, a one-off tax or impairment item. Each fact names the metrics it
+    affects, so the reader gets warned at the row they are actually looking at
+    rather than having to find it in a footnote.
+    """
+    facts = ((company.get("history") or {}).get("comparability")) or []
+    if not facts:
+        return
+    by_metric: dict[str, list[str]] = {}
+    for f in facts:
+        line = f"{f.get('years','')}: {f.get('fact','')} — {f.get('detail','')}".strip()
+        for metric in f.get("affects", []):
+            by_metric.setdefault(metric, []).append(line)
+
+    annotations = dict(company.get("annotations") or {})
+    for metric, lines in by_metric.items():
+        existing = annotations.get(metric)
+        block = "  ".join(lines)
+        annotations[metric] = f"{existing}  {block}" if existing else block
+    company["annotations"] = annotations
 
 
 def _dedupe_by_key(metrics: list) -> list:
@@ -237,6 +267,33 @@ def apply_add_tags(metric_tags: dict, template: Optional[dict]) -> dict:
         base = list(merged.get(metric) or [])
         merged[metric] = base + [t for t in tags if t not in base]
     return merged
+
+
+# ── Authored history ─────────────────────────────────────────────────────────
+
+def apply_history(financials: dict, template: Optional[dict]) -> None:
+    """
+    Merge a template's authored `history.series` into `financials`.
+
+    Filed 10-Ks are immutable, so a careful year-by-year reading of them is a
+    fact that can be committed rather than re-derived from filing prose on
+    every request. Where a template declares history, it is AUTHORITATIVE for
+    the periods it covers: it was written against the filings themselves, with
+    its provenance and any restatements recorded alongside it, which is more
+    than the tagged data can say for a company like Berkshire that tags no
+    concept for the figure at all.
+
+    Periods the history does not cover are left untouched, so a filing made
+    after the template was written still flows through the normal path.
+    """
+    hist = (template or {}).get("history") or {}
+    for metric, series in (hist.get("series") or {}).items():
+        if not isinstance(series, dict):
+            continue
+        target = financials.setdefault(metric, {})
+        for period, value in series.items():
+            if value is not None:
+                target[period] = float(value)
 
 
 # ── Computing template metrics ───────────────────────────────────────────────
