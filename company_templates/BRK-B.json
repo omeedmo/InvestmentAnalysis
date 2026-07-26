@@ -55,9 +55,9 @@
     },
     {
       "key": "net_margin_operating_row",
-      "label": "Net Margin (operating earnings basis)",
+      "label": "Net Margin (Operating Earnings Basis)",
       "type": "%",
-      "after": "net_margin",
+      "after": "operating_margin",
       "basis": "adjusted",
       "reported_ref": "net_margin",
       "expr": "brk_operating_earnings / revenue",

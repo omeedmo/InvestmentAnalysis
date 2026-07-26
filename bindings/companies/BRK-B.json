@@ -108,8 +108,8 @@
       "note": "Berkshire's T-bill pile is a company extension tag under the insurance segment column, so companyfacts cannot see it."
     },
     {
-      "metric": "cash",
-      "label": "Cash & Cash Equivalents",
+      "metric": "cash_insurance_other",
+      "label": "Cash & Cash Equivalents \u2014 Insurance and Other",
       "section": "Balance sheet",
       "bind": [
         {
@@ -122,6 +122,27 @@
         }
       ],
       "note": "Berkshire prints cash per segment column and no consolidated line; the insurance-and-other column is the holding-company pile that matters."
+    },
+    {
+      "metric": "cash_railroad_utilities_energy",
+      "label": "Cash & Cash Equivalents \u2014 Railroad, Utilities and Energy",
+      "section": "Balance sheet",
+      "bind": [
+        {
+          "element": "us-gaap:CashAndCashEquivalentsAtCarryingValue",
+          "dimension": "Railroad, Utilities and Energy"
+        }
+      ]
+    },
+    {
+      "metric": "cash",
+      "label": "Cash & Cash Equivalents",
+      "section": "Balance sheet",
+      "expr": "cash_insurance_other + cash_railroad_utilities_energy",
+      "zero_if_absent": [
+        "cash_railroad_utilities_energy"
+      ],
+      "note": "Sum across segment columns \u2014 Berkshire tags no consolidated cash line either. The prior binding used the insurance-and-other column alone (~$47.7B in FY2025), understating consolidated cash by the ~$3-4B the railroad/utilities/energy segment holds every year, which fed directly into an understated cash deduction in UNTA."
     },
     {
       "metric": "total_cash",
@@ -201,8 +222,8 @@
       "metric": "unta",
       "label": "Unlevered Net Tangible Assets",
       "section": "Capital quality",
-      "expr": "total_assets - goodwill - intangibles - total_debt",
-      "note": "Tangible assets net of borrowings. Goodwill and intangibles are removed because they are purchase-accounting artefacts, not deployable capital."
+      "expr": "equity + total_debt - total_cash - goodwill - intangibles",
+      "note": "Matches the app's standard formula (Equity + Total Debt - Total Cash - Goodwill - Intangibles): adds back debt to reach an unlevered tangible capital base, then strips out cash and accounting intangibles. An earlier version of this override used Total Assets - Goodwill - Intangibles - Total Debt, which subtracted debt with the wrong sign and omitted cash entirely, overstating UNTA (FY2025: $976B vs the corrected $360B)."
     },
     {
       "metric": "tangible_equity",
