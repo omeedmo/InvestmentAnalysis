@@ -65,6 +65,26 @@ def _period_year(period: str) -> Optional[int]:
 
 # ── Fact base ────────────────────────────────────────────────────────────────
 
+def _is_restatement(current: float, earlier: float, tolerance: float = 0.001) -> bool:
+    """
+    Did the company actually restate this figure, or does it merely print
+    differently?
+
+    Two figures of the same magnitude and opposite sign are a presentation
+    difference, not a restatement — a line taken from the income statement in
+    one filing and from the cash flow reconciliation in another legitimately
+    carries opposite signs. Flagging those as restatements marked every year of
+    Berkshire's investment gains as restated, which is noise that would teach a
+    reader to ignore the marker entirely.
+    """
+    if abs(current) < 1e-9 and abs(earlier) < 1e-9:
+        return False
+    scale = max(abs(current), abs(earlier))
+    if abs(abs(current) - abs(earlier)) <= scale * tolerance:
+        return False          # same magnitude: sign convention only
+    return True
+
+
 def _facts_index(facts: Optional[dict]) -> dict:
     """{(concept, end): raw signed value} from companyfacts, longest span wins."""
     if not facts:
@@ -162,9 +182,9 @@ def build_factbase(cik: str, filings: list, years: int = 15,
                     slot = factbase.setdefault(year, {})
                     if key in slot:
                         prior = slot[key]
-                        if (prior["value"] != value
-                                and prior["from_fy"] != str(fy)
-                                and "restated_from" not in prior):
+                        if (prior["from_fy"] != str(fy)
+                                and "restated_from" not in prior
+                                and _is_restatement(prior["value"], value)):
                             # An older filing reported this year differently.
                             prior["restated_from"] = {
                                 "value": value, "in_10k_fy": str(fy)}

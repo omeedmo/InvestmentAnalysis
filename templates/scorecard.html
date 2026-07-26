@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>As-Reported Scorecard</title>
+<style>
+:root{
+  --bg:#ffffff; --panel:#f8fafc; --text:#0f172a; --muted:#64748b;
+  --line:#e2e8f0; --accent:#0f766e; --warn:#b45309; --warnbg:#fffbeb;
+  --glob:#0369a1; --sect:#7c3aed; --comp:#be123c;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --bg:#0b1120; --panel:#111a2e; --text:#e2e8f0; --muted:#94a3b8;
+         --line:#1e293b; --accent:#2dd4bf; --warnbg:#2a2008; }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);
+     font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:1600px;margin:0 auto;padding:20px 16px 60px}
+h1{font-size:19px;margin:0 0 2px}
+.sub{color:var(--muted);font-size:12px;margin-bottom:16px}
+form{display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap}
+input,button{font:inherit;padding:8px 12px;border:1px solid var(--line);
+             border-radius:6px;background:var(--panel);color:var(--text)}
+button{cursor:pointer;background:var(--accent);color:#fff;border-color:transparent;font-weight:600}
+.verify{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--accent);
+        border-radius:6px;padding:10px 14px;margin-bottom:16px;font-size:12px}
+.verify b{color:var(--accent)}
+.verify .bad{color:var(--warn)}
+.scroll{overflow-x:auto;border:1px solid var(--line);border-radius:8px}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
+th,td{padding:6px 9px;text-align:right;white-space:nowrap;border-bottom:1px solid var(--line)}
+/* No vertical sticky here: the header sits inside an overflow-x container,
+   which is not the page scroller, so `top:0` would never actually pin. The
+   LABEL column below is sticky on `left`, which does work in that container
+   and is what matters when scrolling 15 years sideways. */
+thead th{background:var(--panel);font-size:11px;
+         color:var(--muted);font-weight:600}
+th.lbl,td.lbl{text-align:left;position:sticky;left:0;background:var(--bg);
+              min-width:290px;max-width:290px;white-space:normal;z-index:1}
+thead th.lbl{background:var(--panel);z-index:3}
+tr.sec td{background:var(--panel);font-weight:700;font-size:11px;letter-spacing:.6px;
+          text-transform:uppercase;color:var(--muted);text-align:left}
+.tier{display:inline-block;font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;
+      margin-right:6px;vertical-align:1px;color:#fff}
+.tier.global{background:var(--glob)} .tier.sector{background:var(--sect)}
+.tier.company{background:var(--comp)}
+.derived{color:var(--muted);font-style:italic}
+td.v{cursor:help}
+td.restated{box-shadow:inset 0 -2px 0 var(--warn)}
+.flag{color:var(--warn);font-weight:700;font-size:10px;vertical-align:super}
+.empty{color:var(--muted)}
+.legend{margin-top:14px;font-size:11px;color:var(--muted);display:flex;gap:16px;flex-wrap:wrap}
+.err{background:var(--warnbg);border:1px solid var(--warn);color:var(--warn);
+     padding:12px;border-radius:6px}
+.spin{color:var(--muted);padding:20px 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>As-Reported Scorecard</h1>
+  <div class="sub">Every figure is read from the company&rsquo;s own filed statements &mdash; its line, its label, its segment column &mdash; not from the companyfacts API. Hover any number for its provenance.</div>
+
+  <form onsubmit="load();return false">
+    <input id="tk" placeholder="Ticker (BRK-B)" value="BRK-B" autocomplete="off">
+    <button type="submit">Build scorecard</button>
+  </form>
+
+  <div id="out"></div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+
+function fmt(v, metric){
+  if(v===null||v===undefined) return null;
+  const a = Math.abs(v);
+  if(a>0 && a<10) return v.toFixed(3);          // ratios
+  if(a<1e6) return v.toLocaleString(undefined,{maximumFractionDigits:0});
+  const neg = v<0 ? '-' : '';
+  return neg+'$'+(a/1e9).toFixed(1)+'B';
+}
+
+function esc(s){ return String(s??'').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
+
+function tip(cell, note){
+  const L=[];
+  if(cell.as_reported) L.push('As reported: "'+cell.as_reported+'"');
+  if(cell.element)     L.push('Element: '+cell.element);
+  if(cell.dimension)   L.push('Segment column: '+cell.dimension);
+  if(cell.statement)   L.push('Statement: '+cell.statement);
+  if(cell.expr)        L.push('Computed: '+cell.expr);
+  if(cell.from_10k_fy) L.push('From the FY'+cell.from_10k_fy+' 10-K');
+  if(cell.restated_from)
+    L.push('RESTATED — an earlier filing (FY'+cell.restated_from.in_10k_fy+') reported '
+           +fmt(cell.restated_from.value)+' for this year');
+  if(note) L.push('\n'+note);
+  return L.join('\n');
+}
+
+async function load(){
+  const tk = $('#tk').value.trim().toUpperCase();
+  if(!tk) return;
+  $('#out').innerHTML = '<div class="spin">Reading filed statements&hellip; this fetches and verifies 15 years of 10-Ks on first run.</div>';
+  let d;
+  try{
+    const r = await fetch('/api/scorecard?ticker='+encodeURIComponent(tk));
+    d = await r.json();
+    if(d.error){ $('#out').innerHTML = '<div class="err">'+esc(d.error)+'</div>'; return; }
+  }catch(e){ $('#out').innerHTML='<div class="err">'+esc(e)+'</div>'; return; }
+
+  const years = d.years.filter(y => y >= Math.max(...d.years)-14);
+  let h='';
+
+  const nFilings = Object.keys(d.provenance||{}).length;
+  h += '<div class="verify"><b>'+nFilings+' filings</b> parsed and verified &mdash; '
+     + 'every statement tied to the company&rsquo;s own printed subtotals'
+     + (d.skipped && d.skipped.length
+        ? ' &middot; <span class="bad">'+d.skipped.length+' filing(s) skipped: '
+          + esc(d.skipped.map(s=>'FY'+s.fy+' ('+s.reason+')').join(', '))+'</span>'
+        : ' &middot; none skipped')
+     + (d.has_bindings ? '' : ' &middot; <span class="bad">no company bindings for '+esc(d.ticker)
+        + ' &mdash; showing global tier only</span>')
+     + '</div>';
+
+  h += '<div class="scroll"><table><thead><tr><th class="lbl">'+esc(d.company)+'</th>';
+  for(const y of years) h += '<th>'+y+'</th>';
+  h += '</tr></thead><tbody>';
+
+  for(const sec of d.sections){
+    h += '<tr class="sec"><td class="lbl" colspan="'+(years.length+1)+'">'+esc(sec.section)+'</td></tr>';
+    for(const row of sec.rows){
+      const notes = (d.year_notes||{})[row.metric] || {};
+      h += '<tr><td class="lbl"><span class="tier '+row.tier+'">'+row.tier.slice(0,4).toUpperCase()
+         + '</span>'+esc(row.label)+(row.derived?' <span class="derived">derived</span>':'')+'</td>';
+      for(const y of years){
+        const cell = row.years[String(y)];
+        if(!cell){ h += '<td class="empty">&mdash;</td>'; continue; }
+        const note = (notes[String(y)]||[]).join('\n\n');
+        const cls = 'v'+(cell.restated_from?' restated':'');
+        h += '<td class="'+cls+'" title="'+esc(tip(cell,note))+'">'
+           + fmt(cell.value, row.metric)
+           + (note?'<span class="flag">&#9888;</span>':'')
+           + (cell.restated_from?'<span class="flag">R</span>':'')
+           + '</td>';
+      }
+      h += '</tr>';
+    }
+  }
+  h += '</tbody></table></div>';
+
+  h += '<div class="legend">'
+     + '<span><span class="tier global">GLOB</span> reported by nearly every filer</span>'
+     + '<span><span class="tier sector">SECT</span> '+esc(d.sector||'sector')+'-specific line</span>'
+     + '<span><span class="tier company">COMP</span> specific to '+esc(d.ticker)+'</span>'
+     + '<span><span class="flag">&#9888;</span> a fact about that year changes how it reads</span>'
+     + '<span><span class="flag">R</span> restated since first reported</span>'
+     + '<span>&mdash; not reported on that line that year</span>'
+     + '</div>';
+
+  $('#out').innerHTML = h;
+}
+load();
+</script>
+</body>
+</html>

@@ -23,6 +23,7 @@ from bs4 import BeautifulSoup
 from flask import Flask, jsonify, render_template, request
 
 import company_templates
+import scorecard
 import screener
 
 app = Flask(__name__)
@@ -4137,6 +4138,85 @@ def holders():
     except Exception as e:
         return jsonify({"error": f"13F fetch failed: {e}", "holders": [],
                         "total_value": 0, "total_count": 0, "rate_limited": True}), 200
+
+
+@app.route("/scorecard")
+def scorecard_page():
+    resp = app.make_response(render_template("scorecard.html"))
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return resp
+
+
+@app.route("/api/scorecard")
+def api_scorecard():
+    """
+    The as-reported scorecard: metrics bound to the lines a company actually
+    filed, read from its own statements rather than the companyfacts API.
+
+    Returns the verification summary alongside the numbers, because on this
+    path a value the checks could not stand behind is simply absent, and the
+    reader is entitled to know how much was verified.
+    """
+    ticker = request.args.get("ticker", "").upper().strip()
+    if not ticker:
+        return jsonify({"error": "Ticker is required"}), 400
+
+    cik = resolve_cik(ticker)
+    if not cik:
+        return jsonify({"error": f"Could not resolve ticker {ticker}"}), 404
+
+    try:
+        submissions = fetch_submissions(cik)
+    except Exception as e:
+        return jsonify({"error": f"SEC submissions fetch failed: {e}"}), 502
+
+    filings = all_filing_infos_from_submissions(
+        submissions, {"10-K", "10-K/A", "20-F"}, max_count=18)
+    if not filings:
+        return jsonify({"error": f"No annual filings found for {ticker}"}), 404
+
+    binding = scorecard._read_json(os.path.join(
+        scorecard.BINDING_DIR, "companies", f"{ticker.replace('.', '-')}.json")) or {}
+    sector = binding.get("sector")
+
+    try:
+        facts = fetch_company_facts(cik)
+    except Exception:
+        facts = None
+
+    sc = scorecard.build(cik, filings, sector=sector,
+                         ticker=ticker.replace(".", "-"), facts=facts)
+
+    # Comparability facts already authored against the filings, keyed per year.
+    ctemplate = company_templates.load_template(ticker)
+    year_notes = {}
+    if ctemplate:
+        as_series = {m: {y: c["value"] for y, c in d["years"].items()}
+                     for m, d in sc["metrics"].items()}
+        year_notes = company_templates.year_notes(as_series, ctemplate)
+
+    sections: list = []
+    for metric, data in sc["metrics"].items():
+        sec = data.get("section") or "Other"
+        row = {"metric": metric, **data}
+        found = next((s for s in sections if s["section"] == sec), None)
+        if not found:
+            found = {"section": sec, "rows": []}
+            sections.append(found)
+        found["rows"].append(row)
+
+    return jsonify({
+        "ticker":     ticker,
+        "cik":        cik,
+        "company":    submissions.get("name", ticker),
+        "sector":     sector,
+        "years":      sc["years"],
+        "sections":   sections,
+        "provenance": sc["provenance"],
+        "skipped":    sc["skipped"],
+        "year_notes": year_notes,
+        "has_bindings": bool(binding),
+    })
 
 
 @app.route("/api/analyze")
