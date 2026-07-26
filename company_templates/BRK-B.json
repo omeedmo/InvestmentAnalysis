@@ -22,7 +22,8 @@
     "total_debt": "A large share of Berkshire's debt sits at BNSF and Berkshire Hathaway Energy and is NON-RECOURSE to the parent \u2014 the 10-K states Berkshire \"does not guarantee the repayment of debt issued by BNSF, BHE or any of their subsidiaries\". Consolidated total debt therefore overstates holding-company leverage. The split IS available: Berkshire's balance sheet reports notes payable separately for \"Insurance and Other\" and \"Railroad, Utilities and Energy\", and the scorecard binds both (bindings/companies/BRK-B.json). Recourse debt has run about 35% of consolidated borrowings in recent years.",
     "net_income": "Dominated by unrealized investment gains/losses since 2018 (ASU 2016-01) \u2014 $89.0B reported in FY2024 against $47.4B of operating earnings. Berkshire reports operating earnings separately and the app already extracts that figure from the 10-K text (brk_operating_earnings); use it rather than net income. Note a naive net income minus investment_gains does NOT reproduce it ($39.7B vs $47.4B), because the tagged investment_gains series captures only unrealized equity marks, not all investment gains.",
     "roe": "Distorted by the same mark-to-market swings in the numerator; a poor read on Berkshire's economics.",
-    "pe_ratio": "Distorted by mark-to-market earnings; price-to-book has historically been the more useful yardstick for Berkshire."
+    "pe_ratio": "Distorted by mark-to-market earnings; price-to-book has historically been the more useful yardstick for Berkshire.",
+    "insurance_float": "Berkshire's own float figure from the 10-K MD&A, not a reconstruction. Float is policyholder money the insurer holds and invests before claims are paid: it is a funding source, NOT debt, and must never be added to leverage. Reconstructing it from balance-sheet components understates it materially \u2014 that approach gave $159B for FY2025 against the $176B Berkshire reports \u2014 because the company's definition includes items not separable from the face of the balance sheet."
   },
   "suppress": [
     "roic",
@@ -37,7 +38,7 @@
   "history": {
     "authored_from": "the 20 Berkshire Hathaway 10-Ks on EDGAR (CIK 1067983) covering FY2006-FY2025",
     "why": "These filings are immutable, so the year-by-year reading of them is a fact that belongs in version control, not something to re-derive by regex on every request. The runtime uses these values directly; the plugin's parser now only has to handle 10-Ks filed after this template was written.",
-    "method": "From each 10-K's MD&A earnings-attribution table: operating earnings = the printed net-earnings total less the investment/derivative gain and other non-operating rows. Every column was reconciled against the printed total, and because each filing restates three years, every value below was confirmed by two or three independent filings.",
+    "method": "From each 10-K's MD&A earnings-attribution table: operating earnings = the printed net-earnings total less the investment/derivative gain and other non-operating rows. Every column was reconciled against the printed total, and because each filing restates three years, every value below was confirmed by two or three independent filings. Insurance float is taken from Berkshire's own statement of it in the MD&A insurance section (\"Float approximated $X billion at December 31, YYYY, ...\"), which gives three years per filing so every value below is confirmed by two or three independent filings. Berkshire rounds to whole billions there, so these are exact to about +/-$0.5B \u2014 a deliberate trade for using the company's own measure rather than a balance-sheet proxy.",
     "segment_lineage": {
       "insurance_underwriting": {
         "labels": [
@@ -319,6 +320,23 @@
         "2023-12-31": 37350000000,
         "2024-12-31": 47437000000,
         "2025-12-31": 44486000000
+      },
+      "insurance_float": {
+        "2011-12-31": 70000000000,
+        "2012-12-31": 73000000000,
+        "2013-12-31": 77000000000,
+        "2014-12-31": 84000000000,
+        "2015-12-31": 88000000000,
+        "2016-12-31": 91000000000,
+        "2017-12-31": 114000000000,
+        "2018-12-31": 123000000000,
+        "2019-12-31": 129000000000,
+        "2020-12-31": 138000000000,
+        "2021-12-31": 147000000000,
+        "2022-12-31": 164000000000,
+        "2023-12-31": 169000000000,
+        "2024-12-31": 171000000000,
+        "2025-12-31": 176000000000
       }
     },
     "comparability": [

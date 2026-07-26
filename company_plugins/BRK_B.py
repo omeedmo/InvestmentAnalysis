@@ -573,8 +573,14 @@ def apply_annual_filings(filings: list, financials: dict, ctx: dict) -> None:
         existing_oe = financials.get("brk_operating_earnings", {})
         oe_covered = all(fy_get(existing_oe, str(fy_int - i)) is not None
                          for i in range(3))
+        # Float comes three years at a time from the same MD&A section. The
+        # template carries the authored history, so in practice only a 10-K
+        # filed after the template was written reaches the extractor.
+        existing_float = financials.get("insurance_float", {})
+        float_covered = all(fy_get(existing_float, str(fy_int - i)) is not None
+                            for i in range(3))
         if (sh_covered and td_covered and tc_covered
-                and cash_components_covered and oe_covered):
+                and cash_components_covered and oe_covered and float_covered):
             continue
         try:
             text = get_text(filing)
@@ -610,6 +616,16 @@ def apply_annual_filings(filings: list, financials: dict, ctx: dict) -> None:
                     for d, v in cash_parts["total_cash"].items():
                         merged_tc[d] = v
                     financials["total_cash"] = merged_tc
+
+            # Berkshire's own float figure, stated in the MD&A insurance
+            # section. Preferred over any balance-sheet reconstruction.
+            if not float_covered:
+                flo = extract_berkshire_float(text, fdate)
+                if flo:
+                    merged_flo = dict(financials.get("insurance_float", {}))
+                    for d, v in flo.items():
+                        merged_flo.setdefault(d, v)
+                    financials["insurance_float"] = merged_flo
 
             # Operating earnings (before investment gains) from the MD&A table.
             oe_reported = extract_berkshire_operating_earnings(text, fdate)
@@ -662,3 +678,53 @@ def apply_quarterly(financials: dict, quarter_end_dates: dict,
             # Replace if missing or clearly class-A scale (< 100M shares).
             if not existing or abs(existing) < 1e8:
                 so[qk] = last_annual
+
+
+# ── Insurance float, as Berkshire states it ──────────────────────────────────
+
+_FLOAT_SENTENCE = re.compile(
+    r"Float\s+(?:approximated|was\s+approximately)\s+(.{0,320}?)(?:\.|\bThe\s+cost\b)",
+    re.IGNORECASE | re.DOTALL)
+_FLOAT_PAIR = re.compile(
+    r"\$\s*([\d,]+(?:\.\d+)?)\s*billion\s+at\s+December\s+31,\s*(\d{4})", re.IGNORECASE)
+
+
+def extract_berkshire_float(text: str, filing_date: str = "") -> dict[str, float]:
+    """
+    Berkshire's own float figure, from the insurance section of the 10-K MD&A.
+
+    Float can be reconstructed from balance-sheet components — policyholder
+    liabilities less the receivables and deferred charges that offset them —
+    but Berkshire states the number outright, and its own definition is the
+    accurate one. The reconstruction came out around $159B for FY2025 against
+    the $176B Berkshire reports, because the company's definition includes
+    items that are not separable from the face of the balance sheet.
+
+    The sentence is stable across the whole history and gives three years at a
+    time, so overlapping filings cross-check each other:
+
+        "Float approximated $70 billion at December 31, 2011, $66 billion at
+         December 31, 2010 and $63 billion at December 31, 2009"
+        "Float was approximately $176 billion at December 31, 2025, ..."
+
+    NOTE the precision: Berkshire rounds to whole billions in this sentence, so
+    these values are exact to about +/- $0.5B. That is a fair trade for using
+    the company's own measure rather than a proxy, but it is a real limit and
+    the series should not be read as precise to the dollar.
+    """
+    txt = re.sub(r"<[^>]+>", " ", text)
+    txt = re.sub(r"&#x[0-9a-fA-F]+;|&#\d+;|&[a-zA-Z]+;", " ", txt)
+    txt = re.sub(r"\s+", " ", txt)
+
+    out: dict[str, float] = {}
+    for m in _FLOAT_SENTENCE.finditer(txt):
+        for amount, year in _FLOAT_PAIR.findall(m.group(1)):
+            try:
+                value = float(amount.replace(",", "")) * 1_000_000_000
+            except ValueError:
+                continue
+            # Sanity band: Berkshire's float has never been below $20B in this
+            # era nor above $500B. A match outside that is a misread sentence.
+            if 20e9 <= value <= 500e9:
+                out.setdefault(f"{year}-12-31", value)
+    return out

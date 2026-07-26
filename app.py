@@ -4145,7 +4145,8 @@ _SCORECARD_ANNUAL_RE = re.compile(r"^(19|20)\d\d$")
 
 
 def apply_scorecard_overlay(ticker: str, cik: str, submissions: dict,
-                            facts: dict, financials: dict) -> Optional[dict]:
+                            facts: dict, financials: dict,
+                            reserved: Optional[set] = None) -> Optional[dict]:
     """
     Overlay as-filed scorecard values onto `financials`.
 
@@ -4156,9 +4157,18 @@ def apply_scorecard_overlay(ticker: str, cik: str, submissions: dict,
     wherever both carry the concept. Where the scorecard has nothing, whatever
     the existing path produced is left alone.
 
+    `reserved` names metrics the company template has already authored from the
+    filings themselves; those are left untouched. That is the company-specific
+    override winning over a sector-level derivation, and it matters most where
+    the company STATES a figure that can only be approximated from the
+    statements. Berkshire's insurance float is the case in point: reconstructing
+    it from policyholder liabilities gives $159B for FY2025, while Berkshire
+    reports $176B in its MD&A. The company's own number is the accurate one.
+
     Returns a small provenance summary for the response, or None when the
     ticker has no bindings.
     """
+    reserved = reserved or set()
     tk = ticker.upper().replace(".", "-")
     binding_path = os.path.join(scorecard.BINDING_DIR, "companies", f"{tk}.json")
     binding = scorecard._read_json(binding_path)
@@ -4188,6 +4198,8 @@ def apply_scorecard_overlay(ticker: str, cik: str, submissions: dict,
     applied: dict[str, int] = {}
     sources: dict[str, dict] = {}
     for metric, data in sc["metrics"].items():
+        if metric in reserved:
+            continue
         series = financials.setdefault(metric, {})
         n = 0
         for year, cell in data["years"].items():
@@ -4222,6 +4234,7 @@ def apply_scorecard_overlay(ticker: str, cik: str, submissions: dict,
 
     return {
         "applied":   applied,
+        "reserved":  sorted(reserved & set(sc["metrics"])),
         "sources":   sources,
         "skipped":   sc["skipped"],
         "filings":   len(sc["provenance"]),
@@ -4408,8 +4421,12 @@ def analyze():
     # those derive from the verified figures rather than being layered on top.
     scorecard_meta = None
     try:
+        # Metrics the template authored from the filings outrank anything the
+        # scorecard can derive — see apply_scorecard_overlay.
+        _authored = set(((ctemplate or {}).get("history") or {}).get("series") or {})
         scorecard_meta = apply_scorecard_overlay(ticker, cik, submissions,
-                                                 facts, financials)
+                                                 facts, financials,
+                                                 reserved=_authored)
     except Exception:
         scorecard_meta = None       # never let this path break the response
 
