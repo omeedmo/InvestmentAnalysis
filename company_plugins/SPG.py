@@ -89,13 +89,25 @@ def _num(tok: str) -> float:
 
 
 def _rows(body: str) -> list[tuple[str, list[float]]]:
-    """Split the adjustments block into (label, [values]) pairs, 3 years each."""
+    """Split the adjustments block into (label, [values]) pairs, one per year
+    column. A row boundary follows a digit/paren/percent OR a dash placeholder
+    ("--", meaning zero/not applicable that year) -- missing the dash case
+    silently merged a row ending in one into the next label entirely, e.g.
+    "Loss on extinguishment of debt 116,256 -- Unrealized losses..." parsed as
+    one row with three values instead of two rows with one value each, which
+    both mis-sums the total and eats a real adjustment line."""
     out = []
-    for part in re.split(r"(?<=[\d)%])\s+(?=[A-Za-z])", body):
+    for part in re.split(r"(?:(?<=[\d)%])|(?<=-))\s+(?=[A-Za-z])", body):
         m = re.search(r"[\d(]", part)
         if not m:
             continue
         label, tail = part[:m.start()], part[m.start():]
+        # A footnote reference like "Other expenses (1) 818 320" leaves "(1)"
+        # as the very first token in tail, which _num() would otherwise read
+        # as a genuine "-1" value. Real figures in this table are always in
+        # the hundreds of thousands at minimum, so a leading 1-2-digit or
+        # single-letter parenthetical is always a footnote marker, not data.
+        tail = re.sub(r"^\(\s*(?:\d{1,2}|[A-Za-z])\s*\)\s*", "", tail)
         vals = []
         for tk in _NUM.findall(tail):
             tk = tk.strip()
@@ -109,10 +121,18 @@ def _rows(body: str) -> list[tuple[str, list[float]]]:
     return out
 
 
-def _solve(rows: list, totals: list[float], seed: list[float]) -> Optional[list[float]]:
+def _solve(rows: list, totals: list[float], seed: list[float],
+          skip_labels: Optional[re.Pattern] = None) -> Optional[list[float]]:
     """
     Assign each adjustment row's values to year columns so every column sums
-    to Simon's own printed FFO total, starting from Consolidated Net Income.
+    to Simon's own printed total, starting from the seed (Consolidated Net
+    Income). Works for however many year-columns `totals`/`seed` have (FFO's
+    bridge gives 3, NOI's gives 2).
+
+    `skip_labels` excludes rows that are themselves a running SUBTOTAL rather
+    than a new adjustment — SPG's NOI bridge prints "Operating Income Before
+    Other Items" partway through, which restates the cumulative sum so far
+    rather than adding to it; summing it in would double it.
 
     A row missing a value in one column (a one-off item, or a line that only
     existed in some years) is genuinely ambiguous once flattened to text, so
@@ -121,27 +141,84 @@ def _solve(rows: list, totals: list[float], seed: list[float]) -> Optional[list[
     if the table was misread, the sums will not tie, and this returns None
     rather than a plausible-looking wrong number.
     """
+    n = len(seed)
     fixed = list(seed)
     ragged = []
-    for _, vals in rows:
-        if len(vals) == 3:
-            for i in range(3):
+    for label, vals in rows:
+        if skip_labels and skip_labels.search(label):
+            continue
+        if len(vals) == n:
+            for i in range(n):
                 fixed[i] += vals[i]
-        elif 1 <= len(vals) <= 2:
+        elif 1 <= len(vals) < n:
             ragged.append(vals)
         else:
             return None
     if len(ragged) > 5:
         return None
-    choices = [list(combinations(range(3), len(v))) for v in ragged]
+    choices = [list(combinations(range(n), len(v))) for v in ragged]
     for combo in (product(*choices) if choices else [()]):
         cols = list(fixed)
         for vals, slots in zip(ragged, combo):
             for v, i in zip(vals, slots):
                 cols[i] += v
-        if all(abs(cols[i] - totals[i]) < 1.0 for i in range(3)):
+        if all(abs(cols[i] - totals[i]) < 1.0 for i in range(n)):
             return cols
     return None
+
+
+# ── NOI bridge parsing ───────────────────────────────────────────────────────
+# A separate, two-column bridge headed "Reconciliation of NOI of consolidated
+# entities:", stable back to FY2018's 10-K. It has an internal subtotal row,
+# "Operating Income Before Other Items", which restates the running sum so far
+# rather than adding to it -- _NOI_SKIP excludes it from the sum.
+_NOI_ANCHOR = re.compile(
+    r"Reconciliation of NOI of consolidated entities:\s*"
+    r"Consolidated Net Income\s*\$?\s*([\d,()]+)\s*\$?\s*([\d,()]+)"
+    r"(.+?)"
+    r"NOI of consolidated entities\s*\$?\s*([\d,()]+)\s*\$?\s*([\d,()]+)",
+    re.IGNORECASE | re.DOTALL,
+)
+_NOI_SKIP = re.compile(r"Operating Income Before Other Items", re.IGNORECASE)
+
+
+def extract_spg_noi(text: str) -> dict[str, dict[str, float]]:
+    """
+    Simon's own "NOI of consolidated entities" -- the first, most directly
+    reconciled checkpoint in Simon's NOI bridge (which continues on, through
+    unconsolidated joint ventures and international investments, to a
+    "Beneficial interest of Portfolio NOI" headline figure Simon emphasizes
+    more -- that further chain is NOT attempted here: each additional stage
+    is a fresh set of one-off adjustment lines and footnotes, and this
+    stopped at the point where the reconciliation is still a single, stable,
+    cleanly self-verifying bridge). Consolidated NOI is still Simon's own
+    reported figure for the properties it controls, not an EBITDA + G&A
+    proxy computed from unrelated line items.
+
+    Two years per filing (not three, like FFO), so cross-filing confirmation
+    is one year shallower, but still present.
+    """
+    txt = _clean(text)
+    m = _NOI_ANCHOR.search(txt)
+    if not m:
+        return {}
+
+    ni = [_num(m.group(1)), _num(m.group(2))]
+    body = m.group(3)
+    totals = [_num(m.group(4)), _num(m.group(5))]
+
+    rows = _rows(body)
+    cols = _solve(rows, totals, seed=ni, skip_labels=_NOI_SKIP)
+    if cols is None:
+        return {}
+
+    header = re.search(r"(\d{4})\s+(\d{4})\s*\(in thousands\)",
+                       txt[max(0, m.start() - 200):m.start()])
+    if not header:
+        return {}
+    years = [int(header.group(1)), int(header.group(2))]
+
+    return {"noi_consolidated": {f"{y}-12-31": v * 1000 for y, v in zip(years, cols)}}
 
 
 def extract_spg_ffo(text: str) -> dict[str, dict[str, float]]:
@@ -196,7 +273,7 @@ def extract_spg_ffo(text: str) -> dict[str, dict[str, float]]:
 # ── Hooks called by the core app (see company_templates.call_hook) ──────────
 
 def apply_annual_filings(filings: list, financials: dict, ctx: dict) -> None:
-    """Walk 10-Ks newest-first, filling FFO wherever it isn't already covered."""
+    """Walk 10-Ks newest-first, filling FFO/NOI wherever not already covered."""
     fy_get = ctx["fy_get"]
     min_year = ctx["min_year"]
     get_text = ctx["get_text"]
@@ -206,19 +283,25 @@ def apply_annual_filings(filings: list, financials: dict, ctx: dict) -> None:
         if not fy or int(fy) < min_year:
             break
         fy_int = int(fy)
-        existing = financials.get("ffo_operating_partnership", {})
-        covered = all(fy_get(existing, str(fy_int - i)) is not None for i in range(3))
-        if covered:
+        ffo_covered = all(
+            fy_get(financials.get("ffo_operating_partnership", {}), str(fy_int - i)) is not None
+            for i in range(3))
+        noi_covered = all(
+            fy_get(financials.get("noi_consolidated", {}), str(fy_int - i)) is not None
+            for i in range(2))
+        if ffo_covered and noi_covered:
             continue
-        try:
-            result = extract_spg_ffo(get_text(filing))
-        except Exception:
-            continue
-        for key, series in result.items():
-            merged = dict(financials.get(key, {}))
-            for d, v in series.items():
-                merged.setdefault(d, v)
-            financials[key] = merged
+        text = get_text(filing)
+        for extractor in (extract_spg_ffo, extract_spg_noi):
+            try:
+                result = extractor(text)
+            except Exception:
+                continue
+            for key, series in result.items():
+                merged = dict(financials.get(key, {}))
+                for d, v in series.items():
+                    merged.setdefault(d, v)
+                financials[key] = merged
 
 
 def postprocess(financials: dict) -> None:
@@ -264,3 +347,27 @@ def postprocess(financials: dict) -> None:
         # shares outstanding.
         if shares_y.get(y, 0) > 1_000_000
     }
+
+    # NOI: same principle, but this one is a REPLACEMENT, not a merge. The
+    # reconciled figure only reaches back to FY2017 (the earliest comparative
+    # in the oldest filing with this bridge); splicing it over the generic
+    # EBITDA + G&A proxy for the years it doesn't cover would silently change
+    # what the row means partway across the series. A row with a gap before
+    # 2017 is preferable to one that means two different things depending on
+    # which year you're looking at.
+    noi = financials.get("noi_consolidated")
+    if noi:
+        financials["noi"] = dict(noi)
+        noi_margin_base = financials.get("revenue", {})
+
+        def by_year2(series):
+            return {k[:4]: v for k, v in series.items()
+                    if len(k) >= 4 and k[:4].isdigit() and v is not None}
+
+        noi_y, rev_y = by_year2(noi), by_year2(noi_margin_base)
+        financials["noi_margin"] = {
+            f"{y}-12-31": noi_y[y] / rev_y[y] for y in noi_y if rev_y.get(y)}
+        financials["noi_per_share"] = {
+            f"{y}-12-31": noi_y[y] / shares_y[y]
+            for y in noi_y if shares_y.get(y, 0) > 1_000_000
+        }

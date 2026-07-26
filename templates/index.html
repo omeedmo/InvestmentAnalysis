@@ -862,6 +862,7 @@ function render(data){
   const tmpl = data.template || null;
   const tmplRows = (tmpl && tmpl.rows) ? tmpl.rows : [];
   const tmplAnnot = (tmpl && tmpl.annotations) ? tmpl.annotations : {};
+  const tmplRowLabels = (tmpl && tmpl.row_labels) ? tmpl.row_labels : {};
   const tmplYearNotes = (tmpl && tmpl.year_notes) ? tmpl.year_notes : {};
   const tmplSuppress = new Set((tmpl && tmpl.suppress) ? tmpl.suppress : []);
   const asRow = r => ({lbl:r.label, key:r.key, t:r.t, _tmpl:r});
@@ -910,8 +911,12 @@ function render(data){
       const k = coLbl.trim().toLowerCase();
       if(OWN_LBLS.has(k) && k !== row.lbl.trim().toLowerCase()) coLbl = null;
     }
+    // A template-supplied label wins over both — it's for concepts (FFO, NOI)
+    // that have no XBRL tag at all, so MetaLinks.json can never supply a
+    // filer label for them the way it does for tagged rows above.
+    const tmplLbl = (!row._tmpl && tmplRowLabels[row.key]) ? tmplRowLabels[row.key] : null;
     const indent = (row.lbl.match(/^\s*/)||[''])[0];
-    const shownLbl = coLbl ? indent + coLbl : row.lbl;
+    const shownLbl = tmplLbl ? indent + tmplLbl : (coLbl ? indent + coLbl : row.lbl);
 
     // Tooltip precedence: a template metric explains its own derivation; an
     // annotated standard row carries the company-specific caveat; otherwise

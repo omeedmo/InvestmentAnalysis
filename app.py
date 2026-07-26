@@ -5388,6 +5388,7 @@ def analyze():
             "generated_by":  ctemplate.get("generated_by", ""),
             "rows":          company_templates.rows_for_ui(ctemplate, _tmpl_metrics),
             "annotations":   ctemplate.get("annotations", {}),
+            "row_labels":    ctemplate.get("row_labels", {}),
             "suppress":      ctemplate.get("suppress", []),
             "caveats":       ctemplate.get("caveats", []),
             # Dated, filing-sourced facts about what changed and when.

@@ -210,6 +210,13 @@ def load_template(ticker: str) -> Optional[dict]:
         # Sector metrics first so company entries with the same key override.
         "metrics":     _dedupe_by_key(sector.get("metrics", []) + company.get("metrics", [])),
         "annotations": {**sector.get("annotations", {}), **company.get("annotations", {})},
+        # Override a STANDARD row's label with the company's own wording, for
+        # concepts that have no XBRL tag at all (so the filer-label mechanism
+        # via MetaLinks.json — which only covers tagged concepts — can never
+        # supply it). SPG's "ffo" row otherwise stays stuck with the generic
+        # "(NI + D&A - RE Gains)" formula suffix even once the underlying
+        # value is Simon's own reported figure, not that formula.
+        "row_labels":  {**sector.get("row_labels", {}), **company.get("row_labels", {})},
         "suppress":    sorted(set(sector.get("suppress", [])) | set(company.get("suppress", []))),
         "caveats":     sector.get("caveats", []) + company.get("caveats", []),
         "summary":     company.get("summary", ""),
