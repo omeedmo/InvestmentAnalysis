@@ -872,10 +872,26 @@ function render(data){
   const tmplRows = (tmpl && tmpl.rows) ? tmpl.rows : [];
   const tmplAnnot = (tmpl && tmpl.annotations) ? tmpl.annotations : {};
   const tmplSuppress = new Set((tmpl && tmpl.suppress) ? tmpl.suppress : []);
-  const allRows = tmplRows.length
-    ? ROWS.concat([{sec:`${co.ticker} — COMPANY-SPECIFIC`}],
-                  tmplRows.map(r => ({lbl:r.label, key:r.key, t:r.t, _tmpl:r})))
-    : ROWS;
+  const asRow = r => ({lbl:r.label, key:r.key, t:r.t, _tmpl:r});
+  // A template row may name an `after` metric to sit directly beneath (e.g.
+  // Berkshire's own operating earnings right under GAAP net income, where a
+  // reader compares them); everything else goes in the trailing section.
+  const inlineRows = tmplRows.filter(r => r.after);
+  const blockRows  = tmplRows.filter(r => !r.after);
+  let baseRows = ROWS;
+  if(inlineRows.length){
+    baseRows = [];
+    for(const row of ROWS){
+      baseRows.push(row);
+      for(const r of inlineRows) if(r.after === row.key) baseRows.push(asRow(r));
+    }
+    // Anything whose anchor isn't in ROWS still needs to be shown somewhere.
+    const placed = new Set(baseRows.filter(r => r._tmpl).map(r => r.key));
+    for(const r of inlineRows) if(!placed.has(r.key)) blockRows.push(r);
+  }
+  const allRows = blockRows.length
+    ? baseRows.concat([{sec:`${co.ticker} — COMPANY-SPECIFIC`}], blockRows.map(asRow))
+    : baseRows;
 
   for(const row of allRows){
     if(row.bdc  && !co.is_bdc)  continue;

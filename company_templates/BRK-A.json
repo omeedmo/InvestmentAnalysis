@@ -1,0 +1,5 @@
+{
+  "ticker": "BRK-A",
+  "extends": "BRK-B",
+  "summary": "Class A shares. Identical economics to BRK-B at 1500x; the app reports share counts, book value and earnings on a B-equivalent basis throughout, so this template is the BRK-B one."
+}

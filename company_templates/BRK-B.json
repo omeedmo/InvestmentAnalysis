@@ -4,7 +4,22 @@
   "generated_by": "session-authored (Claude Opus 4.8) from BRK 10-K XBRL + coverage audit",
   "summary": "Insurance-led conglomerate. Since ASU 2016-01 forced unrealized equity gains through the income statement in 2018, GAAP net income mostly measures the stock market, not the business — Buffett explicitly tells shareholders to ignore it. Judge Berkshire on operating earnings (ex investment gains), growth in book value per share, and float.",
 
-  "metrics": [],
+  "plugin": "BRK_B",
+
+  "metrics": [
+    {
+      "key": "brk_operating_earnings_row",
+      "label": "Operating earnings (Berkshire's own measure)",
+      "type": "$",
+      "after": "net_income",
+      "basis": "reported",
+      "reported_ref": "net_income",
+      "expr": "brk_operating_earnings",
+      "why": "The figure Berkshire itself presents and tells shareholders to judge the business on: earnings of the operating subsidiaries and insurance underwriting/investment income, excluding investment and derivative gains. Since ASU 2016-01 forced unrealized equity marks through the income statement in 2018, GAAP net income mostly tracks the stock market rather than the businesses — FY2024 was $89.0B reported against $47.4B of operating earnings.",
+      "evidence": "Extracted by the BRK_B plugin from the 'Earnings (loss) before income taxes'/operating earnings table in the 10-K MD&A. Berkshire tags no XBRL concept for it, so this comes from filing text, not from tagged data.",
+      "confidence": "high"
+    }
+  ],
 
   "annotations": {
     "total_debt": "A large share of Berkshire's debt sits at BNSF and Berkshire Hathaway Energy and is NON-RECOURSE to the parent — Berkshire does not guarantee it. Consolidated total debt therefore overstates holding-company leverage. The recourse/non-recourse split is disclosed only in 10-K text and segment tables, not in XBRL, so the app cannot compute the adjusted figure; read this line as consolidated, not parent-level.",

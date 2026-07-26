@@ -29,6 +29,7 @@ never execute arbitrary code.
 from __future__ import annotations
 
 import ast
+import importlib
 import json
 import os
 from typing import Optional
@@ -36,8 +37,59 @@ from typing import Optional
 TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                             "company_templates")
 SECTOR_DIR = os.path.join(TEMPLATE_DIR, "_sectors")
+PLUGIN_PKG = "company_plugins"
 
 _CACHE: dict[str, Optional[dict]] = {}
+_PLUGIN_CACHE: dict[str, object] = {}
+
+
+# ── Company plugins ──────────────────────────────────────────────────────────
+# Some companies need more than declarative config. Berkshire tags no
+# consolidated debt concept at all, files class-A share counts that are useless
+# for per-B-share math, and reports operating earnings only in an MD&A segment
+# table — all of which require parsing 10-K/10-Q prose. That logic is real code,
+# and pretending otherwise by inventing a regex mini-language in JSON would be
+# harder to maintain, not easier.
+#
+# So a template may declare `"plugin": "BRK_B"`, and the matching module in
+# company_plugins/ implements whatever hooks it needs. The core app calls the
+# hooks generically and holds no per-company knowledge.
+#
+# Hooks (all optional, all mutate `financials` in place):
+#   seed_from_facts(facts, financials)
+#       Correct the tagged data before any filings are fetched.
+#   apply_annual_filings(filings, financials, ctx)
+#       Walk the 10-K list (newest first) and fill gaps from filing text.
+#       ctx = {"get_text": filing -> cached text, "fy_get": ..., "min_year": ...}
+#   apply_quarterly(financials, quarter_end_dates, quarter_filing_links, ctx)
+#       Same for the 10-Qs. ctx = {"get_text_url": url -> text}
+
+def load_plugin(template: Optional[dict]):
+    """Import the plugin module a template declares, or None."""
+    name = (template or {}).get("plugin")
+    if not name:
+        return None
+    if name in _PLUGIN_CACHE:
+        return _PLUGIN_CACHE[name]
+    try:
+        mod = importlib.import_module(f"{PLUGIN_PKG}.{name}")
+    except Exception:
+        mod = None
+    _PLUGIN_CACHE[name] = mod
+    return mod
+
+
+def call_hook(plugin, hook: str, *args, default=None):
+    """Invoke a plugin hook if present; never let a plugin break the request."""
+    if plugin is None:
+        return default
+    fn = getattr(plugin, hook, None)
+    if not callable(fn):
+        return default
+    try:
+        return fn(*args)
+    except Exception:
+        return default
 
 
 # ── Safe expression evaluation ───────────────────────────────────────────────
@@ -123,10 +175,28 @@ def load_template(ticker: str) -> Optional[dict]:
     if tk in _CACHE:
         return _CACHE[tk]
 
-    company = _read_json(os.path.join(TEMPLATE_DIR, f"{tk}.json"))
+    # Share classes are written variously as BRK.B, BRK-B or BRK/B depending on
+    # where the ticker came from; template files use the dashed form.
+    company = None
+    for candidate in (tk, tk.replace(".", "-").replace("/", "-")):
+        company = _read_json(os.path.join(TEMPLATE_DIR, f"{candidate}.json"))
+        if company is not None:
+            break
     if company is None:
         _CACHE[tk] = None
         return None
+
+    # A second share class can defer to the primary one rather than duplicate it.
+    seen = {tk}
+    while company.get("extends"):
+        parent_name = company["extends"].upper()
+        if parent_name in seen:
+            break
+        seen.add(parent_name)
+        parent = _read_json(os.path.join(TEMPLATE_DIR, f"{parent_name}.json"))
+        if parent is None:
+            break
+        company = {**parent, **{k: v for k, v in company.items() if k != "extends"}}
 
     sector = load_sector(company.get("sector_template", "")) if company.get("sector_template") else {}
     merged = {
@@ -143,6 +213,7 @@ def load_template(ticker: str) -> Optional[dict]:
         "caveats":     sector.get("caveats", []) + company.get("caveats", []),
         "summary":     company.get("summary", ""),
         "generated_by": company.get("generated_by", ""),
+        "plugin":      company.get("plugin") or sector.get("plugin"),
     }
     _CACHE[tk] = merged
     return merged
@@ -218,6 +289,10 @@ def rows_for_ui(template: Optional[dict], computed: dict) -> list:
             "label":        spec.get("label", spec["key"]),
             "t":            spec.get("type", "$"),
             "basis":        spec.get("basis", "derived"),
+            # Optional: splice the row in directly after an existing metric
+            # (e.g. right under net income in the income statement) instead of
+            # relegating it to the catch-all company-specific block.
+            "after":        spec.get("after"),
             "reported_ref": spec.get("reported_ref"),
             "why":          spec.get("why", ""),
             "evidence":     spec.get("evidence", ""),
