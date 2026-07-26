@@ -60,6 +60,13 @@ _SHARE_COUNT = re.compile(
 _STATEMENT_NAME = re.compile(
     r"^consolidated\s+(balance sheets?|statements? of)", re.I)
 
+# The three statements that are period-over-period and must carry period
+# columns; the equity roll-forward is laid out by component instead.
+_CORE_STATEMENT = re.compile(
+    r"balance sheets?|financial position"
+    r"|statements? of (earnings|operations|income)(?!.*comprehensive)"
+    r"|cash flows?", re.I)
+
 
 def _get(url: str, retries: int = 3) -> str:
     last = None
@@ -144,8 +151,11 @@ def parse_report(html: str) -> Optional[dict]:
     periods = []
     for th in re.findall(r'<th class="th"[^>]*>(.*?)</th>', body, re.S):
         t = _clean(th)
-        if re.match(r"^[A-Z][a-z]{2}\.? \d{1,2}, \d{4}$", t):
-            periods.append(t)
+        # Some filings annotate the column with its unit
+        # ("Dec. 31, 2021 USD ($)"), so match the date and drop the rest.
+        dm = re.match(r"^([A-Z][a-z]{2}\.? \d{1,2}, \d{4})\b", t)
+        if dm:
+            periods.append(dm.group(1))
 
     rows = []
     # A statement can stack a consolidated section and then repeat the same
@@ -291,6 +301,20 @@ def check_totals(statements: dict) -> list[dict]:
     for name, st in statements.items():
         if "parenthetical" in name.lower():
             continue
+        # A statement of changes in equity is a roll-forward whose columns are
+        # equity COMPONENTS, not periods, so it legitimately has no period
+        # columns. Only the three core statements are checked for that.
+        if not _CORE_STATEMENT.search(name):
+            continue
+        # A statement with no period columns yields no values at all, and an
+        # empty statement would otherwise sail through every check below —
+        # a vacuous pass is the most dangerous kind.
+        if not st.get("periods"):
+            problems.append({"statement": name, "check": "no period columns parsed"})
+            continue
+        if not any(r["values"] for r in st["rows"]):
+            problems.append({"statement": name, "check": "no values parsed"})
+            continue
         by_el: dict[str, dict] = {}
         for row in st["rows"]:
             if row.get("dimension"):
@@ -327,6 +351,7 @@ def cross_check_companyfacts(statements: dict, facts: dict,
     ug = (facts.get("facts") or {}).get("us-gaap") or {}
     agree = disagree = 0
     examples = []
+    sign_flips = []
     for st in statements.values():
         for row in st["rows"]:
             if not row["element"].startswith("us-gaap:"):
@@ -384,17 +409,25 @@ def cross_check_companyfacts(statements: dict, facts: dict,
                 if abs(ref) < 1e-9:
                     continue
                 # A rendered statement applies negatedLabel (treasury stock
-                # prints as a negative), while companyfacts keeps the raw
-                # positive value. Compare magnitude; sign convention is a
-                # presentation choice, not a disagreement about the number.
+                # prints negative) while companyfacts keeps the raw value, so a
+                # sign difference is not necessarily an error. It is not
+                # necessarily fine either — it is exactly how an income
+                # statement line can come out backwards — so magnitude
+                # agreement counts as agreement but the flip is REPORTED, never
+                # silently swallowed.
                 if abs(abs(val) - abs(ref)) / abs(ref) <= tolerance:
                     agree += 1
+                    if (val < 0) != (ref < 0):
+                        sign_flips.append({"element": row["element"],
+                                           "period": period,
+                                           "parsed": val, "companyfacts": ref})
                 else:
                     disagree += 1
                     if len(examples) < 8:
                         examples.append({"element": row["element"], "period": period,
                                          "parsed": val, "companyfacts": ref})
-    return {"agree": agree, "disagree": disagree, "examples": examples}
+    return {"agree": agree, "disagree": disagree, "examples": examples,
+            "sign_flips": sign_flips}
 
 
 _MONTHS = {m: i + 1 for i, m in enumerate(
@@ -403,7 +436,7 @@ _MONTHS = {m: i + 1 for i, m in enumerate(
 
 
 def _period_to_iso(period: str) -> Optional[str]:
-    m = re.match(r"^([A-Z][a-z]{2})\.? (\d{1,2}), (\d{4})$", period)
+    m = re.match(r"^([A-Z][a-z]{2})\.? (\d{1,2}), (\d{4})", period)
     if not m:
         return None
     mon = _MONTHS.get(m.group(1))

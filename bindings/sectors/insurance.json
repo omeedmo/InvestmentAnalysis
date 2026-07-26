@@ -1,0 +1,54 @@
+{
+  "tier": "sector",
+  "note": "Insurance lines. These are the clearest case for dimension-aware binding: a conglomerate with insurance inside it reports premiums only within its insurance segment column, so companyfacts — which holds undimensioned facts only — has nothing at all, and the metric renders empty. `dimension_pattern` finds the insurance segment by name and refuses when more than one segment matches.",
+
+  "metrics": [
+    {
+      "metric": "premiums_earned",
+      "label": "Insurance premiums earned",
+      "section": "Insurance",
+      "bind": [{"element": "us-gaap:PremiumsEarnedNet",
+                "dimension_pattern": "insurance"},
+               {"element": "us-gaap:PremiumsEarnedNet"}]
+    },
+    {
+      "metric": "losses_incurred",
+      "label": "Insurance losses and loss adjustment expenses",
+      "section": "Insurance",
+      "bind": [{"element": "us-gaap:PolicyholderBenefitsAndClaimsIncurredNet",
+                "dimension_pattern": "insurance"},
+               {"element": "us-gaap:PolicyholderBenefitsAndClaimsIncurredNet"},
+               {"element": "us-gaap:LiabilityForClaimsAndClaimsAdjustmentExpenseIncurredClaims1",
+                "dimension_pattern": "insurance"}]
+    },
+    {
+      "metric": "underwriting_expenses",
+      "label": "Insurance underwriting expenses",
+      "section": "Insurance",
+      "bind": [{"element": "us-gaap:OtherUnderwritingExpense",
+                "dimension_pattern": "insurance"},
+               {"element": "us-gaap:OtherUnderwritingExpense"}]
+    },
+    {
+      "metric": "unpaid_losses",
+      "label": "Unpaid losses and loss adjustment expenses",
+      "section": "Insurance",
+      "bind": [{"element": "us-gaap:LiabilityForClaimsAndClaimsAdjustmentExpense"},
+               {"element": "us-gaap:LiabilityForUnpaidClaimsAndClaimsAdjustmentExpenseNet"}]
+    },
+    {
+      "metric": "unearned_premiums",
+      "label": "Unearned premiums",
+      "section": "Insurance",
+      "bind": [{"element": "us-gaap:UnearnedPremiums"}]
+    },
+
+    {
+      "metric": "underwriting_margin",
+      "label": "Underwriting result / premiums earned",
+      "section": "Insurance",
+      "expr": "(premiums_earned - losses_incurred - underwriting_expenses) / premiums_earned",
+      "note": "Positive means the insurer was paid to hold the float. Computes only for years where all three components resolved, so it can never be built on a missing expense line."
+    }
+  ]
+}

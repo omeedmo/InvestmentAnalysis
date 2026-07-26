@@ -1,0 +1,136 @@
+{
+  "tier": "global",
+  "note": "Lines essentially every filer reports, bound to consolidated (undimensioned) facts only. A binding with no `dimension` matches the consolidated figure and nothing else, so a segment column can never quietly stand in for a company total.",
+  "metrics": [
+    {
+      "metric": "revenue",
+      "label": "Total revenues",
+      "section": "Income statement",
+      "bind": [
+        {
+          "element": "us-gaap:Revenues"
+        }
+      ]
+    },
+    {
+      "metric": "costs_and_expenses",
+      "label": "Total costs and expenses",
+      "section": "Income statement",
+      "bind": [
+        {
+          "element": "us-gaap:CostsAndExpenses"
+        }
+      ]
+    },
+    {
+      "metric": "pretax_income",
+      "label": "Earnings before income taxes",
+      "section": "Income statement",
+      "bind": [
+        {
+          "element": "us-gaap:IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest"
+        },
+        {
+          "element": "us-gaap:IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments"
+        }
+      ]
+    },
+    {
+      "metric": "income_tax",
+      "label": "Income tax expense",
+      "section": "Income statement",
+      "bind": [
+        {
+          "element": "us-gaap:IncomeTaxExpenseBenefit"
+        }
+      ]
+    },
+    {
+      "metric": "net_income",
+      "label": "Net earnings attributable to shareholders",
+      "section": "Income statement",
+      "bind": [
+        {
+          "element": "us-gaap:NetIncomeLoss"
+        }
+      ]
+    },
+    {
+      "metric": "total_assets",
+      "label": "Total assets",
+      "section": "Balance sheet",
+      "bind": [
+        {
+          "element": "us-gaap:Assets"
+        }
+      ]
+    },
+    {
+      "metric": "goodwill",
+      "label": "Goodwill",
+      "section": "Balance sheet",
+      "bind": [
+        {
+          "element": "us-gaap:Goodwill"
+        }
+      ]
+    },
+    {
+      "metric": "equity",
+      "label": "Total shareholders' equity",
+      "section": "Balance sheet",
+      "bind": [
+        {
+          "element": "us-gaap:StockholdersEquity"
+        }
+      ]
+    },
+    {
+      "metric": "operating_cash_flow",
+      "label": "Net cash flows from operating activities",
+      "section": "Cash flow",
+      "bind": [
+        {
+          "element": "us-gaap:NetCashProvidedByUsedInOperatingActivities"
+        },
+        {
+          "element": "us-gaap:NetCashProvidedByUsedInOperatingActivitiesContinuingOperations"
+        }
+      ],
+      "note": "Berkshire (and many filers) reported this under the ...ContinuingOperations concept before 2015. Both are listed explicitly; the resolved cell records which one supplied the value."
+    },
+    {
+      "metric": "capex",
+      "label": "Purchases of property, plant and equipment",
+      "section": "Cash flow",
+      "bind": [
+        {
+          "element": "us-gaap:PaymentsToAcquirePropertyPlantAndEquipment"
+        }
+      ]
+    },
+    {
+      "metric": "depreciation",
+      "label": "Depreciation and amortization",
+      "section": "Cash flow",
+      "bind": [
+        {
+          "element": "us-gaap:DepreciationDepletionAndAmortization"
+        }
+      ]
+    },
+    {
+      "metric": "free_cash_flow",
+      "label": "Free cash flow (OCF \u2212 capex)",
+      "section": "Derived",
+      "expr": "operating_cash_flow - capex",
+      "note": "Values are taken from the raw XBRL fact, where a Payments* concept is a positive outflow, so this subtracts. The rendered statement prints the same line as negative \u2014 a presentation choice that must not decide the arithmetic."
+    },
+    {
+      "metric": "effective_tax_rate",
+      "label": "Effective tax rate",
+      "section": "Derived",
+      "expr": "income_tax / pretax_income"
+    }
+  ]
+}
