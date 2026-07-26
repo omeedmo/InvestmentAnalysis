@@ -824,14 +824,16 @@ def postprocess(financials: dict) -> None:
          This uses the real tax the company wrote a check for, but measures
          the RATE against a stable operating base instead of Berkshire's
          volatile consolidated pretax income.
-      2. Subtract net interest expense and intangible amortization from the
-         pretax operating figure -- both real, pretax, recurring charges that
-         Buffett does not include in the segment table's earnings-power view
-         but that a NOPAT figure should account for.
+      2. ADD BACK net interest expense and intangible amortization to the
+         pretax operating figure. NOPAT is meant to be UNLEVERED, so interest
+         -- a financing cost, not an operating one -- comes back out; and
+         intangible amortization is a non-cash purchase-accounting charge
+         Buffett does not treat as a real economic cost, so it comes back out
+         too. Both were already deducted in arriving at operating earnings.
       3. Tax-effect the result once, at the implied rate from step 1.
 
-    NOPAT = (operating_earnings + income_tax - interest_expense
-             - intangible_amortization) x (1 - income_tax / (operating_earnings + income_tax))
+    NOPAT = (operating_earnings + income_tax + interest_expense
+             + intangible_amortization) x (1 - income_tax / (operating_earnings + income_tax))
 
     This was a deliberate choice among several defensible readings of the same
     English sentence -- confirmed with the user rather than assumed, because
@@ -875,7 +877,12 @@ def postprocess(financials: dict) -> None:
 
         interest = ie_y.get(year, 0.0) or 0.0
         amortization = amort_y.get(year, 0.0) or 0.0
-        pretax_figure = pretax_operating_earnings - interest - amortization
+        # ADD BACK, not subtract: NOPAT is meant to be unlevered (interest is
+        # a financing cost, not an operating one) and to undo the non-cash
+        # purchase-accounting amortization charge Buffett does not treat as a
+        # real economic cost. Both come off what was already deducted in
+        # arriving at operating earnings.
+        pretax_figure = pretax_operating_earnings + interest + amortization
 
         key = f"{year}-12-31"
         pretax_nopat[key] = pretax_figure
