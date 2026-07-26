@@ -1004,6 +1004,52 @@ function render(data){
   document.getElementById('root').innerHTML=h;
   drawCharts(years,fin);
   setupStickyHeader();
+  initMobileTooltips();
+}
+
+// ── Tap-to-show tooltips for touch devices ──────────────────────────────────
+// `title` attributes (the warning flags, per-cell comparability notes, filer-
+// label captions) only ever show on hover, and touch devices have no hover —
+// on mobile the warning glyph was visible but its explanation was completely
+// unreachable. A single delegated tap handler shows the same text in a small
+// popup instead; it only has to be wired up once; the table itself is
+// rebuilt on every render but the document-level listener is not.
+let _mobileTipInit = false;
+function initMobileTooltips(){
+  if(_mobileTipInit) return;
+  _mobileTipInit = true;
+
+  const tip = document.createElement('div');
+  tip.id = 'mobile-tip';
+  tip.style.cssText = 'position:fixed;z-index:500;max-width:min(320px,86vw);'
+    +'background:#1e293b;color:#f1f5f9;font-size:12px;line-height:1.5;'
+    +'padding:10px 12px;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.35);'
+    +'display:none;white-space:pre-wrap;pointer-events:none';
+  document.body.appendChild(tip);
+
+  document.addEventListener('click', (e) => {
+    // Links and buttons already do something useful on tap (navigate, toggle);
+    // don't hijack them just because they also happen to carry a title.
+    const target = e.target.closest('td[title], th[title], span[title]');
+    const inTable = e.target.closest('#main-tbl-wrap, #main-tbl');
+    if(target && inTable){
+      tip.textContent = target.getAttribute('title');
+      const r = target.getBoundingClientRect();
+      tip.style.display = 'block';
+      const tipW = Math.min(320, window.innerWidth*0.86);
+      let left = Math.min(Math.max(8, r.left), window.innerWidth - tipW - 8);
+      let top = r.bottom + 6;
+      const tipH = tip.getBoundingClientRect().height || 60;
+      if(top + tipH > window.innerHeight - 8) top = Math.max(8, r.top - tipH - 6);
+      tip.style.left = left + 'px';
+      tip.style.top = top + 'px';
+    } else {
+      tip.style.display = 'none';
+    }
+  });
+  // A second tap anywhere (including scrolling) should close it rather than
+  // leaving a stale popup floating over the page.
+  window.addEventListener('scroll', () => { tip.style.display = 'none'; }, true);
 }
 
 // ── Floating sticky year header ───────────────────────────────────────────────
