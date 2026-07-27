@@ -185,15 +185,10 @@ _NOI_SKIP = re.compile(r"Operating Income Before Other Items", re.IGNORECASE)
 def extract_spg_noi(text: str) -> dict[str, dict[str, float]]:
     """
     Simon's own "NOI of consolidated entities" -- the first, most directly
-    reconciled checkpoint in Simon's NOI bridge (which continues on, through
-    unconsolidated joint ventures and international investments, to a
-    "Beneficial interest of Portfolio NOI" headline figure Simon emphasizes
-    more -- that further chain is NOT attempted here: each additional stage
-    is a fresh set of one-off adjustment lines and footnotes, and this
-    stopped at the point where the reconciliation is still a single, stable,
-    cleanly self-verifying bridge). Consolidated NOI is still Simon's own
-    reported figure for the properties it controls, not an EBITDA + G&A
-    proxy computed from unrelated line items.
+    reconciled checkpoint in Simon's NOI bridge. See extract_spg_portfolio_noi
+    for the further chain through unconsolidated joint ventures and
+    international investments to "Beneficial interest of Portfolio NOI", the
+    figure Simon actually emphasizes as its headline NOI growth metric.
 
     Two years per filing (not three, like FFO), so cross-filing confirmation
     is one year shallower, but still present.
@@ -219,6 +214,149 @@ def extract_spg_noi(text: str) -> dict[str, dict[str, float]]:
     years = [int(header.group(1)), int(header.group(2))]
 
     return {"noi_consolidated": {f"{y}-12-31": v * 1000 for y, v in zip(years, cols)}}
+
+
+# ── Portfolio NOI: the further chain past NOI of consolidated entities ──────
+# Simon's own headline NOI figure ("Beneficial interest of Portfolio NOI
+# Change X%" is the growth rate it actually calls out) is reached through
+# three more stages after "NOI of consolidated entities":
+#
+#   1. consolidated:   NOI of consolidated entities
+#                       - Noncontrolling interest partners' share
+#                       = Beneficial NOI of consolidated entities
+#   2. unconsolidated: Net Income (a DIFFERENT seed -- the unconsolidated
+#                       joint ventures' own net income, not Simon's)
+#                       + adjustments (same "Operating Income Before Other
+#                         Items" subtotal-skip pattern as stage 1)
+#                       = NOI of unconsolidated entities
+#                       - Joint Venture partners' share
+#                       = Beneficial NOI of unconsolidated entities
+#   3. combined:       Beneficial NOI of consolidated
+#                       + Beneficial NOI of unconsolidated
+#                       + Beneficial interest of NOI from TRG
+#                       + Beneficial interest of NOI from other platform
+#                         investments
+#                       = Beneficial interest of Combined NOI
+#   4. portfolio:      Combined NOI
+#                       - Corporate and Other NOI Sources
+#                       - NOI from other platform investments (printed
+#                         negative some years -- SUBTRACTING it then adds)
+#                       - NOI from Investments (Klepierre etc.)
+#                       = Beneficial interest of Portfolio NOI
+#
+# Each stage is validated independently against ITS OWN printed subtotal
+# (four checkpoints, not one) rather than trusting one long blind sum to the
+# final total — a wrong stage 2 could otherwise be masked by a compensating
+# error and still hit the right final number by coincidence.
+
+_UNCONSOL_ANCHOR = re.compile(
+    r"Reconciliation of NOI of unconsolidated entities:\s*"
+    r"Net Income\s*\$?\s*([\d,()]+)\s*\$?\s*([\d,()]+)"
+    r"(.+?)"
+    r"NOI of unconsolidated entities\s*\$?\s*([\d,()]+)\s*\$?\s*([\d,()]+)",
+    re.IGNORECASE | re.DOTALL,
+)
+_LABELED_TOTAL = lambda label: re.compile(   # noqa: E731
+    re.escape(label) + r"\s*\$?\s*([\d,()]+)\s*\$?\s*([\d,()]+)", re.IGNORECASE)
+
+_NCI_SHARE = _LABELED_TOTAL("Less: Noncontrolling interest partners share of NOI")
+_BENEFICIAL_CONSOL = _LABELED_TOTAL("Beneficial NOI of consolidated entities")
+_JV_SHARE = _LABELED_TOTAL("Less: Joint Venture partners share of NOI")
+_BENEFICIAL_UNCONSOL = _LABELED_TOTAL("Beneficial NOI of unconsolidated entities")
+_COMBINED_NOI = _LABELED_TOTAL("Beneficial interest of Combined NOI")
+_PORTFOLIO_NOI = _LABELED_TOTAL("Beneficial interest of Portfolio NOI")
+
+
+def _two(m: "re.Match") -> list[float]:
+    return [_num(m.group(1)), _num(m.group(2))]
+
+
+def _close(a: list[float], b: list[float], tol: float = 1.0) -> bool:
+    return len(a) == len(b) and all(abs(x - y) < tol for x, y in zip(a, b))
+
+
+def extract_spg_portfolio_noi(text: str) -> dict[str, dict[str, float]]:
+    """
+    Simon's own "Beneficial interest of Portfolio NOI" -- the figure Simon
+    itself tracks and reports a growth rate for, four stages past the simpler
+    "NOI of consolidated entities" (see extract_spg_noi). Returns nothing
+    unless all four stages tie to their own printed subtotal.
+    """
+    txt = _clean(text)
+
+    m1 = _NOI_ANCHOR.search(txt)
+    if not m1:
+        return {}
+    ni1, totals1 = [_num(m1.group(1)), _num(m1.group(2))], [_num(m1.group(4)), _num(m1.group(5))]
+    cols1 = _solve(_rows(m1.group(3)), totals1, seed=ni1, skip_labels=_NOI_SKIP)
+    if cols1 is None:
+        return {}
+
+    # Every subsequent search operates on a fresh substring starting where the
+    # previous one left off, rather than tracking absolute offsets back into
+    # `txt` — a match's .start()/.end() are only ever relative to whatever
+    # string it was actually searched against.
+    rest = txt[m1.end():]
+    nci_m = _NCI_SHARE.search(rest[:400])
+    ben_consol_m = _BENEFICIAL_CONSOL.search(rest[:400])
+    if not (nci_m and ben_consol_m):
+        return {}
+    ben_consol = _two(ben_consol_m)
+    if not _close([cols1[i] + _two(nci_m)[i] for i in range(2)], ben_consol):
+        return {}
+    rest = rest[ben_consol_m.end():]
+
+    m2 = _UNCONSOL_ANCHOR.search(rest)
+    if not m2:
+        return {}
+    ni2, totals2 = [_num(m2.group(1)), _num(m2.group(2))], [_num(m2.group(4)), _num(m2.group(5))]
+    cols2 = _solve(_rows(m2.group(3)), totals2, seed=ni2, skip_labels=_NOI_SKIP)
+    if cols2 is None:
+        return {}
+    rest = rest[m2.end():]
+
+    jv_m = _JV_SHARE.search(rest[:400])
+    ben_unconsol_m = _BENEFICIAL_UNCONSOL.search(rest[:400])
+    if not (jv_m and ben_unconsol_m):
+        return {}
+    ben_unconsol = _two(ben_unconsol_m)
+    if not _close([cols2[i] + _two(jv_m)[i] for i in range(2)], ben_unconsol):
+        return {}
+    rest = rest[ben_unconsol_m.end():]
+
+    combined_m = _COMBINED_NOI.search(rest)
+    if not combined_m:
+        return {}
+    combined = _two(combined_m)
+    stage3_body = rest[:combined_m.start()]
+    cols3 = _solve(_rows(stage3_body), combined, seed=[ben_consol[i] + ben_unconsol[i] for i in range(2)])
+    if cols3 is None or not _close(cols3, combined):
+        return {}
+    rest = rest[combined_m.end():]
+
+    portfolio_m = _PORTFOLIO_NOI.search(rest)
+    if not portfolio_m:
+        return {}
+    portfolio = _two(portfolio_m)
+    stage4_body = rest[:portfolio_m.start()]
+    # Every row in this segment is a "Less:" deduction -- negate each before
+    # summing, so a plain positive printed value subtracts normally and a
+    # parenthesized (already-negative) one correctly adds back.
+    negated_rows = [(label, [-v for v in vals]) for label, vals in _rows(stage4_body)]
+    cols4 = _solve(negated_rows, portfolio, seed=combined)
+    if cols4 is None or not _close(cols4, portfolio):
+        return {}
+
+    header = re.search(r"(\d{4})\s+(\d{4})\s*\(in thousands\)",
+                       txt[max(0, m1.start() - 200):m1.start()])
+    if not header:
+        return {}
+    years = [int(header.group(1)), int(header.group(2))]
+
+    return {
+        "noi_beneficial_portfolio": {f"{y}-12-31": v * 1000 for y, v in zip(years, portfolio)},
+        "noi_beneficial_combined":  {f"{y}-12-31": v * 1000 for y, v in zip(years, combined)},
+    }
 
 
 def extract_spg_ffo(text: str) -> dict[str, dict[str, float]]:
@@ -289,10 +427,13 @@ def apply_annual_filings(filings: list, financials: dict, ctx: dict) -> None:
         noi_covered = all(
             fy_get(financials.get("noi_consolidated", {}), str(fy_int - i)) is not None
             for i in range(2))
-        if ffo_covered and noi_covered:
+        portfolio_covered = all(
+            fy_get(financials.get("noi_beneficial_portfolio", {}), str(fy_int - i)) is not None
+            for i in range(2))
+        if ffo_covered and noi_covered and portfolio_covered:
             continue
         text = get_text(filing)
-        for extractor in (extract_spg_ffo, extract_spg_noi):
+        for extractor in (extract_spg_ffo, extract_spg_noi, extract_spg_portfolio_noi):
             try:
                 result = extractor(text)
             except Exception:

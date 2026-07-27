@@ -39,6 +39,18 @@
       "why": "Simon's FFO bridge produces two totals: this one covers the whole Operating Partnership (Simon plus the outside limited partners who hold OP units), and 'ffo' above is Simon's own allocable share after backing out the limited partners' portion \u2014 the one that actually ties to Simon's reported per-share FFO. Shown for completeness since this total is what Simon itself leads with in the reconciliation.",
       "evidence": "Extracted from the same MD&A bridge as FFO, reconciled to Simon's own printed subtotal for every year 2011-2025.",
       "confidence": "high"
+    },
+    {
+      "key": "noi_beneficial_portfolio_row",
+      "label": "Beneficial Interest of Portfolio NOI",
+      "type": "$",
+      "after": "noi",
+      "basis": "reported",
+      "reported_ref": "noi",
+      "expr": "noi_beneficial_portfolio",
+      "why": "Simon's own headline NOI figure \u2014 the growth rate for THIS specific number is what Simon calls out each year (\"Beneficial interest of Portfolio NOI Change X%\"), not the simpler consolidated NOI shown above. It adds Simon's beneficial share of unconsolidated joint ventures, Taubman Realty Group, and other platform/international investments to consolidated NOI, then removes corporate overhead and non-portfolio investment income.",
+      "evidence": "Extracted from a four-stage MD&A bridge (consolidated -> unconsolidated -> combined -> portfolio), each stage independently reconciled to Simon's own printed subtotal. Available FY2021-2025 only: earlier filings compute a differently structured 'Portfolio NOI' without the Joint-Venture-partners-share step this chain has, so it is not treated as the same series.",
+      "confidence": "high"
     }
   ],
   "annotations": {
@@ -48,7 +60,7 @@
     "roe": "Distorted by depreciated-cost book value in the denominator; not a meaningful return measure for a REIT.",
     "affo": "Not computed for Simon. AFFO layers a straight-line-rent adjustment and recurring capex estimate onto FFO, and Simon does not tag either cleanly enough to compute reliably \u2014 shown blank rather than as an uncertain derivation on top of an already-adjusted figure.",
     "ffo_per_share": "Recomputed from Simon's own reported FFO (see the FFO annotation), not the generic proxy.",
-    "noi": "Simon's own reported \"NOI of consolidated entities\" from the same MD&A bridge as FFO \u2014 the first, most directly reconciled checkpoint (there's a further chain through unconsolidated joint ventures and international investments to a \"Beneficial interest of Portfolio NOI\" figure Simon emphasizes more, not attempted here). Available from FY2017 onward only (the earliest comparative in the oldest filing with this bridge); for years before that the row is blank rather than falling back to the generic EBITDA + G&A proxy used for other REITs, since splicing two different definitions into one series would be worse than a gap."
+    "noi": "Simon's own reported \"NOI of consolidated entities\" from the same MD&A bridge as FFO \u2014 the first, most directly reconciled checkpoint (there's a further chain through unconsolidated joint ventures and international investments to a \"Beneficial interest of Portfolio NOI\" figure Simon emphasizes more, not attempted here). Available from FY2017 onward only (the earliest comparative in the oldest filing with this bridge); for years before that the row is blank rather than falling back to the generic EBITDA + G&A proxy used for other REITs, since splicing two different definitions into one series would be worse than a gap. Simon's own headline figure, further along the same bridge, is \"Beneficial interest of Portfolio NOI\" -- shown directly below (FY2021-2025)."
   },
   "suppress": [
     "roic",
@@ -62,12 +74,13 @@
     "AFFO is intentionally left blank: Simon does not cleanly tag straight-line rent or recurring capex, and layering an uncertain estimate on top of an already-adjusted figure would compound rather than reduce the uncertainty.",
     "Real estate gross/net and accumulated depreciation now come directly from Simon's own tagged balance-sheet lines (RealEstateInvestmentPropertyAtCost / \u2026Net), verified against the company's own printed totals, not a coverage-audit workaround.",
     "shares_outstanding_end is tagged only 2010-2012 in XBRL; per-share figures after that rely on the app's reconstruction from weighted-average diluted shares, so treat long-run per-share trends with some care.",
-    "NOI is Simon's own reported \"NOI of consolidated entities,\" available FY2017 onward; earlier years are blank rather than filled with the generic proxy."
+    "NOI is Simon's own reported \"NOI of consolidated entities,\" available FY2017 onward; earlier years are blank rather than filled with the generic proxy.",
+    "Beneficial interest of Portfolio NOI (Simon's own headline NOI growth figure) is available FY2021-2025 only; the pre-2021 bridge is structured differently and is not treated as the same series."
   ],
   "history": {
     "authored_from": "the 13 Simon Property Group 10-Ks on EDGAR (CIK 1063761) that contain the FFO reconciliation bridge (FY2013-FY2025 filings, covering FY2011-FY2025 via each filing's 3-year comparative)",
     "why": "These filings are immutable, so the year-by-year reading of them is a fact that belongs in version control, not something to re-derive from filing text on every request. The plugin's extractor (company_plugins/SPG.py) still runs for any 10-K filed after this template was written.",
-    "method": "Each 10-K's MD&A 'Funds From Operations' section: Consolidated Net Income plus real-estate depreciation and Simon's share of joint-venture depreciation, less gains on disposals/impairments and noncontrolling interests, less preferred dividends, reconciling to Simon's own printed 'FFO of the Operating Partnership' subtotal, then further split to 'Dilutive FFO allocable to common stockholders'. Every column was reconciled against the printed total, and because each filing restates three years, every value below was confirmed by two or three independent filings with zero disagreements. A second, separate bridge (2-column, stable from FY2018's 10-K) reconciles Consolidated Net Income to 'NOI of consolidated entities'; SPG began including unrealized fair-value changes on equity instruments in this bridge from FY2019 onward and restated FY2018's comparative to match ($2,911,087K + $15,212K = $2,926,299K, ties exactly) -- newest filing wins, same rule as everywhere else in this template.",
+    "method": "Each 10-K's MD&A 'Funds From Operations' section: Consolidated Net Income plus real-estate depreciation and Simon's share of joint-venture depreciation, less gains on disposals/impairments and noncontrolling interests, less preferred dividends, reconciling to Simon's own printed 'FFO of the Operating Partnership' subtotal, then further split to 'Dilutive FFO allocable to common stockholders'. Every column was reconciled against the printed total, and because each filing restates three years, every value below was confirmed by two or three independent filings with zero disagreements. A second, separate bridge (2-column, stable from FY2018's 10-K) reconciles Consolidated Net Income to 'NOI of consolidated entities'; SPG began including unrealized fair-value changes on equity instruments in this bridge from FY2019 onward and restated FY2018's comparative to match ($2,911,087K + $15,212K = $2,926,299K, ties exactly) -- newest filing wins, same rule as everywhere else in this template. A further chain from 'NOI of consolidated entities' through unconsolidated joint ventures, TRG, and other platform/international investments reaches Simon's own headline figure, 'Beneficial interest of Portfolio NOI' (the growth rate for this specific figure is what Simon itself calls out each year). Four stages, each validated independently against its own printed subtotal rather than trusting one long blind sum. This exact chain (with a 'Beneficial interest of' framing and a Joint-Venture-partners-share deduction step) is only used from FY2021 on; FY2018-FY2020 filings compute a differently structured 'Portfolio NOI' without that step, which is NOT treated as the same series here -- splicing two different definitions into one row would be worse than a gap. A small legitimate restatement exists at the FY2022-2024 boundary (each within ~0.1%, e.g. FY2024 as first reported: $5,841,226K; as restated in the FY2025 10-K: $5,843,881K) -- newest filing wins, same rule as everywhere else in this template.",
     "series": {
       "ffo_operating_partnership": {
         "2011-12-31": 2438765000,
@@ -113,6 +126,20 @@
         "2023-12-31": 4315580000,
         "2024-12-31": 4626974000,
         "2025-12-31": 4914715000
+      },
+      "noi_beneficial_portfolio": {
+        "2021-12-31": 5048208000,
+        "2022-12-31": 5312476000,
+        "2023-12-31": 5586357000,
+        "2024-12-31": 5843881000,
+        "2025-12-31": 6117188000
+      },
+      "noi_beneficial_combined": {
+        "2021-12-31": 5993975000,
+        "2022-12-31": 6060499000,
+        "2023-12-31": 6230409000,
+        "2024-12-31": 6365402000,
+        "2025-12-31": 6830704000
       }
     }
   },
