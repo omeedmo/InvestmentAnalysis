@@ -394,9 +394,25 @@ _CF_TAGS = {
     "dep":   [("us-gaap", "DepreciationDepletionAndAmortization"),
               ("us-gaap", "DepreciationAndAmortization")],
     "ga":    [("us-gaap", "GeneralAndAdministrativeExpense")],
+    # REIT P/FFO: FFO (proxy) = Net Income + D&A. Real FFO also backs out gains
+    # on property sales and adds back impairments, but those aren't reliably
+    # tagged across filers at scale — this is the same kind of screening-scale
+    # proxy "dep"/"ga" already are for NOI, not a company-specific extraction.
+    "ni":    [("us-gaap", "NetIncomeLoss"), ("us-gaap", "ProfitLoss"),
+              ("ifrs-full", "ProfitLoss")],
+    # Bank P/B.
+    "equity": [("us-gaap", "StockholdersEquity"),
+               ("us-gaap", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"),
+               ("ifrs-full", "Equity")],
+    # Insurance P/Float: float (proxy) = loss & LAE reserves + unearned premium
+    # reserves — the two reserve lines available at scale via SEC frames.
+    # Coarser than a company-specific extraction (e.g. BRK's own disclosed
+    # float) but the only thing that scales to screening hundreds of tickers.
+    "claims_reserve":  [("us-gaap", "LiabilityForClaimsAndClaimsAdjustmentExpense")],
+    "unearned_prem":   [("us-gaap", "UnearnedPremiumsLiability")],
 }
 
-_CF_FLOW_KEYS = {"ocf", "capex", "ebit", "dep", "ga"}   # duration facts; the rest are instants
+_CF_FLOW_KEYS = {"ocf", "capex", "ebit", "dep", "ga", "ni"}   # duration facts; the rest are instants
 
 
 def _cf_extract(facts: dict, latest_fy: int) -> dict:
@@ -906,25 +922,30 @@ def screen(universe: str, tickers: list[str],
 
 
 def screen_reits(universe: str, tickers: list[str],
-                 min_cap_rate,
+                 min_cap_rate, max_p_ffo=None,
                  latest_fy: int = 2025,
                  min_mktcap=None, max_mktcap=None, refresh: bool = False) -> dict:
     """
     REIT-specific screen, ranked by Implied Cap Rate = NOI / Enterprise Value
     (higher = cheaper relative to the property portfolio's operating income —
-    the opposite direction from P/FCF, where lower is cheaper).
+    the opposite direction from P/FCF, where lower is cheaper). Also computes
+    P/FFO = Market Cap / FFO (lower = cheaper, like P/FCF) as a secondary
+    filter — cap rate values the property portfolio, P/FFO values the
+    per-share cash-generating power, and REIT investors watch both.
 
     P/FCF and EV/EBIT are excluded from the general screen() for REITs
     precisely because they don't describe a REIT's economics — this is that
     sector's own screen instead, built the same way (bulk `frames` fetch,
-    then price), just with a REIT-shaped metric.
+    then price), just with REIT-shaped metrics.
 
-    NOI here is the same EBITDA + G&A proxy the main analyze view uses for
-    every REIT except the ones with an authored company template (Simon's own
-    reported NOI, for instance) — not a company-by-company extraction, which
-    doesn't scale to screening a few hundred tickers. Treat it as a screening
-    filter to find candidates, not as precise as the as-reported figure shown
-    once you open a specific ticker.
+    NOI and FFO here are both screening-scale proxies (EBITDA + G&A, and
+    Net Income + D&A respectively) — the same kind of generic formula the
+    main analyze view uses for every REIT except the ones with an authored
+    company template (Simon's own reported NOI and FFO, for instance), not a
+    company-by-company extraction, which doesn't scale to screening a few
+    hundred tickers. Treat these as screening filters to find candidates, not
+    as precise as the as-reported figures shown once you open a specific
+    ticker.
     """
     if refresh:
         purge_price_cache()
@@ -935,6 +956,7 @@ def screen_reits(universe: str, tickers: list[str],
     dep  = _merge_frames(["DepreciationDepletionAndAmortization",
                           "DepreciationAndAmortization"], "USD", annual)
     ga   = _merge_frames(["GeneralAndAdministrativeExpense"], "USD", annual)
+    ni   = _merge_frames(["NetIncomeLoss", "ProfitLoss"], "USD", annual)
     cash = _merge_frames(["CashAndCashEquivalentsAtCarryingValue"], "USD", instants)
     ltd  = _merge_frames(["LongTermDebtNoncurrent", "LongTermDebt"], "USD", instants)
     std  = _merge_frames(["LongTermDebtCurrent", "DebtCurrent", "ShortTermBorrowings"], "USD", instants)
@@ -989,7 +1011,7 @@ def screen_reits(universe: str, tickers: list[str],
             ebit.setdefault(c, d["ebit"])
             dep.setdefault(c, d["dep"])
             shares.setdefault(c, d["shares"])
-            for key, dest in (("ga", ga), ("cash", cash), ("ltd", ltd), ("std", std)):
+            for key, dest in (("ga", ga), ("ni", ni), ("cash", cash), ("ltd", ltd), ("std", std)):
                 if d.get(key) is not None:
                     dest.setdefault(c, d[key])
             cur = best_per_cik.get(c)
@@ -1018,10 +1040,16 @@ def screen_reits(universe: str, tickers: list[str],
         noi = eb + dv + abs(ga.get(c) or 0)
         cap_rate = round(noi / ev, 4) if ev and ev > 0 else None
 
+        n = ni.get(c)
+        ffo = (n + dv) if n is not None else None
+        p_ffo = round(mktcap / ffo, 2) if ffo and ffo > 0 else None
+
         results.append({
             "ticker":   tk,
             "cap_rate": cap_rate,
             "noi":      round(noi),
+            "p_ffo":    p_ffo,
+            "ffo":      round(ffo) if ffo is not None else None,
             "market_cap": round(mktcap),
             "enterprise_value": round(ev),
             "price":    round(price, 2),
@@ -1035,6 +1063,9 @@ def screen_reits(universe: str, tickers: list[str],
             return False
         if min_cap_rate is not None:
             if r["cap_rate"] is None or r["cap_rate"] < min_cap_rate:
+                return False
+        if max_p_ffo is not None:
+            if r["p_ffo"] is None or r["p_ffo"] > max_p_ffo:
                 return False
         return r["cap_rate"] is not None
 
@@ -1053,6 +1084,259 @@ def screen_reits(universe: str, tickers: list[str],
             "passed":     len(filtered),
             "missing":    no_price,
             "not_reit":   removed_not_reit,
+            "cf_recovered": cf_recovered,
+            "fiscal_year": latest_fy,
+        },
+    }
+
+
+def screen_banks(universe: str, tickers: list[str],
+                 max_pb,
+                 latest_fy: int = 2025,
+                 min_mktcap=None, max_mktcap=None, refresh: bool = False) -> dict:
+    """
+    Bank-specific screen, ranked by P/B = Market Cap / Book Value of Equity
+    (lower = cheaper, like P/FCF). Banks don't have a P/FCF or EV/EBIT in any
+    meaningful sense — their "product" is a balance sheet, not an operating
+    margin — so price-to-tangible/common-book-value is the sector's standard
+    yardstick instead. Built the same way as screen_reits(): restrict to the
+    sector's own CIK set, bulk `frames` fetch, per-CIK companyfacts fallback
+    for names frames misses, then price.
+    """
+    if refresh:
+        purge_price_cache()
+
+    annual, instants = _recent_periods(latest_fy)
+
+    equity = _merge_frames(["StockholdersEquity",
+                            "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"],
+                           "USD", instants)
+    shares = _merge_frames(["EntityCommonStockSharesOutstanding"], "shares", instants)
+
+    cik_map = ticker_cik_map()
+    bank_set = bank_ciks()
+
+    def _cik_for(tk):
+        return (cik_map.get(tk.upper())
+                or cik_map.get(tk.replace("-", ".").upper())
+                or cik_map.get(tk.replace(".", "-").upper()))
+
+    bank_candidates = []
+    no_cik = removed_not_bank = 0
+    for tk in tickers:
+        cik = _cik_for(tk)
+        if cik is None:
+            no_cik += 1
+            continue
+        c = str(cik)
+        if c not in bank_set:
+            removed_not_bank += 1
+            continue
+        if _is_non_common(tk):
+            continue
+        bank_candidates.append((tk, c))
+
+    best_per_cik: dict[str, str] = {}
+    cf_needed = []
+    for tk, c in bank_candidates:
+        if equity.get(c) is not None and shares.get(c):
+            cur = best_per_cik.get(c)
+            if cur is None or _ticker_score(tk) < _ticker_score(cur):
+                best_per_cik[c] = tk
+        else:
+            cf_needed.append((tk, c))
+
+    cf_recovered = 0
+    if cf_needed:
+        cf = companyfacts_fallback([c for _, c in cf_needed], latest_fy)
+        for tk, c in cf_needed:
+            d = cf.get(c) or {}
+            if d.get("equity") is None or not d.get("shares"):
+                continue
+            equity.setdefault(c, d["equity"])
+            shares.setdefault(c, d["shares"])
+            cur = best_per_cik.get(c)
+            if cur is None or _ticker_score(tk) < _ticker_score(cur):
+                best_per_cik[c] = tk
+            cf_recovered += 1
+
+    candidates = sorted(best_per_cik.values())
+    prices = get_prices(candidates)
+
+    results = []
+    no_price = 0
+    for tk in candidates:
+        c = str(_cik_for(tk))
+        price = prices.get(tk)
+        sh = shares.get(c)
+        eq = equity.get(c)
+        if not (price and sh and eq is not None and eq > 0):
+            no_price += 1
+            continue
+        mktcap = price * sh
+        p_b = round(mktcap / eq, 2)
+
+        results.append({
+            "ticker":     tk,
+            "p_b":        p_b,
+            "book_value": round(eq),
+            "market_cap": round(mktcap),
+            "price":      round(price, 2),
+        })
+
+    def passes(r):
+        mc = r["market_cap"]
+        if min_mktcap is not None and (mc is None or mc < min_mktcap):
+            return False
+        if max_mktcap is not None and (mc is None or mc > max_mktcap):
+            return False
+        if max_pb is not None:
+            if r["p_b"] is None or r["p_b"] > max_pb:
+                return False
+        return r["p_b"] is not None
+
+    filtered = [r for r in results if passes(r)]
+    filtered.sort(key=lambda r: r["p_b"] if r["p_b"] is not None else 1e9)
+
+    return {
+        "results": filtered,
+        "stats": {
+            "universe":   universe,
+            "total":      len(tickers),
+            "companies":  len(candidates),
+            "evaluated":  len(results),
+            "passed":     len(filtered),
+            "missing":    no_price,
+            "not_bank":   removed_not_bank,
+            "cf_recovered": cf_recovered,
+            "fiscal_year": latest_fy,
+        },
+    }
+
+
+def screen_insurance(universe: str, tickers: list[str],
+                     max_pfloat,
+                     latest_fy: int = 2025,
+                     min_mktcap=None, max_mktcap=None, refresh: bool = False) -> dict:
+    """
+    Insurance-specific screen, ranked by P/Float = Market Cap / Float (lower
+    = cheaper, like P/B). Float — premiums collected but not yet paid out as
+    claims, which an insurer gets to invest in the meantime — is the
+    insurance-specific analogue of book value, and Buffett's preferred
+    yardstick for how cheaply the market is pricing an insurer's investable
+    capital. Float here is approximated as loss & LAE reserves + unearned
+    premium reserves, the two reserve lines available at scale via SEC
+    `frames` — coarser than a company-specific extraction (this app's own
+    BRK build uses its as-reported float instead) but the only thing that
+    scales to screening hundreds of tickers at once.
+    """
+    if refresh:
+        purge_price_cache()
+
+    annual, instants = _recent_periods(latest_fy)
+
+    claims   = _merge_frames(["LiabilityForClaimsAndClaimsAdjustmentExpense"], "USD", instants)
+    unearned = _merge_frames(["UnearnedPremiumsLiability"], "USD", instants)
+    shares   = _merge_frames(["EntityCommonStockSharesOutstanding"], "shares", instants)
+
+    cik_map = ticker_cik_map()
+    ins_set = insurance_ciks()
+
+    def _cik_for(tk):
+        return (cik_map.get(tk.upper())
+                or cik_map.get(tk.replace("-", ".").upper())
+                or cik_map.get(tk.replace(".", "-").upper()))
+
+    ins_candidates = []
+    no_cik = removed_not_ins = 0
+    for tk in tickers:
+        cik = _cik_for(tk)
+        if cik is None:
+            no_cik += 1
+            continue
+        c = str(cik)
+        if c not in ins_set:
+            removed_not_ins += 1
+            continue
+        if _is_non_common(tk):
+            continue
+        ins_candidates.append((tk, c))
+
+    best_per_cik: dict[str, str] = {}
+    cf_needed = []
+    for tk, c in ins_candidates:
+        if (claims.get(c) is not None or unearned.get(c) is not None) and shares.get(c):
+            cur = best_per_cik.get(c)
+            if cur is None or _ticker_score(tk) < _ticker_score(cur):
+                best_per_cik[c] = tk
+        else:
+            cf_needed.append((tk, c))
+
+    cf_recovered = 0
+    if cf_needed:
+        cf = companyfacts_fallback([c for _, c in cf_needed], latest_fy)
+        for tk, c in cf_needed:
+            d = cf.get(c) or {}
+            if (d.get("claims_reserve") is None and d.get("unearned_prem") is None) or not d.get("shares"):
+                continue
+            if d.get("claims_reserve") is not None:
+                claims.setdefault(c, d["claims_reserve"])
+            if d.get("unearned_prem") is not None:
+                unearned.setdefault(c, d["unearned_prem"])
+            shares.setdefault(c, d["shares"])
+            cur = best_per_cik.get(c)
+            if cur is None or _ticker_score(tk) < _ticker_score(cur):
+                best_per_cik[c] = tk
+            cf_recovered += 1
+
+    candidates = sorted(best_per_cik.values())
+    prices = get_prices(candidates)
+
+    results = []
+    no_price = 0
+    for tk in candidates:
+        c = str(_cik_for(tk))
+        price = prices.get(tk)
+        sh = shares.get(c)
+        flt = (claims.get(c) or 0) + (unearned.get(c) or 0)
+        if not (price and sh and flt > 0):
+            no_price += 1
+            continue
+        mktcap = price * sh
+        p_float = round(mktcap / flt, 2)
+
+        results.append({
+            "ticker":     tk,
+            "p_float":    p_float,
+            "float":      round(flt),
+            "market_cap": round(mktcap),
+            "price":      round(price, 2),
+        })
+
+    def passes(r):
+        mc = r["market_cap"]
+        if min_mktcap is not None and (mc is None or mc < min_mktcap):
+            return False
+        if max_mktcap is not None and (mc is None or mc > max_mktcap):
+            return False
+        if max_pfloat is not None:
+            if r["p_float"] is None or r["p_float"] > max_pfloat:
+                return False
+        return r["p_float"] is not None
+
+    filtered = [r for r in results if passes(r)]
+    filtered.sort(key=lambda r: r["p_float"] if r["p_float"] is not None else 1e9)
+
+    return {
+        "results": filtered,
+        "stats": {
+            "universe":   universe,
+            "total":      len(tickers),
+            "companies":  len(candidates),
+            "evaluated":  len(results),
+            "passed":     len(filtered),
+            "missing":    no_price,
+            "not_insurance": removed_not_ins,
             "cf_recovered": cf_recovered,
             "fiscal_year": latest_fy,
         },

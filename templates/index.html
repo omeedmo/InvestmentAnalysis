@@ -1721,16 +1721,43 @@ async function doAnalyze(){
 let SCREEN_DATA = [];   // last results, for client-side re-sorting
 let SCREEN_SORT = {key:'p_fcf', dir:1};
 let SCREEN_UNRESOLVED = []; // guru_holdings: CUSIPs we couldn't map to a ticker
-let SCREEN_MODE = 'general';   // 'general' | 'reit' — swaps metrics + endpoint
+let SCREEN_MODE = 'general';   // 'general' | 'reit' | 'bank' | 'insurance' — swaps metrics + endpoint
 
-function toggleReitMode(){
-  SCREEN_MODE = document.getElementById('scr-reit-mode').checked ? 'reit' : 'general';
-  document.getElementById('scr-general-fields').style.display = SCREEN_MODE==='reit' ? 'none' : 'flex';
-  document.getElementById('scr-reit-fields').style.display = SCREEN_MODE==='reit' ? 'flex' : 'none';
-  document.getElementById('scr-sector-row').style.display = SCREEN_MODE==='reit' ? 'none' : 'flex';
-  document.getElementById('scr-hint-text').textContent = SCREEN_MODE==='reit'
-    ? 'Ranks highest-cap-rate-first (cheapest relative to property NOI). NOI is the same EBITDA + G&A proxy the analyze view uses for most REITs — open a ticker for its as-reported figure where one exists (e.g. SPG). Leave the cutoff blank for no lower bound.'
-    : 'Ranks cheapest-first by P/FCF. Leave a cutoff blank for no upper bound. Financials & insurers often lack EV/EBIT (no Operating Income tag) — they still rank by P/FCF. First run on a large universe takes ~1 min; repeat runs are cached.';
+const SECTOR_CONFIG = {
+  general: {
+    label: 'General',
+    endpoint: '/api/screen',
+    sortKey: 'p_fcf', sortDir: 1,
+    hint: 'Ranks cheapest-first by P/FCF. Leave a cutoff blank for no upper bound. Financials &amp; insurers often lack EV/EBIT (no Operating Income tag) — they still rank by P/FCF. First run on a large universe takes ~1 min; repeat runs are cached.',
+  },
+  reit: {
+    label: 'REITs',
+    endpoint: '/api/screen_reits',
+    sortKey: 'cap_rate', sortDir: -1,
+    hint: 'Ranks highest-cap-rate-first (cheapest relative to property NOI). NOI and FFO are the same EBITDA+G&amp;A / NI+D&amp;A proxies the analyze view uses for most REITs — open a ticker for its as-reported figure where one exists (e.g. SPG). Leave cutoffs blank for no bound.',
+  },
+  bank: {
+    label: 'Banks',
+    endpoint: '/api/screen_banks',
+    sortKey: 'p_b', sortDir: 1,
+    hint: 'Ranks cheapest-first by P/B (Price / Book Value of Equity) — the standard yardstick for banks, whose "product" is a balance sheet rather than an operating margin. Leave the cutoff blank for no upper bound.',
+  },
+  insurance: {
+    label: 'Insurance',
+    endpoint: '/api/screen_insurance',
+    sortKey: 'p_float', sortDir: 1,
+    hint: 'Ranks cheapest-first by P/Float (Price / Float) — Buffett\'s preferred yardstick for how cheaply the market prices an insurer\'s investable capital. Float is approximated as loss &amp; LAE reserves + unearned premium reserves. Leave the cutoff blank for no upper bound.',
+  },
+};
+
+function toggleSector(){
+  SCREEN_MODE = document.getElementById('scr-sector').value;
+  ['general','reit','bank','insurance'].forEach(s=>{
+    const el = document.getElementById('scr-fields-'+s);
+    if(el) el.style.display = (SCREEN_MODE===s) ? 'flex' : 'none';
+  });
+  document.getElementById('scr-sector-row').style.display = SCREEN_MODE==='general' ? 'flex' : 'none';
+  document.getElementById('scr-hint-text').innerHTML = SECTOR_CONFIG[SCREEN_MODE].hint;
 }
 
 async function openScreener(){
@@ -1750,12 +1777,16 @@ async function openScreener(){
           <label>Tickers (comma/space separated)</label>
           <input id="scr-tickers" type="text" placeholder="AAPL MSFT GOOGL…" style="width:280px;text-transform:uppercase">
         </div>
-        <div class="scr-field" style="justify-content:flex-end">
-          <label style="display:flex;align-items:center;gap:5px;text-transform:none;font-weight:600;cursor:pointer" title="Switches to the REIT-only screen, ranked by Implied Cap Rate (NOI / Enterprise Value) instead of P/FCF and EV/EBIT, which don't describe a REIT's economics.">
-            <input id="scr-reit-mode" type="checkbox" style="cursor:pointer" onchange="toggleReitMode()"> REITs only (Cap Rate)
-          </label>
+        <div class="scr-field">
+          <label>Sector</label>
+          <select id="scr-sector" onchange="toggleSector()">
+            <option value="general">General</option>
+            <option value="reit">REITs (Cap Rate / P-FFO)</option>
+            <option value="bank">Banks (P/B)</option>
+            <option value="insurance">Insurance (P/Float)</option>
+          </select>
         </div>
-        <div id="scr-general-fields" style="display:flex;gap:12px;flex-wrap:wrap">
+        <div id="scr-fields-general" style="display:flex;gap:12px;flex-wrap:wrap">
           <div class="scr-field">
             <label>Max P/FCF</label>
             <input id="scr-pfcf" type="number" placeholder="e.g. 20" min="0" step="1" style="width:110px">
@@ -1765,10 +1796,26 @@ async function openScreener(){
             <input id="scr-evebit" type="number" placeholder="e.g. 15" min="0" step="1" style="width:110px">
           </div>
         </div>
-        <div id="scr-reit-fields" style="display:none;gap:12px;flex-wrap:wrap">
+        <div id="scr-fields-reit" style="display:none;gap:12px;flex-wrap:wrap">
           <div class="scr-field">
             <label>Min Cap Rate (%)</label>
             <input id="scr-capRate" type="number" placeholder="e.g. 6" min="0" step="0.1" style="width:110px">
+          </div>
+          <div class="scr-field">
+            <label>Max P/FFO</label>
+            <input id="scr-pffo" type="number" placeholder="e.g. 15" min="0" step="1" style="width:110px">
+          </div>
+        </div>
+        <div id="scr-fields-bank" style="display:none;gap:12px;flex-wrap:wrap">
+          <div class="scr-field">
+            <label>Max P/B</label>
+            <input id="scr-pb" type="number" placeholder="e.g. 1.5" min="0" step="0.1" style="width:110px">
+          </div>
+        </div>
+        <div id="scr-fields-insurance" style="display:none;gap:12px;flex-wrap:wrap">
+          <div class="scr-field">
+            <label>Max P/Float</label>
+            <input id="scr-pfloat" type="number" placeholder="e.g. 1.5" min="0" step="0.1" style="width:110px">
           </div>
         </div>
         <div class="scr-field">
@@ -1800,16 +1847,13 @@ async function openScreener(){
         <label style="display:flex;align-items:center;gap:5px;font-size:13px;cursor:pointer" title="Foreign private issuers filing Form 20-F instead of 10-K — inconsistent US-GAAP/IFRS cash-flow tagging and ADR-ratio effects can skew P/FCF & EV/EBIT">
           <input id="scr-rm-20f" type="checkbox" checked style="cursor:pointer"> Remove 20-F Filers</label>
       </div>
-      <div class="scr-hint" id="scr-hint-text">Ranks cheapest-first by P/FCF. Leave a cutoff blank for no upper bound. Financials &amp; insurers often lack EV/EBIT (no Operating Income tag) — they still rank by P/FCF. First run on a large universe takes ~1 min; repeat runs are cached.</div>
+      <div class="scr-hint" id="scr-hint-text">${SECTOR_CONFIG.general.hint}</div>
     </div>
     <div id="scr-results"></div>`;
 }
 
 async function runScreen(){
   const universe = document.getElementById('scr-universe').value;
-  const pfcf  = document.getElementById('scr-pfcf').value.trim();
-  const evebit= document.getElementById('scr-evebit').value.trim();
-  const capRate = document.getElementById('scr-capRate').value.trim();
   const mincap= document.getElementById('scr-mincap').value.trim();
   const maxcap= document.getElementById('scr-maxcap').value.trim();
   const custom= (document.getElementById('scr-tickers')||{}).value || '';
@@ -1828,11 +1872,21 @@ async function runScreen(){
     // Abort after 5 min so a dropped connection surfaces as a clear message.
     const ctrl=new AbortController();
     const killer=setTimeout(()=>ctrl.abort(), 300000);
-    let endpoint;
+    const cfg = SECTOR_CONFIG[SCREEN_MODE];
     if(SCREEN_MODE==='reit'){
+      const capRate = document.getElementById('scr-capRate').value.trim();
+      const pffo = document.getElementById('scr-pffo').value.trim();
       if(capRate) p.set('min_cap_rate', capRate);
-      endpoint = '/api/screen_reits?'+p.toString();
+      if(pffo)    p.set('max_p_ffo', pffo);
+    }else if(SCREEN_MODE==='bank'){
+      const pb = document.getElementById('scr-pb').value.trim();
+      if(pb) p.set('max_pb', pb);
+    }else if(SCREEN_MODE==='insurance'){
+      const pfloat = document.getElementById('scr-pfloat').value.trim();
+      if(pfloat) p.set('max_pfloat', pfloat);
     }else{
+      const pfcf  = document.getElementById('scr-pfcf').value.trim();
+      const evebit= document.getElementById('scr-evebit').value.trim();
       if(pfcf)  p.set('max_pfcf', pfcf);
       if(evebit)p.set('max_ev_ebit', evebit);
       // Sector exclusions default ON; only send '0' when unchecked.
@@ -1840,8 +1894,8 @@ async function runScreen(){
       if(!document.getElementById('scr-rm-banks').checked)     p.set('remove_banks','0');
       if(!document.getElementById('scr-rm-reits').checked)     p.set('remove_reits','0');
       if(!document.getElementById('scr-rm-20f').checked)       p.set('remove_20f','0');
-      endpoint = '/api/screen?'+p.toString();
     }
+    const endpoint = cfg.endpoint+'?'+p.toString();
     const res=await fetch(endpoint, {signal:ctrl.signal});
     clearTimeout(killer);
     let d;
@@ -1856,7 +1910,7 @@ async function runScreen(){
       return;
     }
     SCREEN_DATA = d.results;
-    SCREEN_SORT = SCREEN_MODE==='reit' ? {key:'cap_rate', dir:-1} : {key:'p_fcf', dir:1};
+    SCREEN_SORT = {key:cfg.sortKey, dir:cfg.sortDir};
     SCREEN_UNRESOLVED = d.guru_unresolved || [];
     renderScreenTable(d.stats);
   }catch(e){
@@ -1889,18 +1943,29 @@ function renderScreenTable(stats){
     return dir*(av-bv);
   });
   const arrow=k=> SCREEN_SORT.key===k ? (SCREEN_SORT.dir>0?' ▲':' ▼') : '';
-  const reitMode = SCREEN_MODE==='reit';
+  const mode = SCREEN_MODE;
+  const notExcludedNote = st.not_reit ? ` · ${st.not_reit} non-REITs excluded`
+    : st.not_bank ? ` · ${st.not_bank} non-banks excluded`
+    : st.not_insurance ? ` · ${st.not_insurance} non-insurers excluded`
+    : '';
   let h = `<div class="scr-hint" style="margin-bottom:8px">
-    <strong>${st.label||st.universe||''}</strong> · ${st.passed} passed of ${st.evaluated} companies valued${st.excluded_sectors?` · ${st.excluded_sectors} insurers/banks/REITs excluded`:''}${st.not_reit?` · ${st.not_reit} non-REITs excluded`:''}${st.excluded_20f?` · ${st.excluded_20f} 20-F filers excluded`:''} · FY${st.fiscal_year} · click a row to analyze</div>
+    <strong>${st.label||st.universe||''}</strong> · ${st.passed} passed of ${st.evaluated} companies valued${st.excluded_sectors?` · ${st.excluded_sectors} insurers/banks/REITs excluded`:''}${notExcludedNote}${st.excluded_20f?` · ${st.excluded_20f} 20-F filers excluded`:''} · FY${st.fiscal_year} · click a row to analyze</div>
   ${st.guru_note?`<div class="scr-hint" style="margin-bottom:8px;color:#b45309">⚠ ${st.guru_note}</div>`:''}
   <table class="scr-table">
     <thead><tr>
       <th onclick="sortScreen('rank')">#</th>
       <th onclick="sortScreen('ticker')">Ticker${arrow('ticker')}</th>
-      ${reitMode ? `
+      ${mode==='reit' ? `
       <th onclick="sortScreen('cap_rate')">Cap Rate${arrow('cap_rate')}</th>
+      <th onclick="sortScreen('p_ffo')">P/FFO${arrow('p_ffo')}</th>
       <th onclick="sortScreen('noi')">NOI${arrow('noi')}</th>
       <th onclick="sortScreen('enterprise_value')">EV${arrow('enterprise_value')}</th>
+      ` : mode==='bank' ? `
+      <th onclick="sortScreen('p_b')">P/B${arrow('p_b')}</th>
+      <th onclick="sortScreen('book_value')">Book Value${arrow('book_value')}</th>
+      ` : mode==='insurance' ? `
+      <th onclick="sortScreen('p_float')">P/Float${arrow('p_float')}</th>
+      <th onclick="sortScreen('float')">Float${arrow('float')}</th>
       ` : `
       <th onclick="sortScreen('p_fcf')">P/FCF${arrow('p_fcf')}</th>
       <th onclick="sortScreen('ev_ebit')">EV/EBIT${arrow('ev_ebit')}</th>
@@ -1913,10 +1978,17 @@ function renderScreenTable(stats){
     h += `<tr class="scr-row" onclick="screenLoad('${r.ticker}')">
       <td class="scr-rank">${i+1}</td>
       <td class="scr-tk">${r.ticker}</td>
-      ${reitMode ? `
+      ${mode==='reit' ? `
       <td class="${r.cap_rate>0?'scr-good':''}">${r.cap_rate!=null?F.pct(r.cap_rate):'—'}</td>
+      <td>${r.p_ffo!=null?r.p_ffo.toFixed(1)+'×':'—'}</td>
       <td>${F.$M(r.noi)}</td>
       <td>${F.$M(r.enterprise_value)}</td>
+      ` : mode==='bank' ? `
+      <td>${r.p_b!=null?r.p_b.toFixed(2)+'×':'—'}</td>
+      <td>${F.$M(r.book_value)}</td>
+      ` : mode==='insurance' ? `
+      <td>${r.p_float!=null?r.p_float.toFixed(2)+'×':'—'}</td>
+      <td>${F.$M(r.float)}</td>
       ` : `
       <td>${r.p_fcf!=null?r.p_fcf.toFixed(1)+'×':'—'}</td>
       <td>${r.ev_ebit!=null?r.ev_ebit.toFixed(1)+'×':'—'}</td>

@@ -3909,16 +3909,8 @@ def screen_route():
     return jsonify(result)
 
 
-@app.route("/api/screen_reits")
-def screen_reits_route():
-    """
-    REIT-specific screener, ranked by Implied Cap Rate = NOI / Enterprise
-    Value. P/FCF and EV/EBIT (the general screen's metrics) are excluded for
-    REITs there precisely because they don't describe a REIT's economics —
-    this is that sector's own screen. Params mirror /api/screen minus the
-    sector-exclusion flags (this IS the REIT-only screen) and max_pfcf/
-    max_ev_ebit, replaced by min_cap_rate.
-    """
+def _screen_common_params():
+    """Shared param parsing for the sector-specific screen routes."""
     universe = request.args.get("universe", "sp500").lower().strip()
     fy = int(request.args.get("fy", 2025))
 
@@ -3929,31 +3921,92 @@ def screen_reits_route():
         except ValueError:
             return None
 
-    min_cap_rate = _f("min_cap_rate")
-    if min_cap_rate is not None:
-        min_cap_rate = min_cap_rate / 100.0   # UI sends a percent, e.g. 6 for 6%
     _min_b = _f("min_mktcap_b")
     _max_b = _f("max_mktcap_b")
     min_mktcap = _min_b * 1e9 if _min_b is not None else None
     max_mktcap = _max_b * 1e9 if _max_b is not None else None
     refresh = request.args.get("refresh", "").strip() in ("1", "true", "yes")
 
-    try:
-        if universe == "custom":
-            raw = request.args.get("tickers", "")
-            tickers = [t.strip().upper() for t in re.split(r"[,\s]+", raw) if t.strip()]
-            if not tickers:
-                return jsonify({"error": "Provide tickers for a custom screen"}), 400
-        else:
-            tickers = screener.get_universe(universe)
-            if not tickers:
-                return jsonify({"error": f"Unknown universe '{universe}'"}), 400
+    if universe == "custom":
+        raw = request.args.get("tickers", "")
+        tickers = [t.strip().upper() for t in re.split(r"[,\s]+", raw) if t.strip()]
+    else:
+        tickers = screener.get_universe(universe)
+    return universe, fy, _f, min_mktcap, max_mktcap, refresh, tickers
 
-        result = screener.screen_reits(universe, tickers, min_cap_rate, fy,
-                                       min_mktcap=min_mktcap, max_mktcap=max_mktcap,
-                                       refresh=refresh)
+
+@app.route("/api/screen_reits")
+def screen_reits_route():
+    """
+    REIT-specific screener, ranked by Implied Cap Rate = NOI / Enterprise
+    Value, with P/FFO as a secondary filter. P/FCF and EV/EBIT (the general
+    screen's metrics) are excluded for REITs there precisely because they
+    don't describe a REIT's economics — this is that sector's own screen.
+    Params mirror /api/screen minus the sector-exclusion flags (this IS the
+    REIT-only screen) and max_pfcf/max_ev_ebit, replaced by min_cap_rate and
+    max_p_ffo.
+    """
+    universe, fy, _f, min_mktcap, max_mktcap, refresh, tickers = _screen_common_params()
+    if universe == "custom" and not tickers:
+        return jsonify({"error": "Provide tickers for a custom screen"}), 400
+    if universe != "custom" and not tickers:
+        return jsonify({"error": f"Unknown universe '{universe}'"}), 400
+
+    min_cap_rate = _f("min_cap_rate")
+    if min_cap_rate is not None:
+        min_cap_rate = min_cap_rate / 100.0   # UI sends a percent, e.g. 6 for 6%
+    max_p_ffo = _f("max_p_ffo")
+
+    try:
+        result = screener.screen_reits(universe, tickers, min_cap_rate, max_p_ffo,
+                                       latest_fy=fy, min_mktcap=min_mktcap,
+                                       max_mktcap=max_mktcap, refresh=refresh)
     except Exception as e:
         return jsonify({"error": f"REIT screen failed: {e}"}), 500
+
+    result["stats"]["label"] = screener.UNIVERSE_LABELS.get(universe, universe.upper())
+    return jsonify(result)
+
+
+@app.route("/api/screen_banks")
+def screen_banks_route():
+    """Bank-specific screener, ranked by P/B = Market Cap / Book Value of Equity."""
+    universe, fy, _f, min_mktcap, max_mktcap, refresh, tickers = _screen_common_params()
+    if universe == "custom" and not tickers:
+        return jsonify({"error": "Provide tickers for a custom screen"}), 400
+    if universe != "custom" and not tickers:
+        return jsonify({"error": f"Unknown universe '{universe}'"}), 400
+
+    max_pb = _f("max_pb")
+
+    try:
+        result = screener.screen_banks(universe, tickers, max_pb,
+                                       latest_fy=fy, min_mktcap=min_mktcap,
+                                       max_mktcap=max_mktcap, refresh=refresh)
+    except Exception as e:
+        return jsonify({"error": f"Bank screen failed: {e}"}), 500
+
+    result["stats"]["label"] = screener.UNIVERSE_LABELS.get(universe, universe.upper())
+    return jsonify(result)
+
+
+@app.route("/api/screen_insurance")
+def screen_insurance_route():
+    """Insurance-specific screener, ranked by P/Float = Market Cap / Float."""
+    universe, fy, _f, min_mktcap, max_mktcap, refresh, tickers = _screen_common_params()
+    if universe == "custom" and not tickers:
+        return jsonify({"error": "Provide tickers for a custom screen"}), 400
+    if universe != "custom" and not tickers:
+        return jsonify({"error": f"Unknown universe '{universe}'"}), 400
+
+    max_pfloat = _f("max_pfloat")
+
+    try:
+        result = screener.screen_insurance(universe, tickers, max_pfloat,
+                                           latest_fy=fy, min_mktcap=min_mktcap,
+                                           max_mktcap=max_mktcap, refresh=refresh)
+    except Exception as e:
+        return jsonify({"error": f"Insurance screen failed: {e}"}), 500
 
     result["stats"]["label"] = screener.UNIVERSE_LABELS.get(universe, universe.upper())
     return jsonify(result)
