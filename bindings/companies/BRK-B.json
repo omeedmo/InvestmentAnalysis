@@ -151,6 +151,22 @@
       "expr": "cash + short_term_investments"
     },
     {
+      "metric": "equity_securities",
+      "label": "Investments in equity securities",
+      "section": "Balance sheet",
+      "bind": [
+        {
+          "element": "us-gaap:EquitySecuritiesFvNi",
+          "statement": "Balance Sheet"
+        },
+        {
+          "element": "us-gaap:AvailableForSaleSecuritiesEquitySecurities",
+          "statement": "Balance Sheet"
+        }
+      ],
+      "note": "The marketable equity portfolio (Apple, Coca-Cola, American Express and the rest) as carried on the consolidated balance sheet. Two elements because ASU 2016-01 moved these off available-for-sale accounting: AvailableForSaleSecuritiesEquitySecurities runs through FY2017 and EquitySecuritiesFvNi from FY2017 on, and both print $170.5B in the overlap year, so the series joins cleanly. Ordered alternatives, first match wins, so the newer element takes FY2017+ automatically. Both are bound at the consolidated level (no dimension) rather than the Insurance and Other column, which excludes the ~$0.4-6B held in the other segment columns."
+    },
+    {
       "metric": "intangibles_insurance_other",
       "label": "Other Intangible Assets \u2014 Insurance and Other",
       "section": "Balance sheet",
@@ -252,8 +268,8 @@
       "metric": "unta",
       "label": "Unlevered Net Tangible Assets",
       "section": "Capital quality",
-      "expr": "equity + total_debt - total_cash - goodwill - intangibles",
-      "note": "Matches the app's standard formula (Equity + Total Debt - Total Cash - Goodwill - Intangibles): adds back debt to reach an unlevered tangible capital base, then strips out cash and accounting intangibles. An earlier version of this override used Total Assets - Goodwill - Intangibles - Total Debt, which subtracted debt with the wrong sign and omitted cash entirely, overstating UNTA (FY2025: $976B vs the corrected $360B)."
+      "expr": "equity + total_debt - total_cash - goodwill - intangibles - equity_securities",
+      "note": "The app's standard formula (Equity + Total Debt - Total Cash - Goodwill - Intangibles) with one Berkshire-specific deduction: the marketable equity portfolio. UNTA is meant to isolate the tangible capital the OPERATING businesses run on, and a $300B stake in Apple and Coca-Cola is a financial asset by exactly the same logic that removes cash - it earns a market return, not an operating one. Leaving it in inflated the denominator by roughly the size of the portfolio and pushed Economic Goodwill (NOPAT / UNTA) down to a figure that described the stock market more than the businesses. An earlier version of this override used Total Assets - Goodwill - Intangibles - Total Debt, which subtracted debt with the wrong sign and omitted cash entirely, overstating UNTA (FY2025: $976B vs $360B before this deduction)."
     },
     {
       "metric": "tangible_equity",

@@ -2286,6 +2286,16 @@ METRIC_TAGS: dict[str, list[str]] = {
         "AvailableForSaleSecuritiesCurrent",
         "DebtSecuritiesAvailableForSaleExcludingAccruedInterestCurrent",  # INTU post-FY2023
     ],
+    # Marketable equity portfolio. Only surfaced as a row where a company
+    # template asks for it (Berkshire), but extracted generally so the QUARTERLY
+    # value exists for any filer whose UNTA binding deducts it — an annual UNTA
+    # that nets out the portfolio beside a quarterly one that doesn't would be
+    # two different definitions in one row. ASU 2016-01 moved these off
+    # available-for-sale accounting, hence both concepts.
+    "equity_securities": [
+        "EquitySecuritiesFvNi",
+        "AvailableForSaleSecuritiesEquitySecurities",
+    ],
     "long_term_debt": [
         "LongTermDebtNoncurrent",
         "LongTermDebtAndCapitalLeaseObligations",       # DPZ securitization + leases (noncurrent)
@@ -4357,6 +4367,15 @@ def apply_scorecard_overlay(ticker: str, cik: str, submissions: dict,
         if n:
             applied[metric] = n
 
+    # Which metrics this filer's UNTA is built from. The quarterly UNTA is
+    # computed separately, from the generic formula, so it needs to know when a
+    # binding has changed the definition — otherwise the annual and quarterly
+    # cells of one row mean different things (see the quarterly UNTA block).
+    unta_inputs: set = set()
+    for spec in scorecard.load_bindings(binding.get("sector"), tk):
+        if spec.get("metric") == "unta" and spec.get("expr"):
+            unta_inputs = set(re.findall(r"[A-Za-z_]\w*", spec["expr"]))
+
     return {
         "applied":   applied,
         "reserved":  sorted(reserved & set(sc["metrics"])),
@@ -4364,6 +4383,7 @@ def apply_scorecard_overlay(ticker: str, cik: str, submissions: dict,
         "skipped":   sc["skipped"],
         "filings":   len(sc["provenance"]),
         "sector":    binding.get("sector"),
+        "unta_inputs": sorted(unta_inputs),
         "labels":    {m: d["label"] for m, d in sc["metrics"].items()},
         "tiers":     {m: d["tier"] for m, d in sc["metrics"].items()},
         "notes":     {m: d["note"] for m, d in sc["metrics"].items() if d.get("note")},
@@ -4554,6 +4574,7 @@ def analyze():
                                                  reserved=_authored)
     except Exception:
         scorecard_meta = None       # never let this path break the response
+    _binding_unta_inputs = set((scorecard_meta or {}).get("unta_inputs") or ())
 
     shares_end_series = financials.get("shares_outstanding_end", {})
     shares_diluted_series = financials.get("shares_diluted_wtd", {})
@@ -4762,6 +4783,8 @@ def analyze():
         # Insurance point-in-time (float components)
         "claims_reserve", "unearned_premiums", "premiums_receivable",
         "deferred_acquisition_costs", "reinsurance_recoverable",
+        # Marketable equity portfolio — needed quarterly wherever UNTA deducts it
+        "equity_securities",
     }
     _point_in_time_metrics = {
         "total_assets", "current_assets", "current_liabilities", "total_liabilities",
@@ -4778,6 +4801,8 @@ def analyze():
         # Insurance point-in-time (float components)
         "claims_reserve", "unearned_premiums", "premiums_receivable",
         "deferred_acquisition_costs", "reinsurance_recoverable",
+        # Marketable equity portfolio — needed quarterly wherever UNTA deducts it
+        "equity_securities",
     }
 
     # quarter_end_dates: {"Q1": "YYYY-MM-DD", ...}  for display labels
@@ -5401,15 +5426,27 @@ def analyze():
         _q_tc_q  = {k: v for k, v in financials.get("total_cash", {}).items() if k.startswith("Q")}
         _q_gw    = {k: v for k, v in financials.get("goodwill",   {}).items() if k.startswith("Q")}
         _q_ia    = {k: v for k, v in financials.get("intangibles",{}).items() if k.startswith("Q")}
+        _q_es    = {k: v for k, v in financials.get("equity_securities", {}).items() if k.startswith("Q")}
+        # A company binding may deduct the marketable equity portfolio from UNTA
+        # (Berkshire does: a $300B stake in Apple is a financial asset, not
+        # tangible operating capital). Where the annual row nets it out, the
+        # quarterly cells in that same row must too — otherwise one row carries
+        # two definitions and steps by the size of the portfolio at the year
+        # boundary. If the quarter has no figure to deduct, leave the cell out
+        # rather than compute it under the other definition.
+        _unta_deducts_es = "equity_securities" in (_binding_unta_inputs or set())
         if _q_oi and (_q_eq3 or _q_td2):
             _unta_q = financials.setdefault("unta", {})
             for qk in set(_q_eq3) | set(_q_td2):
+                if _unta_deducts_es and _q_es.get(qk) is None:
+                    continue
                 e      = _q_eq3.get(qk) or 0
                 debt   = _q_td2.get(qk) or 0
                 cash_v = _q_tc_q.get(qk) or 0
                 gw_v   = _q_gw.get(qk)   or 0
                 ia_v   = _q_ia.get(qk)   or 0
-                _unta_q[qk] = e + debt - cash_v - gw_v - ia_v
+                es_v   = (_q_es.get(qk) or 0) if _unta_deducts_es else 0
+                _unta_q[qk] = e + debt - cash_v - gw_v - ia_v - es_v
 
             _nopat_q = financials.setdefault("nopat", {})
             for qk in set(_q_oi):

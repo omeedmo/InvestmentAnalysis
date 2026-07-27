@@ -64,6 +64,17 @@
       "why": "Reported net margin runs from 1.6% to 32.5% year to year purely on investment gains/losses, which is not a margin on the operating businesses at all. Operating earnings over revenue is the stable, comparable version.",
       "evidence": "Reported net margin: 1.6% (2018), 32.0% (2019), -7.6% (2022) - the swings track the stock market, not Berkshire's operations.",
       "confidence": "high"
+    },
+    {
+      "key": "brk_equity_securities_row",
+      "label": "Investments in equity securities",
+      "type": "$",
+      "after": "total_cash",
+      "basis": "reported",
+      "expr": "equity_securities",
+      "why": "Berkshire's marketable equity portfolio, carried on the balance sheet right under cash and short-term investments \u2014 the same place Berkshire itself prints it. Surfacing it here is what makes the UNTA line below readable: UNTA deducts this portfolio (see the binding note) because a $300B stake in Apple and Coca-Cola is a financial asset earning a market return, not tangible capital the operating businesses run on. Without the row on screen the deduction is invisible and UNTA looks unexplained.",
+      "evidence": "Bound to the consolidated balance-sheet line Berkshire labels 'Investments in equity securities': us-gaap:AvailableForSaleSecuritiesEquitySecurities through FY2017 and us-gaap:EquitySecuritiesFvNi from FY2017 on (ASU 2016-01 moved these off available-for-sale accounting). Both print $170.5B in the FY2017 overlap, so the series joins without a step.",
+      "confidence": "high"
     }
   ],
   "annotations": {
