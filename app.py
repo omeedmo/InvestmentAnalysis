@@ -2396,6 +2396,26 @@ METRIC_TAGS: dict[str, list[str]] = {
     "goodwill": ["Goodwill"],
     "intangibles": ["FiniteLivedIntangibleAssetsNet", "IntangibleAssetsNetExcludingGoodwill"],
     "inventory": ["InventoryNet"],
+    # Net productive fixed assets. The single most widespread gap in the whole
+    # mapping before this existed: the coverage audit flagged it for 91 of 118
+    # S&P 500 names, at up to 85% of total assets. For an asset-heavy filer it
+    # is the asset the business actually runs on, and nothing consumed it.
+    #
+    # The second tag is the same concept under its post-ASC-842 caption, which
+    # folds finance-lease right-of-use assets into the line. Companies switch
+    # cleanly: T, LUMN, UNP and CVS all report BOTH in their transition year
+    # and the two agree to 0.00% ($130.13B for T in 2019, $57.40B for UNP in
+    # 2023), so first-tag-wins joins the eras without a step.
+    #
+    # Deliberately NOT including RealEstateInvestmentPropertyNet: that is a
+    # REIT's operating property and already has its own `real_estate_assets`
+    # row. Folding it in here would put two different concepts in one row and,
+    # for a filer reporting both (Prologis reports $0.2B of corporate PP&E
+    # beside $80B of real estate), would splice the series mid-history.
+    "ppe_net": [
+        "PropertyPlantAndEquipmentNet",
+        "PropertyPlantAndEquipmentAndFinanceLeaseRightOfUseAssetAfterAccumulatedDepreciationAndAmortization",
+    ],
 
     # Shares
     "shares_outstanding_end": ["CommonStockSharesOutstanding", "EntityCommonStockSharesOutstanding"],
@@ -2843,6 +2863,7 @@ def build_financials(facts: dict, metric_tags: dict = None,
         "goodwill",
         "intangibles",
         "inventory",
+        "ppe_net",
         "shares_outstanding_end",
         "buyback_remaining",
         "treasury_stock",
@@ -4880,7 +4901,7 @@ def analyze():
         "total_assets", "current_assets", "current_liabilities", "equity",
         "cash", "short_term_investments", "long_term_debt", "current_debt",
         "total_liabilities", "goodwill", "intangibles", "inventory", "shares_outstanding_end",
-        "treasury_stock", "treasury_stock_shares",
+        "treasury_stock", "treasury_stock_shares", "ppe_net",
         # Operating leases (ASC 842)
         "operating_lease_liability_total", "operating_lease_liability_current",
         "operating_lease_liability_noncurrent", "operating_lease_rou_asset",
@@ -4898,7 +4919,7 @@ def analyze():
         "total_assets", "current_assets", "current_liabilities", "total_liabilities",
         "equity", "cash", "short_term_investments", "long_term_debt", "current_debt",
         "goodwill", "intangibles", "inventory", "shares_outstanding_end", "buyback_remaining",
-        "treasury_stock", "treasury_stock_shares",
+        "treasury_stock", "treasury_stock_shares", "ppe_net",
         # Operating leases (ASC 842)
         "operating_lease_liability_total", "operating_lease_liability_current",
         "operating_lease_liability_noncurrent", "operating_lease_rou_asset",

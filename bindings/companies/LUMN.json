@@ -3,7 +3,7 @@
   "ticker": "LUMN",
   "cik": 18926,
   "sector": null,
-  "note": "Lumen (formerly CenturyLink, ticker CTL until 2020) has renamed its own XBRL extension namespace and re-tagged the same balance-sheet lines three times in fifteen years, so the global bindings catch only part of its history. Two lines matter enough to override here, and both are large: other intangible assets, which the global binding misses entirely for 2011-2016 and understates for 2017-2019, and net property, plant and equipment, which is the company's principal asset (about 59% of total assets) and had no binding at all. Everything else -- revenue, the cash-flow statement, goodwill, equity -- resolves correctly from the global tier and is deliberately left alone.",
+  "note": "Lumen (formerly CenturyLink, ticker CTL until 2020) has renamed its own XBRL extension namespace and re-tagged the same balance-sheet lines three times in fifteen years, so the global bindings catch only part of its history. What needs overriding here is intangibles: Lumen prints TWO lines under goodwill and the global single-element binding takes whichever one it matches, dropping the other -- blank for FY2011-FY2016 and understated by $1.9-2.0B for FY2017-FY2019. Net PP&E was also bound here originally; it is now a global metric (the coverage audit found the same gap in 91 of 118 S&P 500 names), with the identical two elements, so the company-tier copy was removed rather than left to shadow it. Everything else -- revenue, the cash-flow statement, goodwill, equity -- resolves correctly from the global tier and is deliberately left alone.",
   "metrics": [
     {
       "metric": "intangibles_customer_relationships",
@@ -63,22 +63,6 @@
         "intangibles_total_reported"
       ],
       "note": "Sum of whichever presentation the year used; the from/to scoping above makes the two eras disjoint, so exactly one of (split lines) or (combined total) contributes in any year and nothing is double counted. Restores FY2011-FY2016, which the global binding left blank altogether, and corrects FY2017-FY2019, where it reported only the customer-relationships line and understated intangibles by $1.9-2.0B. That fed straight into tangible book value and unlevered net tangible assets, and for a company whose equity has been reduced to roughly zero by $22.3B of goodwill impairment, a $2B error in the tangible-asset base is not a rounding difference. The FY2011 floor is deliberate: both of Lumen's FY2010 filings fail to parse (one returns 404 for its FilingSummary), so FY2010 resolves only the smaller of the two lines from a later filing's comparative column. Summed, that produced a confident $0.62B for a year the company reported billions of customer-relationship intangibles. Scoping the era out leaves FY2010 blank, which is the honest answer."
-    },
-    {
-      "metric": "ppe_net",
-      "label": "Net property, plant and equipment",
-      "section": "Balance sheet",
-      "bind": [
-        {
-          "element": "us-gaap:PropertyPlantAndEquipmentNet",
-          "statement": "Balance Sheet"
-        },
-        {
-          "element": "us-gaap:PropertyPlantAndEquipmentAndFinanceLeaseRightOfUseAssetAfterAccumulatedDepreciationAndAmortization",
-          "statement": "Balance Sheet"
-        }
-      ],
-      "note": "The fiber and network plant -- about 59% of total assets and the only asset on this balance sheet with a plausible claim to earning power, given goodwill has been almost entirely written off. Nothing consumed it before: the coverage audit ranked it the third-largest unmapped fact for this filer. Two elements because ASC 842 finance-lease right-of-use assets were folded into the caption from FY2024; the elements overlap in FY2024 at $20.42B each, so the series joins cleanly."
     }
   ]
 }

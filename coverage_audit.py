@@ -167,6 +167,15 @@ ROLLUP_TAGS = {
     "ComprehensiveIncomeNetOfTax",
     "ComprehensiveIncomeNetOfTaxIncludingPortionAttributableToNoncontrollingInterest",
     "OtherComprehensiveIncomeLossNetOfTax",
+    # Gross variants whose Net counterpart is mapped. These are the same asset
+    # before accumulated depreciation/amortization, which is itself already
+    # filtered as disclosure detail, so flagging the Gross line as a blind spot
+    # double-counts a concept we do consume. PropertyPlantAndEquipmentGross was
+    # the single most-flagged tag across the S&P 500 purely because the Net line
+    # had no mapping; now that ppe_net exists, it is a roll-up like the rest.
+    "PropertyPlantAndEquipmentGross",
+    "IntangibleAssetsGrossExcludingGoodwill",
+    "RealEstateInvestmentPropertyAtCost",
 }
 
 _DISCLOSURE_RE = re.compile("|".join(DISCLOSURE_PATTERNS))

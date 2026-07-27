@@ -16,17 +16,6 @@
   ],
   "metrics": [
     {
-      "key": "lumn_ppe_net_row",
-      "label": "Net property, plant and equipment",
-      "type": "$",
-      "after": "intangibles",
-      "basis": "reported",
-      "expr": "ppe_net",
-      "why": "The fiber and network plant is what is actually left of this company. Goodwill has been written down by $22.3B to near zero and equity has gone negative, so book equity and earnings say almost nothing; PP&E at roughly 59% of total assets is the asset the debt is lent against and the thing the fiber capex is either improving or not. It had no binding at all before and appeared nowhere on the page.",
-      "evidence": "Bound in bindings/companies/LUMN.json to us-gaap:PropertyPlantAndEquipmentNet, with the ASC 842 finance-lease variant taking over from FY2024 (both tag $20.42B in the FY2024 overlap). Ranked the third-largest unmapped fact for this filer by coverage_audit.py.",
-      "confidence": "high"
-    },
-    {
       "key": "lumn_ocf_less_capex_vs_debt",
       "label": "Free cash flow / total debt",
       "type": "%",
@@ -56,7 +45,6 @@
   "caveats": [
     "Revenue has been in secular decline; multi-year growth rates measure portfolio shrinkage and divestitures, not like-for-like performance.",
     "PropertyPlantAndEquipmentGross ($53.3B at its 2018 peak) far exceeds total assets, so accumulated depreciation on the network plant is very large \u2014 book asset values understate the physical fiber footprint but say nothing about its earning power.",
-    "Lumen renamed its XBRL extension namespace (ctl: to lumn:) and re-tagged the same balance-sheet captions repeatedly. Intangibles and net PP&E are bound explicitly in bindings/companies/LUMN.json to survive those switches; before that, intangibles were blank for FY2011-FY2016 and understated by ~$2B for FY2017-FY2019, which flowed into tangible book value and UNTA.",
     "FY2010 is not covered: both of that year's filings fail to parse (one returns 404 for its FilingSummary), so the intangibles bindings start at FY2011 rather than reporting a partial sum as if it were complete."
   ]
 }
