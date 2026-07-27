@@ -396,8 +396,19 @@ def compute_derived(resolved: dict, bindings: list) -> dict:
         # ones are genuinely optional, per metric, and everything else still
         # blanks the whole cell when missing.
         optional = set(spec.get("zero_if_absent", []))
+        # Names the expression actually reads. Used to refuse a year in which
+        # NONE of them resolved: with every input optional, such a year would
+        # otherwise evaluate to a confident 0 built from nothing at all. Lumen
+        # showed this — its FY2010 intangibles came out as $0.6B because one of
+        # two balance-sheet lines resolved and the other was zero-filled, in a
+        # year the company reported billions of customer-relationship
+        # intangibles. A zero that means "no data" is worse than a blank,
+        # because only the blank tells the reader which it is.
+        referenced = set(re.findall(r"[A-Za-z_]\w*", expr))
         series: dict[str, dict] = {}
         for year, vals in values_by_year.items():
+            if not any(vals.get(k) is not None for k in referenced):
+                continue
             if optional:
                 vals = {**{k: 0.0 for k in optional if vals.get(k) is None}, **vals}
             v = company_templates.eval_expr(expr, vals)

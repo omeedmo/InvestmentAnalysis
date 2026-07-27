@@ -2,22 +2,37 @@
   "ticker": "LUMN",
   "cik": 18926,
   "generated_by": "session-authored (Claude Opus 4.8) from LUMN 10-K XBRL + coverage audit",
-  "summary": "Heavily indebted, shrinking telecom carrier that has written off most of its acquisition history — $22.3B of accumulated goodwill impairment. Equity and earnings are dominated by impairments and are close to worthless as signals. What matters is whether asset-heavy operating cash flow covers a $17.9B debt load against a $33.5B balance sheet, and whether the fiber capex is earning a return.",
-
+  "summary": "Heavily indebted, shrinking telecom carrier that has written off most of its acquisition history \u2014 $22.3B of accumulated goodwill impairment. Equity and earnings are dominated by impairments and are close to worthless as signals. What matters is whether asset-heavy operating cash flow covers a $17.9B debt load against a $33.5B balance sheet, and whether the fiber capex is earning a return.",
   "add_tags": {
-    "long_term_debt": ["DebtAndCapitalLeaseObligations"],
-    "goodwill_impairment_accumulated": ["GoodwillImpairedAccumulatedImpairmentLoss"]
+    "long_term_debt": [
+      "DebtAndCapitalLeaseObligations"
+    ],
+    "goodwill_impairment_accumulated": [
+      "GoodwillImpairedAccumulatedImpairmentLoss"
+    ]
   },
-  "point_in_time": ["goodwill_impairment_accumulated"],
-
+  "point_in_time": [
+    "goodwill_impairment_accumulated"
+  ],
   "metrics": [
+    {
+      "key": "lumn_ppe_net_row",
+      "label": "Net property, plant and equipment",
+      "type": "$",
+      "after": "intangibles",
+      "basis": "reported",
+      "expr": "ppe_net",
+      "why": "The fiber and network plant is what is actually left of this company. Goodwill has been written down by $22.3B to near zero and equity has gone negative, so book equity and earnings say almost nothing; PP&E at roughly 59% of total assets is the asset the debt is lent against and the thing the fiber capex is either improving or not. It had no binding at all before and appeared nowhere on the page.",
+      "evidence": "Bound in bindings/companies/LUMN.json to us-gaap:PropertyPlantAndEquipmentNet, with the ASC 842 finance-lease variant taking over from FY2024 (both tag $20.42B in the FY2024 overlap). Ranked the third-largest unmapped fact for this filer by coverage_audit.py.",
+      "confidence": "high"
+    },
     {
       "key": "lumn_ocf_less_capex_vs_debt",
       "label": "Free cash flow / total debt",
       "type": "%",
       "basis": "derived",
       "expr": "(operating_cash_flow - capex) / long_term_debt",
-      "why": "For a levered, declining carrier the central question is debt serviceability, not growth or margin. This is the share of borrowings the business could retire from a year of free cash flow — the cleanest single solvency read.",
+      "why": "For a levered, declining carrier the central question is debt serviceability, not growth or margin. This is the share of borrowings the business could retire from a year of free cash flow \u2014 the cleanest single solvency read.",
       "evidence": "FY2024: DebtAndCapitalLeaseObligations $17.9B against Assets $33.5B.",
       "confidence": "medium"
     },
@@ -32,17 +47,16 @@
       "confidence": "high"
     }
   ],
-
   "annotations": {
     "equity": "Book equity reflects roughly $22.3B of cumulative goodwill write-offs from the CenturyLink/Level 3/Qwest acquisition history. It records past M&A destruction, not present asset value.",
     "net_income": "Repeatedly dominated by goodwill impairments and asset sales rather than operations. Read operating cash flow instead.",
-    "goodwill": "GoodwillImpairedAccumulatedImpairmentLoss stands at $22.3B — larger than remaining total equity. Any goodwill-sensitive metric (ROTE, tangible book) should be read with that history in mind.",
+    "goodwill": "GoodwillImpairedAccumulatedImpairmentLoss stands at $22.3B \u2014 larger than remaining total equity. Any goodwill-sensitive metric (ROTE, tangible book) should be read with that history in mind.",
     "roe": "Not meaningful given impairment-driven equity and losses."
   },
-
   "caveats": [
     "Revenue has been in secular decline; multi-year growth rates measure portfolio shrinkage and divestitures, not like-for-like performance.",
-    "PropertyPlantAndEquipmentGross ($41.1B) exceeds total assets ($33.5B), so accumulated depreciation on the network plant is very large — book asset values understate physical fiber footprint but say nothing about its earning power.",
-    "Debt is tagged as DebtAndCapitalLeaseObligations, which the global mapping partially misses."
+    "PropertyPlantAndEquipmentGross ($53.3B at its 2018 peak) far exceeds total assets, so accumulated depreciation on the network plant is very large \u2014 book asset values understate the physical fiber footprint but say nothing about its earning power.",
+    "Lumen renamed its XBRL extension namespace (ctl: to lumn:) and re-tagged the same balance-sheet captions repeatedly. Intangibles and net PP&E are bound explicitly in bindings/companies/LUMN.json to survive those switches; before that, intangibles were blank for FY2011-FY2016 and understated by ~$2B for FY2017-FY2019, which flowed into tangible book value and UNTA.",
+    "FY2010 is not covered: both of that year's filings fail to parse (one returns 404 for its FilingSummary), so the intangibles bindings start at FY2011 rather than reporting a partial sum as if it were complete."
   ]
 }

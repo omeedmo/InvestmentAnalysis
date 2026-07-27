@@ -31,14 +31,42 @@ import screener
 
 # ── What counts as "consumed" ────────────────────────────────────────────────
 
-def mapped_tags() -> set[str]:
-    """Every tag any metric maps to, plus tags used only in local fallbacks."""
+def mapped_tags(ticker: str = None) -> set[str]:
+    """
+    Every tag any metric maps to, plus tags used only in local fallbacks.
+
+    When a ticker is given, the tags its authored bindings consume count too.
+    A company that has been moved onto the bindings path reads its statements
+    by element name there, not through METRIC_TAGS, so without this the audit
+    reports the very lines someone just finished binding as blind spots —
+    Lumen's net PP&E was flagged as its third-largest gap immediately after
+    being bound. The check is per-ticker on purpose: a tag consumed by
+    Berkshire's bindings is still a genuine gap for everyone else.
+    """
     out: set[str] = set()
     for tags in app.METRIC_TAGS.values():
         for t in (tags or []):
             out.add(t)
     # Tags consumed by targeted fallbacks rather than METRIC_TAGS lists.
     out |= {"InterestIncomeExpenseNet", "InterestIncomeExpenseNonoperatingNet"}
+
+    if ticker:
+        import company_templates
+        import scorecard
+        binding = scorecard._read_json(os.path.join(
+            scorecard.BINDING_DIR, "companies",
+            f"{ticker.upper().replace('.', '-')}.json")) or {}
+        for spec in scorecard.load_bindings(binding.get("sector"), ticker):
+            for b in spec.get("bind", []):
+                el = b.get("element") or ""
+                out.add(el.split(":", 1)[-1])       # drop the namespace prefix
+        # Tags a company template adds to the global mapping for this filer
+        # only — the other per-company way of consuming a tag, and equally
+        # invisible if the audit reads METRIC_TAGS alone.
+        tmpl = company_templates.load_template(ticker) or {}
+        for tags in (tmpl.get("add_tags") or {}).values():
+            for t in (tags or []):
+                out.add(t.split(":", 1)[-1])
     return out
 
 
@@ -195,7 +223,8 @@ def latest_annual_facts(facts: dict) -> dict[str, dict]:
 
 # ── The audit ────────────────────────────────────────────────────────────────
 
-def audit(facts: dict, threshold: float = 0.01, include_noise: bool = False) -> dict:
+def audit(facts: dict, threshold: float = 0.01, include_noise: bool = False,
+          ticker: str = None) -> dict:
     """
     Flag material facts no metric consumes.
 
@@ -203,7 +232,7 @@ def audit(facts: dict, threshold: float = 0.01, include_noise: bool = False) -> 
     (duration) facts against revenue, falling back to assets when a filer
     reports no revenue line (banks/REITs often don't tag one cleanly).
     """
-    consumed = mapped_tags()
+    consumed = mapped_tags(ticker)
     all_facts = latest_annual_facts(facts)
 
     assets  = (all_facts.get("Assets") or {}).get("value") or 0.0
@@ -318,7 +347,7 @@ def audit_ticker(ticker: str, threshold: float = 0.01,
         facts = app.fetch_company_facts(str(cik).zfill(10))
     except Exception as e:
         return {"ticker": ticker, "error": f"fetch failed: {e}"}
-    res = audit(facts, threshold, include_noise)
+    res = audit(facts, threshold, include_noise, ticker=ticker)
     res["ticker"] = ticker.upper()
     res["history"] = audit_history(facts)
     return res

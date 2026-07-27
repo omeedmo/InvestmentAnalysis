@@ -4651,6 +4651,39 @@ def analyze():
         scorecard_meta = None       # never let this path break the response
     _binding_unta_inputs = set((scorecard_meta or {}).get("unta_inputs") or ())
 
+    # UNTA and the ratios built on it are computed far above, from the
+    # companyfacts-derived series, and the overlay has just replaced some of
+    # those inputs with as-filed ones. Recompute so the ratio reflects the
+    # corrected balance sheet rather than the superseded one. Lumen is the case
+    # that surfaced this: binding its two intangible lines restored $4-13B a
+    # year that the single-element global binding had dropped, and UNTA did not
+    # move at all, because it had already been calculated against the old
+    # values. Skipped when the binding defines `unta` itself (Berkshire), since
+    # there the company's own definition is the authority.
+    if scorecard_meta and "unta" not in (scorecard_meta.get("applied") or {}):
+        _a_eq = financials.get("equity", {})
+        if _a_eq:
+            _a_td, _a_tc = financials.get("total_debt", {}), financials.get("total_cash", {})
+            _a_gw, _a_ia = financials.get("goodwill", {}), financials.get("intangibles", {})
+            _unta_a = financials.setdefault("unta", {})
+            for _d in [k for k in _a_eq if len(k) == 10 and not k.startswith("Q")]:
+                _y = _d[:4]
+                _unta_a[_d] = ((fy_get(_a_eq, _y) or 0) + (fy_get(_a_td, _y) or 0)
+                               - (fy_get(_a_tc, _y) or 0) - (fy_get(_a_gw, _y) or 0)
+                               - (fy_get(_a_ia, _y) or 0))
+            for _key, _num in (("economic_goodwill", financials.get("nopat", {})),
+                               ("pretax_economic_goodwill", financials.get("operating_income", {}))):
+                if not _num:
+                    continue
+                _dest = financials.setdefault(_key, {})
+                for _d in [k for k in _num if len(k) == 10 and not k.startswith("Q")]:
+                    _u = fy_get(_unta_a, _d[:4])
+                    # Same guard as the original: a negative tangible capital
+                    # base makes the ratio read backwards.
+                    _dest[_d] = (_num[_d] / _u) if (_u and _u > 0) else None
+                for _d in [k for k in list(_dest) if _dest[_d] is None]:
+                    del _dest[_d]
+
     shares_end_series = financials.get("shares_outstanding_end", {})
     shares_diluted_series = financials.get("shares_diluted_wtd", {})
     net_income_series = financials.get("net_income", {})
