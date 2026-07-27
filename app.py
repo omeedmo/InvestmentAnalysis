@@ -4,6 +4,8 @@ Value Line Style Investment Analysis – Flask Backend
 Pulls 15 years of financial data from SEC EDGAR (free, no API key).
 """
 
+import gzip
+import hashlib
 import io
 import json
 import math
@@ -238,6 +240,38 @@ def filing_html_to_text(html: str) -> str:
         tag.decompose()
     text = soup.get_text(separator=" ")
     return re.sub(r"\s+", " ", text).strip()
+
+
+def filing_text_cached(url: str) -> str:
+    """
+    Plain text of a filing document, cached on disk indefinitely.
+
+    A filing at a given accession URL is immutable once filed, so this never
+    needs revalidating. Worth caching because the plugin path reads every
+    10-K in a company's history on every page load: for Berkshire that was
+    ~150MB of HTML downloaded per request and about 4.5s of the ~10s load,
+    to re-derive text that had not changed since the filing was made.
+
+    The extracted TEXT is stored, not the HTML — 0.64MB vs 10MB per filing,
+    and it skips the re-parse too. Gzipped, Berkshire's whole 15-year history
+    is about 2MB on disk.
+    """
+    key = hashlib.sha1(url.encode()).hexdigest()[:20]
+    path = os.path.join(screener.CACHE_DIR, f"filingtext_{key}.txt.gz")
+    try:
+        if os.path.exists(path):
+            with gzip.open(path, "rt", encoding="utf-8") as f:
+                return f.read()
+    except Exception:
+        pass
+
+    text = quick_filing_text(sec_get_text(url))
+    try:
+        with gzip.open(path, "wt", encoding="utf-8") as f:
+            f.write(text)
+    except Exception:
+        pass
+    return text
 
 
 def quick_filing_text(html: str) -> str:
@@ -2051,36 +2085,56 @@ def get_market_data(ticker: str) -> dict:
     return data
 
 
+def _finra_short_interest_query(symbol: str) -> dict:
+    cutoff = (datetime.now() - timedelta(days=120)).strftime("%Y-%m-%d")
+    r = requests.post(
+        "https://api.finra.org/data/group/otcMarket/name/consolidatedShortInterest",
+        json={"compareFilters": [
+            {"compareType": "EQUAL", "fieldName": "symbolCode", "fieldValue": symbol},
+            {"compareType": "GTE", "fieldName": "settlementDate", "fieldValue": cutoff},
+        ], "limit": 10},
+        headers={"Accept": "application/json"}, timeout=15,
+    )
+    if r.status_code != 200:
+        return {}
+    rows = r.json() or []
+    if not rows:
+        return {}
+    row = max(rows, key=lambda x: x.get("settlementDate", ""))
+    shares_short = float(row.get("currentShortPositionQuantity") or 0)
+    if shares_short <= 0:
+        return {}
+    return {
+        "shares_short": shares_short,
+        "settlement_date": row.get("settlementDate"),
+        "days_to_cover": row.get("daysToCoverQuantity"),
+    }
+
+
 def _short_interest_finra(ticker: str) -> dict:
     """Latest bi-monthly short-interest settlement from FINRA's own public
     Consolidated Short Interest API (Rule 4560 reporting, covers all
-    exchanges — NYSE, Nasdaq, NYSE American, etc.). No auth required."""
-    try:
-        cutoff = (datetime.now() - timedelta(days=120)).strftime("%Y-%m-%d")
-        r = requests.post(
-            "https://api.finra.org/data/group/otcMarket/name/consolidatedShortInterest",
-            json={"compareFilters": [
-                {"compareType": "EQUAL", "fieldName": "symbolCode", "fieldValue": ticker.upper()},
-                {"compareType": "GTE", "fieldName": "settlementDate", "fieldValue": cutoff},
-            ], "limit": 10},
-            headers={"Accept": "application/json"}, timeout=15,
-        )
-        if r.status_code != 200:
-            return {}
-        rows = r.json() or []
-        if not rows:
-            return {}
-        row = max(rows, key=lambda x: x.get("settlementDate", ""))
-        shares_short = float(row.get("currentShortPositionQuantity") or 0)
-        if shares_short <= 0:
-            return {}
-        return {
-            "shares_short": shares_short,
-            "settlement_date": row.get("settlementDate"),
-            "days_to_cover": row.get("daysToCoverQuantity"),
-        }
-    except Exception:
-        return {}
+    exchanges — NYSE, Nasdaq, NYSE American, etc.). No auth required.
+
+    FINRA writes class shares with no separator — Berkshire's B shares are
+    BRKB, not BRK-B or BRK.B — so a class ticker has to be tried both ways.
+    Getting this wrong is expensive, not just incomplete: the miss falls
+    through to the Nasdaq fallback, which spends ~7.6s failing on three
+    symbol candidates for a NYSE-listed name it was never going to have.
+    """
+    t = ticker.upper()
+    seen: set = set()
+    for sym in (t, t.replace("-", "").replace(".", "")):
+        if sym in seen:
+            continue
+        seen.add(sym)
+        try:
+            found = _finra_short_interest_query(sym)
+        except Exception:
+            continue
+        if found:
+            return found
+    return {}
 
 
 def _short_interest_nasdaq(ticker: str) -> dict:
@@ -2115,8 +2169,29 @@ def get_short_interest(ticker: str) -> dict:
     cover). FINRA's Consolidated Short Interest API is tried first (covers
     every exchange); Nasdaq's short-interest API is the backup for anything
     FINRA doesn't return. Short % is computed by the caller against EDGAR
-    shares outstanding."""
-    return _short_interest_finra(ticker) or _short_interest_nasdaq(ticker)
+    shares outstanding.
+
+    Cached 12 hours, INCLUDING an empty result. Settlements are published
+    twice a month, so a fresh lookup on every page load buys nothing — and
+    the empty case is the one worth caching most, because that is exactly
+    when both providers have been tried and the miss cost the full timeout
+    budget of each.
+    """
+    cache_path = os.path.join(screener.CACHE_DIR, f"short_interest_{ticker.upper()}.json")
+    try:
+        if os.path.exists(cache_path) and time.time() - os.path.getmtime(cache_path) < 12 * 3600:
+            with open(cache_path) as f:
+                return json.load(f)
+    except Exception:
+        pass
+
+    data = _short_interest_finra(ticker) or _short_interest_nasdaq(ticker)
+    try:
+        with open(cache_path, "w") as f:
+            json.dump(data, f)
+    except Exception:
+        pass
+    return data
 
 
 # ─── XBRL tag priority lists ─────────────────────────────────────────────────
@@ -4542,7 +4617,7 @@ def analyze():
         def _plugin_filing_text(filing: dict) -> str:
             url = filing["url"]
             if url not in _plugin_html_cache:
-                _plugin_html_cache[url] = quick_filing_text(sec_get_text(url))
+                _plugin_html_cache[url] = filing_text_cached(url)
             return _plugin_html_cache[url]
 
         company_templates.call_hook(
@@ -4963,7 +5038,7 @@ def analyze():
         company_templates.call_hook(
             _plugin, "apply_quarterly", financials, quarter_end_dates,
             quarter_filing_links,
-            {"get_text_url": lambda u: quick_filing_text(sec_get_text(u))},
+            {"get_text_url": filing_text_cached},
         )
 
         # Quarterly derived balance sheet metrics
