@@ -385,9 +385,18 @@ _CF_TAGS = {
                ("ifrs-full", "NumberOfSharesIssued"),
                ("us-gaap", "WeightedAverageNumberOfSharesOutstandingBasic"),
                ("ifrs-full", "WeightedAverageShares")],
+    # REIT-screen only: NOI = EBITDA + G&A, so these two feed screen_reits(),
+    # not the general screen(). Reuses the same fallback machinery because the
+    # bulk `frames` API gap that motivates this whole fallback path hits REITs
+    # especially hard — e.g. Simon Property Group's dual Inc./L.P. registrant
+    # filing structure (see company_plugins/SPG.py) makes its own
+    # dei:EntityCommonStockSharesOutstanding absent from `frames` entirely.
+    "dep":   [("us-gaap", "DepreciationDepletionAndAmortization"),
+              ("us-gaap", "DepreciationAndAmortization")],
+    "ga":    [("us-gaap", "GeneralAndAdministrativeExpense")],
 }
 
-_CF_FLOW_KEYS = {"ocf", "capex", "ebit"}   # duration facts; the rest are instants
+_CF_FLOW_KEYS = {"ocf", "capex", "ebit", "dep", "ga"}   # duration facts; the rest are instants
 
 
 def _cf_extract(facts: dict, latest_fy: int) -> dict:
@@ -890,6 +899,160 @@ def screen(universe: str, tickers: list[str],
             "missing":    no_price,
             "excluded_sectors": removed_sectors,
             "excluded_20f": removed_20f,
+            "cf_recovered": cf_recovered,
+            "fiscal_year": latest_fy,
+        },
+    }
+
+
+def screen_reits(universe: str, tickers: list[str],
+                 min_cap_rate,
+                 latest_fy: int = 2025,
+                 min_mktcap=None, max_mktcap=None, refresh: bool = False) -> dict:
+    """
+    REIT-specific screen, ranked by Implied Cap Rate = NOI / Enterprise Value
+    (higher = cheaper relative to the property portfolio's operating income —
+    the opposite direction from P/FCF, where lower is cheaper).
+
+    P/FCF and EV/EBIT are excluded from the general screen() for REITs
+    precisely because they don't describe a REIT's economics — this is that
+    sector's own screen instead, built the same way (bulk `frames` fetch,
+    then price), just with a REIT-shaped metric.
+
+    NOI here is the same EBITDA + G&A proxy the main analyze view uses for
+    every REIT except the ones with an authored company template (Simon's own
+    reported NOI, for instance) — not a company-by-company extraction, which
+    doesn't scale to screening a few hundred tickers. Treat it as a screening
+    filter to find candidates, not as precise as the as-reported figure shown
+    once you open a specific ticker.
+    """
+    if refresh:
+        purge_price_cache()
+
+    annual, instants = _recent_periods(latest_fy)
+
+    ebit = _merge_frames(["OperatingIncomeLoss"], "USD", annual)
+    dep  = _merge_frames(["DepreciationDepletionAndAmortization",
+                          "DepreciationAndAmortization"], "USD", annual)
+    ga   = _merge_frames(["GeneralAndAdministrativeExpense"], "USD", annual)
+    cash = _merge_frames(["CashAndCashEquivalentsAtCarryingValue"], "USD", instants)
+    ltd  = _merge_frames(["LongTermDebtNoncurrent", "LongTermDebt"], "USD", instants)
+    std  = _merge_frames(["LongTermDebtCurrent", "DebtCurrent", "ShortTermBorrowings"], "USD", instants)
+    shares = _merge_frames(["EntityCommonStockSharesOutstanding"], "shares", instants)
+
+    cik_map = ticker_cik_map()
+    reit_set = reit_ciks()
+
+    def _cik_for(tk):
+        return (cik_map.get(tk.upper())
+                or cik_map.get(tk.replace("-", ".").upper())
+                or cik_map.get(tk.replace(".", "-").upper()))
+
+    # Restrict to REITs up front (same SIC-code set the general screen uses to
+    # EXCLUDE them). Split into names the bulk frames fetch already covers vs.
+    # names that need the per-CIK companyfacts fallback — the same two-tier
+    # approach screen() uses, since REITs hit the frames-API gap especially
+    # hard (SPG's own dual-registrant filing structure is the clearest case:
+    # its share count is absent from `frames` entirely).
+    reit_candidates = []
+    no_cik = removed_not_reit = 0
+    for tk in tickers:
+        cik = _cik_for(tk)
+        if cik is None:
+            no_cik += 1
+            continue
+        c = str(cik)
+        if c not in reit_set:
+            removed_not_reit += 1
+            continue
+        if _is_non_common(tk):
+            continue
+        reit_candidates.append((tk, c))
+
+    best_per_cik: dict[str, str] = {}
+    cf_needed = []
+    for tk, c in reit_candidates:
+        if ebit.get(c) is not None and dep.get(c) is not None and shares.get(c):
+            cur = best_per_cik.get(c)
+            if cur is None or _ticker_score(tk) < _ticker_score(cur):
+                best_per_cik[c] = tk
+        else:
+            cf_needed.append((tk, c))
+
+    cf_recovered = 0
+    if cf_needed:
+        cf = companyfacts_fallback([c for _, c in cf_needed], latest_fy)
+        for tk, c in cf_needed:
+            d = cf.get(c) or {}
+            if d.get("ebit") is None or d.get("dep") is None or not d.get("shares"):
+                continue
+            ebit.setdefault(c, d["ebit"])
+            dep.setdefault(c, d["dep"])
+            shares.setdefault(c, d["shares"])
+            for key, dest in (("ga", ga), ("cash", cash), ("ltd", ltd), ("std", std)):
+                if d.get(key) is not None:
+                    dest.setdefault(c, d[key])
+            cur = best_per_cik.get(c)
+            if cur is None or _ticker_score(tk) < _ticker_score(cur):
+                best_per_cik[c] = tk
+            cf_recovered += 1
+
+    candidates = sorted(best_per_cik.values())
+    prices = get_prices(candidates)
+
+    results = []
+    no_price = 0
+    for tk in candidates:
+        c = str(_cik_for(tk))
+        price = prices.get(tk)
+        sh = shares.get(c)
+        eb, dv = ebit.get(c), dep.get(c)
+        if not (price and sh and eb is not None and dv is not None):
+            no_price += 1
+            continue
+        mktcap = price * sh
+        ev = mktcap + (ltd.get(c) or 0) + (std.get(c) or 0) - (cash.get(c) or 0)
+        # Same formula as the main analyze view: EBITDA + G&A, G&A defaulting
+        # to zero (not excluded) when a filer doesn't tag it separately —
+        # acceptable for net-lease REITs where tenants pay most property costs.
+        noi = eb + dv + abs(ga.get(c) or 0)
+        cap_rate = round(noi / ev, 4) if ev and ev > 0 else None
+
+        results.append({
+            "ticker":   tk,
+            "cap_rate": cap_rate,
+            "noi":      round(noi),
+            "market_cap": round(mktcap),
+            "enterprise_value": round(ev),
+            "price":    round(price, 2),
+        })
+
+    def passes(r):
+        mc = r["market_cap"]
+        if min_mktcap is not None and (mc is None or mc < min_mktcap):
+            return False
+        if max_mktcap is not None and (mc is None or mc > max_mktcap):
+            return False
+        if min_cap_rate is not None:
+            if r["cap_rate"] is None or r["cap_rate"] < min_cap_rate:
+                return False
+        return r["cap_rate"] is not None
+
+    filtered = [r for r in results if passes(r)]
+    # Rank highest-cap-rate-first: for a REIT, a HIGHER implied cap rate means
+    # cheaper relative to NOI (the opposite ranking direction from P/FCF).
+    filtered.sort(key=lambda r: -(r["cap_rate"] if r["cap_rate"] is not None else -1e9))
+
+    return {
+        "results": filtered,
+        "stats": {
+            "universe":   universe,
+            "total":      len(tickers),
+            "companies":  len(candidates),
+            "evaluated":  len(results),
+            "passed":     len(filtered),
+            "missing":    no_price,
+            "not_reit":   removed_not_reit,
             "cf_recovered": cf_recovered,
             "fiscal_year": latest_fy,
         },
