@@ -1385,7 +1385,7 @@ def get_institutional_holders(submissions: dict, shares_out: Optional[float] = N
     # filer spelled the name. Resolve this stock's ticker(s) to CUSIP(s) via:
     #  1. SEC's Fails-to-Deliver map inverted (ticker → all its CUSIPs,
     #     including share-class and CINS variants), and
-    #  2. the screener's own CUSIP→ticker cache (built by the Guru Holdings
+    #  2. the screener's own CUSIP→ticker cache (built by the Value Investors
     #     universe resolution).
     own_tickers = {t.upper() for t in (submissions.get("tickers") or []) if t}
     if own_tickers:
@@ -1467,7 +1467,7 @@ def get_institutional_holders(submissions: dict, shares_out: Optional[float] = N
     }
 
 
-# ─── Guru Holdings universe (screener) ─────────────────────────────────────────
+# ─── Value Investors Holding universe (screener) ─────────────────────────────
 # Compile the union of every stock currently held by any of the ~92 tracked
 # value-investor funds, so the screener can rank them by P/FCF / EV/EBIT like
 # any other universe. 13F info tables identify securities by CUSIP, not ticker,
@@ -3926,7 +3926,7 @@ def index():
 def universes():
     """Available named universes for the screener dropdown."""
     out = [{"key": "guru_holdings",
-           "label": f"Guru Holdings ({len(_unique_guru_ciks())} Funds)"}]
+           "label": f"Value Investors Holding ({len(_unique_guru_ciks())} Funds)"}]
     out += [{"key": k, "label": v} for k, v in screener.UNIVERSE_LABELS.items()]
     return jsonify({"universes": out})
 
@@ -3981,7 +3981,7 @@ def screen_route():
             guru_progress = gh
             if not tickers:
                 return jsonify({
-                    "error": "Still resolving the guru holdings universe (CUSIP → ticker lookups) "
+                    "error": "Still resolving the Value Investors Holding universe (CUSIP → ticker lookups) "
                              "— this can take a couple of minutes on a cold cache. Try again shortly.",
                     "results": [], "stats": {"pending": True},
                 }), 200
@@ -4002,7 +4002,7 @@ def screen_route():
 
     # Attach company names from the SEC ticker map (cheap, already cached)
     if universe == "guru_holdings":
-        result["stats"]["label"] = f"Guru Holdings ({len(_unique_guru_ciks())} Funds)"
+        result["stats"]["label"] = f"Value Investors Holding ({len(_unique_guru_ciks())} Funds)"
         if guru_progress and not guru_progress["complete"]:
             result["stats"]["guru_note"] = (
                 f"{guru_progress['resolved_cusips']} of {guru_progress['total_cusips']} "
