@@ -4634,6 +4634,7 @@ def analyze():
         company_templates.call_hook(_plugin, "seed_from_facts", facts, financials)
 
         _plugin_html_cache: dict[str, str] = {}
+        _plugin_min_year = datetime.now().year - MAX_YEARS
 
         def _plugin_filing_text(filing: dict) -> str:
             url = filing["url"]
@@ -4641,11 +4642,31 @@ def analyze():
                 _plugin_html_cache[url] = filing_text_cached(url)
             return _plugin_html_cache[url]
 
+        # Warm the whole history concurrently before handing the plugin its
+        # lazy accessor. A plugin reads every 10-K in range one at a time, and
+        # each is a ~10MB document; serially that was ~4.5s of the cold load
+        # for Berkshire. Best-effort — anything that fails here just falls back
+        # to being fetched on demand by the accessor above, so a failure costs
+        # latency rather than data.
+        _warm = [f for f in all_10k_filings
+                 if f.get("url") and f.get("fiscal_year")
+                 and int(f["fiscal_year"]) >= _plugin_min_year]
+        if len(_warm) > 1:
+            def _warm_one(f):
+                try:
+                    return f["url"], filing_text_cached(f["url"])
+                except Exception:
+                    return f["url"], None
+            with ThreadPoolExecutor(max_workers=6) as _pool:
+                for _u, _txt in _pool.map(_warm_one, _warm):
+                    if _txt is not None:
+                        _plugin_html_cache[_u] = _txt
+
         company_templates.call_hook(
             _plugin, "apply_annual_filings", all_10k_filings, financials,
             {"get_text": _plugin_filing_text,
              "fy_get": fy_get,
-             "min_year": datetime.now().year - MAX_YEARS},
+             "min_year": _plugin_min_year},
         )
 
     # ── As-reported scorecard overlay ────────────────────────────────────────

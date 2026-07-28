@@ -31,7 +31,9 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 import requests
@@ -78,11 +80,41 @@ _CORE_STATEMENT = re.compile(
     r"|cash flows?", re.I)
 
 
+# SEC asks for no more than 10 requests/second. That ceiling is enforced here,
+# centrally, rather than by a sleep at each call site: once fetching runs on a
+# thread pool, per-call sleeps no longer bound the aggregate rate, and only a
+# shared gate does. Every request in this module passes through it, so adding
+# concurrency cannot accidentally exceed the limit.
+_RATE_LOCK = threading.Lock()
+_MIN_INTERVAL = 1.0 / 9.0          # ~9 req/s, just under SEC's stated ceiling
+_next_slot = 0.0
+
+
+def _rate_limit() -> None:
+    global _next_slot
+    with _RATE_LOCK:
+        now = time.monotonic()
+        wait = _next_slot - now
+        if wait > 0:
+            time.sleep(wait)
+            now = _next_slot
+        _next_slot = max(now, _next_slot) + _MIN_INTERVAL
+
+
+# A pooled session: keep-alive avoids a fresh TLS handshake per request, which
+# is a large share of the cost when pulling ~115 small reports for one company.
+_SESSION = requests.Session()
+_SESSION.headers.update(HEADERS)
+_SESSION.mount("https://", requests.adapters.HTTPAdapter(pool_connections=16,
+                                                         pool_maxsize=16))
+
+
 def _get(url: str, retries: int = 3) -> str:
     last = None
     for attempt in range(retries):
         try:
-            r = requests.get(url, headers=HEADERS, timeout=30)
+            _rate_limit()
+            r = _SESSION.get(url, timeout=30)
             if r.status_code == 429:
                 time.sleep(1.5 * (attempt + 1))
                 continue
@@ -257,11 +289,11 @@ def filing_statements(cik: str, accession: str,
     base = SEC_ARCHIVE.format(cik=cik, accession=acc)
     summary = _get(f"{base}/FilingSummary.xml")
 
-    out: dict[str, dict] = {}
     # Filings before ~2015 have no <MenuCategory> at all, so falling back to
     # the report's own name is what keeps the older half of a 15-year history
     # from silently coming back empty.
     has_categories = "<MenuCategory>" in summary
+    wanted: list[tuple[str, str]] = []          # (short name, html file)
     for rep in re.findall(r"<Report[^>]*>(.*?)</Report>", summary, re.S):
         sn_probe = re.search(r"<ShortName>(.*?)</ShortName>", rep)
         if has_categories:
@@ -274,17 +306,28 @@ def filing_statements(cik: str, accession: str,
         sn = re.search(r"<ShortName>(.*?)</ShortName>", rep)
         if not fn or not sn:
             continue
-        short = _clean(sn.group(1))
         # Parentheticals carry par values and share authorisations, not the
         # statement itself; keep them, they are where share-class detail lives.
+        wanted.append((_clean(sn.group(1)), fn.group(1)))
+
+    # Fetched concurrently, but written back in the filing's own report order.
+    # pool.map preserves input order, so a duplicate short name still resolves
+    # last-wins exactly as it did when this loop ran serially. The shared rate
+    # limiter in _get keeps the aggregate request rate inside SEC's ceiling.
+    def _one(item):
+        short, fname = item
         try:
-            time.sleep(0.12)               # stay under SEC's rate limit
-            parsed = parse_report(_get(f"{base}/{fn.group(1)}"))
+            return short, fname, parse_report(_get(f"{base}/{fname}"))
         except Exception:
-            continue
-        if parsed:
-            parsed["report"] = fn.group(1)
-            out[short] = parsed
+            return short, fname, None
+
+    out: dict[str, dict] = {}
+    if wanted:
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            for short, fname, parsed in pool.map(_one, wanted):
+                if parsed:
+                    parsed["report"] = fname
+                    out[short] = parsed
 
     if out:
         try:

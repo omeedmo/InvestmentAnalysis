@@ -34,6 +34,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 import statement_store as ss
@@ -144,12 +145,35 @@ def build_factbase(cik: str, filings: list, years: int = 15,
     fys = [int(f["fiscal_year"]) for f in filings if f.get("fiscal_year")]
     cutoff = (max(fys) - years + 1) if fys else 0
 
-    for filing in filings:                      # newest first
+    in_scope = [f for f in filings
+                if f.get("fiscal_year") and int(f["fiscal_year"]) >= cutoff]
+
+    # Fetch every in-scope filing's statements up front, concurrently. On a cold
+    # cache this is the whole cost of building a factbase — roughly 115 small
+    # report fetches for a 15-year history, which serially ran to ~30s. The
+    # results are still CONSUMED in the original newest-first order below, so
+    # "newest filing wins" and restatement detection are untouched; only the
+    # waiting overlaps. Rate limiting lives inside statement_store._get and is
+    # shared across threads, so this cannot outrun SEC's ceiling.
+    prefetched: dict[str, object] = {}
+    if len(in_scope) > 1:
+        def _load(f):
+            try:
+                return f["accession"], ss.filing_statements(cik, f["accession"])
+            except Exception as e:              # noqa: BLE001 - reraised in order below
+                return f["accession"], e
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            for acc, res in pool.map(_load, in_scope):
+                prefetched[acc] = res
+
+    for filing in in_scope:                     # newest first
         fy = filing.get("fiscal_year")
-        if not fy or int(fy) < cutoff:
-            continue
         try:
-            statements = ss.filing_statements(cik, filing["accession"])
+            statements = prefetched.get(filing["accession"])
+            if isinstance(statements, Exception):
+                raise statements
+            if statements is None:
+                statements = ss.filing_statements(cik, filing["accession"])
         except Exception as e:                  # noqa: BLE001
             skipped.append({"fy": fy, "reason": f"fetch failed: {e}"})
             continue
