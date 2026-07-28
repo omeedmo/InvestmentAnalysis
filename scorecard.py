@@ -475,3 +475,285 @@ def build(cik: str, filings: list, sector: Optional[str] = None,
         "skipped":    fb["skipped"],
         "years":      sorted(fb["years"]),
     }
+
+
+# ── Quarterly ────────────────────────────────────────────────────────────────
+# The annual path above reads 10-Ks. Quarterly reads 10-Qs through the same
+# bindings, so a company's segment-column lines — the ones companyfacts cannot
+# see at all — reach the quarter columns too. Three things differ from annual
+# and each is a place a naive reading goes silently wrong:
+#
+#   1. A 10-Q prints the same end date twice, under "3 Months Ended" and under
+#      "9 Months Ended". Picking by date alone hands back year-to-date figures
+#      labelled as the quarter. Columns are therefore selected by span, using
+#      the positional `by_col` values rather than the date-keyed `values`.
+#   2. Cash flow statements carry ONLY the cumulative column. A discrete
+#      quarter is that cumulative less the prior quarter's, which is what
+#      `_discretise_ytd` does — and where the prior quarter is missing, the
+#      cell is dropped rather than left cumulative.
+#   3. Balance sheets are instants and need neither.
+
+_SPAN_MONTHS = re.compile(r"(\d+)\s*months?\s+ended", re.I)
+
+
+def _span_to_months(span: Optional[str]) -> Optional[int]:
+    """Months a column covers; None for an instant (balance-sheet) column."""
+    if not span:
+        return None
+    m = _SPAN_MONTHS.search(span)
+    return int(m.group(1)) if m else None
+
+
+def _pick_column(st: dict, quarter_end: str) -> list[tuple[int, Optional[int]]]:
+    """
+    (column index, span months) for every column of `st` ending on this
+    quarter end, shortest span first so a 3-month column is preferred over the
+    year-to-date one that shares its date.
+    """
+    hits = []
+    periods = st.get("periods") or []
+    spans = st.get("spans") or [None] * len(periods)
+    for i, per in enumerate(periods):
+        if ss._period_to_iso(per) != quarter_end:
+            continue
+        span = spans[i] if i < len(spans) else None
+        hits.append((i, _span_to_months(span)))
+    # Instants (None) first, then shortest duration.
+    hits.sort(key=lambda t: (t[1] is not None, t[1] if t[1] is not None else -1))
+    return hits
+
+
+def _facts_index_by_span(facts: Optional[dict]) -> dict:
+    """
+    {(concept, end, span_months): raw signed value} from companyfacts.
+
+    The annual index keeps the longest span per end date, which is the right
+    choice there and the wrong one here: a quarter end carries a 3-month fact
+    AND a 9-month one, and collapsing them would compare a quarter's printed
+    figure against a year-to-date raw value. Keying by span keeps them apart so
+    the sign check below compares like with like.
+    """
+    if not facts:
+        return {}
+    from datetime import date
+    idx: dict[tuple, float] = {}
+    for concept, doc in ((facts.get("facts") or {}).get("us-gaap") or {}).items():
+        for unit, entries in (doc.get("units") or {}).items():
+            if unit not in ("USD", "shares", "USD/shares"):
+                continue
+            for e in entries:
+                end = e.get("end")
+                if not end:
+                    continue
+                months = None
+                if e.get("start"):
+                    try:
+                        y1, m1, d1 = (int(x) for x in e["start"].split("-"))
+                        y2, m2, d2 = (int(x) for x in end.split("-"))
+                        months = round((date(y2, m2, d2) - date(y1, m1, d1)).days / 30.44)
+                    except Exception:
+                        continue
+                idx[(concept, end, months)] = e["val"]
+    return idx
+
+
+def build_quarter_factbase(cik: str, q_filings: list, quarter_ends: list,
+                           verify: bool = True,
+                           facts: Optional[dict] = None) -> dict:
+    """
+    {quarter_end: {(element, dimension): fact}} from a filer's 10-Qs.
+
+    `quarter_ends` are ISO dates the caller wants columns for — the same
+    post-annual quarters the rest of the app displays. Only 10-Qs reporting one
+    of those periods are read.
+    """
+    want = [q for q in quarter_ends if q]
+    raw = _facts_index_by_span(facts)
+    by_q: dict[str, dict] = {}
+    provenance: dict[str, dict] = {}
+    skipped: list[dict] = []
+
+    relevant = [f for f in q_filings if (f.get("report_date") or "") in want]
+    if not relevant:
+        return {"quarters": by_q, "provenance": provenance, "skipped": skipped}
+
+    def _load(f):
+        try:
+            return f, ss.filing_statements(cik, f["accession"])
+        except Exception as e:                  # noqa: BLE001
+            return f, e
+
+    loaded = []
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        loaded = list(pool.map(_load, relevant))
+
+    for filing, statements in loaded:
+        qe = filing.get("report_date")
+        if isinstance(statements, Exception) or not statements:
+            skipped.append({"quarter": qe, "reason": f"fetch failed: {statements}"
+                            if isinstance(statements, Exception) else "no statements parsed"})
+            continue
+        if verify:
+            problems = ss.check_totals(statements)
+            if problems:
+                skipped.append({"quarter": qe, "reason": "tie-out failed",
+                                "detail": problems[:2]})
+                continue
+
+        provenance[qe] = {"accession": filing["accession"],
+                          "filed": filing.get("filing_date", "")}
+        slot = by_q.setdefault(qe, {})
+
+        for name, st in sorted(statements.items(), key=lambda kv: _rank(kv[0])):
+            if "parenthetical" in name.lower():
+                continue
+            cols = _pick_column(st, qe)
+            if not cols:
+                continue
+            for row in st["rows"]:
+                if row["abstract"]:
+                    continue
+                if row.get("opening_balance"):
+                    continue
+                by_col = row.get("by_col")
+                if not by_col:
+                    continue
+                key = (row["element"], row.get("dimension"))
+                if key in slot:
+                    continue                    # a higher-ranked statement won
+                for idx, months in cols:
+                    if idx >= len(by_col) or by_col[idx] is None:
+                        continue
+                    # A rendering applies negatedLabel, so its printed sign is
+                    # a presentation choice — capex prints as an outflow here
+                    # but companyfacts carries it positive, and the rest of the
+                    # app expects the companyfacts convention. Same treatment
+                    # as the annual path: take the sign from raw XBRL where the
+                    # magnitudes agree, keep the printed value otherwise.
+                    value = by_col[idx]
+                    if raw and row["element"].startswith("us-gaap:") and not row.get("dimension"):
+                        rk = (row["element"].split(":", 1)[1], qe, months)
+                        ref = raw.get(rk)
+                        if ref is not None and abs(ref) > 0 and \
+                                abs(abs(ref) - abs(value)) <= max(1.0, abs(ref) * 0.005):
+                            value = ref
+                    slot[key] = {
+                        "value":       value,
+                        "span_months": months,
+                        "element":     row["element"],
+                        "dimension":   row.get("dimension"),
+                        "label":       row["label"],
+                        "statement":   name,
+                        "from_10q":    qe,
+                        "accession":   filing["accession"],
+                        "restated_from": None,
+                    }
+                    break
+
+    _discretise_ytd(by_q)
+    return {"quarters": by_q, "provenance": provenance, "skipped": skipped}
+
+
+def _discretise_ytd(by_q: dict) -> None:
+    """
+    Turn cumulative columns into discrete quarters, in place.
+
+    A 10-Q cash flow statement reports only year-to-date, so Q3 standalone is
+    the nine-month figure less the six-month one. The first quarter after a
+    fiscal year end needs no adjustment — cumulative and discrete are the same
+    period. Where the preceding quarter is absent the value is REMOVED rather
+    than left cumulative: a year-to-date number sitting in a column labelled
+    with one quarter is wrong by definition, and silently so.
+    """
+    ordered = sorted(by_q)
+    raw = {q: {k: dict(v) for k, v in slot.items()} for q, slot in by_q.items()}
+    for i, qe in enumerate(ordered):
+        for key, fact in list(by_q[qe].items()):
+            months = fact.get("span_months")
+            if not months or months <= 4:
+                continue                        # instant, or already discrete
+            if i == 0:
+                # Cumulative from the fiscal year start == this quarter alone
+                # only if this IS the first quarter of the year. A 6- or
+                # 9-month span here means the annual anchor is older than one
+                # quarter, so there is nothing to subtract and no honest value.
+                if months > 4:
+                    del by_q[qe][key]
+                continue
+            prev = raw[ordered[i - 1]].get(key)
+            prev_m = prev.get("span_months") if prev else None
+            if not prev or not prev_m or prev_m >= months:
+                del by_q[qe][key]
+                continue
+            fact["value"] = fact["value"] - prev["value"]
+            fact["span_months"] = months - prev_m
+            fact["derived_from_ytd"] = True
+
+
+def resolve_quarters(factbase_q: dict, bindings: list) -> dict:
+    """
+    resolve(), but over quarter-end keys.
+
+    A binding's from/to years still scope by calendar year, taken from the
+    quarter's own end date, so an era switch written for the annual path
+    applies unchanged here.
+    """
+    quarters = factbase_q["quarters"]
+    out: dict[str, dict] = {}
+    for spec in bindings:
+        metric = spec["metric"]
+        series: dict[str, dict] = {}
+        for qe in sorted(quarters):
+            try:
+                year = int(qe[:4])
+            except (TypeError, ValueError):
+                continue
+            fact = None
+            b = None
+            for b in _bindings_for_year(spec, year):
+                fact = _match_fact(quarters[qe], b)
+                if fact is not None:
+                    break
+            if fact is None:
+                continue
+            value = fact["value"]
+            if b is not None and b.get("negate"):
+                value = -value
+            series[qe] = {
+                "value":       value,
+                "as_reported": fact["label"],
+                "element":     fact["element"],
+                "dimension":   fact["dimension"],
+                "statement":   fact["statement"],
+                "from_10k_fy": None,
+                "from_10q":    fact.get("from_10q"),
+                "accession":   fact["accession"],
+                "restated_from": None,
+                "derived_from_ytd": fact.get("derived_from_ytd", False),
+            }
+        if series:
+            out[metric] = {
+                "label":   spec.get("label", metric),
+                "tier":    spec.get("tier", "global"),
+                "section": spec.get("section", ""),
+                "note":    spec.get("note", ""),
+                "years":   series,
+            }
+    return out
+
+
+def build_quarters(cik: str, q_filings: list, quarter_ends: list,
+                   sector: Optional[str] = None,
+                   ticker: Optional[str] = None,
+                   facts: Optional[dict] = None) -> dict:
+    """10-Q fact base -> the same bindings -> resolved quarterly scorecard."""
+    fb = build_quarter_factbase(cik, q_filings, quarter_ends, facts=facts)
+    bindings = load_bindings(sector, ticker)
+    resolved = resolve_quarters(fb, bindings)
+    resolved = compute_derived(resolved, bindings)
+    return {
+        "metrics":    resolved,
+        "provenance": fb["provenance"],
+        "skipped":    fb["skipped"],
+        "quarters":   sorted(fb["quarters"]),
+    }

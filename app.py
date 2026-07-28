@@ -4486,6 +4486,93 @@ def apply_scorecard_overlay(ticker: str, cik: str, submissions: dict,
     }
 
 
+# Metrics the quarterly overlay does not write. Capital-quality and
+# returns/profitability figures are annual by construction: unlevered net
+# tangible assets and economic goodwill compare a full year's earnings against
+# a capital base, and a margin or return built from one quarter's flow against
+# a point-in-time balance is a different measure wearing the same label. The
+# annual columns carry them; the quarter columns are left blank rather than
+# filled with a number that does not mean what the row says.
+_QUARTER_EXCLUDED_METRICS = {
+    "unta", "nopat", "economic_goodwill", "pretax_economic_goodwill",
+    "tangible_equity", "roe", "roa", "rote", "roic", "pretax_roic",
+    "fcf_roe", "adj_fcf_roe", "nii_roe", "recourse_debt_share",
+    "float_to_equity", "effective_tax_rate",
+    "net_margin", "operating_margin", "gross_margin", "fcf_margin",
+    "adj_fcf_margin", "noi_margin",
+}
+
+
+def apply_quarterly_scorecard_overlay(ticker: str, cik: str, submissions: dict,
+                                      facts: dict, financials: dict,
+                                      quarter_end_dates: dict,
+                                      reserved: Optional[set] = None) -> Optional[dict]:
+    """
+    The same bindings, read from 10-Qs, overlaid onto the quarter columns.
+
+    Only runs for tickers with an authored binding file — exactly like the
+    annual overlay, and for the same reason: without one there is nothing the
+    global tier alone would improve on, and the companyfacts quarterly path
+    already covers those filers well.
+
+    What this adds is what companyfacts structurally cannot give: dimensional
+    lines. Berkshire reports property, plant and equipment only inside its
+    segment columns, so before this its quarterly PP&E was blank however many
+    tags were tried.
+    """
+    reserved = reserved or set()
+    tk = ticker.upper().replace(".", "-")
+    binding = scorecard._read_json(
+        os.path.join(scorecard.BINDING_DIR, "companies", f"{tk}.json"))
+    if not binding:
+        return None
+
+    wanted = [d for d in quarter_end_dates.values() if d]
+    if not wanted:
+        return None
+
+    q_filings = all_filing_infos_from_submissions(
+        submissions, {"10-Q", "10-Q/A"}, max_count=8)
+    if not q_filings:
+        return None
+
+    sc = scorecard.build_quarters(cik, q_filings, wanted,
+                                  sector=binding.get("sector"),
+                                  ticker=tk, facts=facts)
+
+    date_to_qk = {d: qk for qk, d in quarter_end_dates.items() if d}
+    applied: dict[str, int] = {}
+    sources: dict[str, dict] = {}
+    for metric, data in sc["metrics"].items():
+        if metric in reserved or metric in _QUARTER_EXCLUDED_METRICS:
+            continue
+        series = financials.setdefault(metric, {})
+        n = 0
+        for qend, cell in data["years"].items():
+            qk = date_to_qk.get(qend)
+            if not qk or cell.get("value") is None:
+                continue
+            series[qk] = cell["value"]
+            n += 1
+            sources.setdefault(metric, {})[qk] = {
+                "as_reported": cell.get("as_reported"),
+                "element":     cell.get("element"),
+                "dimension":   cell.get("dimension"),
+                "statement":   cell.get("statement"),
+                "from_10q":    cell.get("from_10q"),
+                "derived_from_ytd": cell.get("derived_from_ytd"),
+            }
+        if n:
+            applied[metric] = n
+
+    return {
+        "applied":  applied,
+        "quarters": sc["quarters"],
+        "skipped":  sc["skipped"],
+        "sources":  sources,
+    }
+
+
 @app.route("/scorecard")
 def scorecard_page():
     resp = app.make_response(render_template("scorecard.html"))
@@ -5013,6 +5100,16 @@ def analyze():
                 existing = financials.setdefault(key, {})
                 for qk, v in q_vals.items():
                     existing[qk] = v
+
+        # As-reported quarterly overlay. Runs AFTER the companyfacts pass so
+        # the filing's own statements win where both have a figure, matching
+        # how the annual overlay relates to the annual companyfacts pass.
+        try:
+            quarterly_scorecard_meta = apply_quarterly_scorecard_overlay(
+                ticker, cik, submissions, facts, financials, quarter_end_dates,
+                reserved=set(((ctemplate or {}).get("history") or {}).get("series") or {}))
+        except Exception:
+            quarterly_scorecard_meta = None   # never let this break the response
 
         # Quarterly interest-expense fallback — same "net" tags as the annual
         # fallback above, for filers (e.g. CHTR) that report only a combined,

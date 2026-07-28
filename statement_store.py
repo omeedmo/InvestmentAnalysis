@@ -190,14 +190,30 @@ def parse_report(html: str) -> Optional[dict]:
 
     # Period columns. The header also carries span labels like "12 Months
     # Ended" that are not periods, so keep only the date headers.
+    #
+    # The span labels are not merely noise, though: a 10-Q prints the SAME end
+    # date twice, once under "3 Months Ended" and once under "9 Months Ended".
+    # Keyed by date alone those two columns collide and the year-to-date figure
+    # silently overwrites the quarter's. So the span each column sits under is
+    # captured alongside it, in `spans`, and the raw cells are kept in column
+    # order. `periods` and `values` keep their existing meaning so the annual
+    # path — where a 10-K never repeats an end date — is untouched.
     periods = []
-    for th in re.findall(r'<th class="th"[^>]*>(.*?)</th>', body, re.S):
-        t = _clean(th)
+    spans: list[Optional[str]] = []
+    pending: list[Optional[str]] = []       # one entry per column a span covers
+    for th_attrs, th_body in re.findall(r'<th class="th"([^>]*)>(.*?)</th>', body, re.S):
+        t = _clean(th_body)
         # Some filings annotate the column with its unit
         # ("Dec. 31, 2021 USD ($)"), so match the date and drop the rest.
         dm = re.match(r"^([A-Z][a-z]{2}\.? \d{1,2}, \d{4})\b", t)
         if dm:
             periods.append(dm.group(1))
+            spans.append(pending.pop(0) if pending else None)
+            continue
+        # A duration header ("3 Months Ended") spans the columns that follow it.
+        if re.search(r"months?\s+ended", t, re.I):
+            cs = re.search(r'colspan="(\d+)"', th_attrs)
+            pending.extend([t] * (int(cs.group(1)) if cs else 1))
 
     rows = []
     # A statement can stack a consolidated section and then repeat the same
@@ -234,6 +250,10 @@ def parse_report(html: str) -> Optional[dict]:
             indent = int(pl.group(1)) // 10
 
         values: dict[str, float] = {}
+        # Same numbers as `values`, but positional — index i lines up with
+        # periods[i]/spans[i]. This is what lets a reader tell a 10-Q's
+        # 3-month column from its 9-month one when both end the same day.
+        by_col: list[Optional[float]] = [None] * len(periods)
         cells = re.findall(r'<td class="(nump|num|text)"[^>]*>(.*?)</td>', tr, re.S)
         for idx, (cls, cell) in enumerate(cells):
             if idx >= len(periods):
@@ -248,6 +268,7 @@ def parse_report(html: str) -> Optional[dict]:
             else:
                 v *= scale
             values[periods[idx]] = v
+            by_col[idx] = v
 
         rows.append({
             "element":   element,
@@ -261,9 +282,11 @@ def parse_report(html: str) -> Optional[dict]:
             # actual date (cash flow opening balances).
             "opening_balance": opening,
             "values":    values,
+            "by_col":    by_col,
         })
 
-    return {"name": name, "scale": scale, "periods": periods, "rows": rows}
+    return {"name": name, "scale": scale, "periods": periods,
+            "spans": spans, "rows": rows}
 
 
 # ── Fetching a filing's statements ───────────────────────────────────────────
