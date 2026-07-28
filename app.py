@@ -5792,17 +5792,6 @@ def analyze():
     quarters = [f"Q{i+1}" for i in range(len(quarter_end_dates))]
     # Template-defined metrics are computed from the finished series, then
     # serialized alongside them so the UI renders them like any other row.
-    if getattr(_plugin, "REPORTED_FFO", False):
-        # Belt and braces: the plugin runs before the quarterly pass for some
-        # series and after it for others, so clear any quarter cell that
-        # slipped into the reported FFO family rather than rely on ordering.
-        for _k in ("ffo", "affo", "ffo_per_share", "affo_per_share",
-                   "ffo_payout_ratio"):
-            _s = financials.get(_k)
-            if isinstance(_s, dict):
-                for _q in [x for x in _s if str(x).startswith("Q")]:
-                    del _s[_q]
-
     _tmpl_metrics = company_templates.compute_metrics(financials, ctemplate)
     for _k, _s in _tmpl_metrics.items():
         financials[_k] = _s

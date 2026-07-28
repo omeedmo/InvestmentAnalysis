@@ -121,10 +121,13 @@ def extract(text: str, total_re: re.Pattern, ni_by_year: dict, fiscal_year: int,
     """
     flat = normalise(text)
     for m in total_re.finditer(flat):
-        vals = values_after(flat[m.end() - 1:], ncols) if m.groups() else []
-        if not vals:
-            vals = values_after(flat[m.end():], ncols)
-        if len(vals) < ncols:
+        # Up to `ncols` columns, but two is enough. These tables show two or
+        # three fiscal years depending on the filer and the year, and demanding
+        # the maximum threw away every two-column table. More than three would
+        # mean a table stacking quarterly figures beside annual ones, which is
+        # why the ceiling stays low.
+        vals = values_after(flat[m.end():], ncols)
+        if len(vals) < 2:
             continue
         scale = scale_before(flat, m.start())
         if scale is None:
@@ -249,3 +252,74 @@ def publish(financials: dict, ffo_by_year: dict, label_key: str = "ffo") -> None
     financials["ffo_payout_ratio"] = {
         key_of.get(y, y): abs(div_y[y]) / ffo_y[y]
         for y in ffo_y if ffo_y[y] > 0 and div_y.get(y)}
+
+
+def quarterly(financials: dict, quarter_end_dates: dict,
+              quarter_filing_links: dict, ctx: dict, total_re: re.Pattern,
+              tolerance: float = 0.25) -> None:
+    """
+    The same reported figure for the quarter columns, read from the 10-Qs.
+
+    Without this the quarter cell is simply empty, because the app's own
+    quarterly FFO pass stands down wherever a plugin publishes a reported
+    annual series — a derived quarter beside as-reported years would make one
+    row mean two things.
+
+    A 10-Q's table prints the three-month and the year-to-date columns side by
+    side under the same subtotal, three months first. Taking the leading column
+    is therefore the quarter, and the check is the same one the annual path
+    uses, against that quarter's own net income: a year-to-date figure read as
+    a quarter fails it, since by Q3 the two differ by roughly threefold.
+    """
+    get_text_url = ctx.get("get_text_url")
+    if not get_text_url:
+        return
+    ni_q = {k: v for k, v in (financials.get("net_income") or {}).items()
+            if str(k).startswith("Q") and v is not None}
+    if not ni_q:
+        return
+
+    out: dict[str, float] = {}
+    for qk in quarter_end_dates:
+        url = quarter_filing_links.get(qk)
+        expected = ni_q.get(qk)
+        if not url or not expected:
+            continue
+        try:
+            flat = normalise(get_text_url(url))
+        except Exception:            # noqa: BLE001 - a fetch failure is a gap
+            continue
+        for m in total_re.finditer(flat):
+            vals = values_after(flat[m.end():], 1)
+            scale = scale_before(flat, m.start())
+            if not vals or scale is None:
+                continue
+            head = flat[max(0, m.start() - 2600):m.start()]
+            if any((row := values_after(head[ni_m.end():], 1))
+                   and abs(row[0] * scale - expected) <= abs(expected) * tolerance
+                   for ni_m in NET_INCOME_LABEL.finditer(head)):
+                out[qk] = vals[0] * scale
+                break
+
+    if not out:
+        return
+    financials.setdefault("ffo", {}).update(out)
+
+    shares = {k: v for k, v in ((financials.get("shares_diluted_wtd")
+                                 or financials.get("shares_outstanding_end")) or {}).items()
+              if str(k).startswith("Q") and v}
+    if shares:
+        financials.setdefault("ffo_per_share", {}).update(
+            {qk: v / shares[qk] for qk, v in out.items() if shares.get(qk)})
+
+    slr = {k: v for k, v in (financials.get("straight_line_rent") or {}).items()
+           if str(k).startswith("Q")}
+    rcx = {k: v for k, v in (financials.get("recurring_capex") or {}).items()
+           if str(k).startswith("Q")}
+    if slr or rcx:
+        affo = {qk: v - abs(slr.get(qk) or 0.0) - abs(rcx.get(qk) or 0.0)
+                for qk, v in out.items()}
+        financials.setdefault("affo", {}).update(affo)
+        if shares:
+            financials.setdefault("affo_per_share", {}).update(
+                {qk: v / shares[qk] for qk, v in affo.items() if shares.get(qk)})

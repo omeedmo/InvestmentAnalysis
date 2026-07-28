@@ -22,9 +22,16 @@ from . import _reit_ffo
 # quarter beside as-reported years.
 REPORTED_FFO = True
 
+# Equinix names this line three ways across its history: "NAREIT FFO
+# attributable to common stockholders", "FFO attributable to common
+# shareholders", and — through FY2018-FY2021 — a bare "FFO". All three are
+# matched. The (?<![A-Za-z]) guard is what keeps the bare form from also
+# firing inside "AFFO", which sits in the same table carrying a much larger
+# number; "FFO from unconsolidated joint ventures" is excluded already, since
+# a word follows rather than a figure.
 TOTAL = re.compile(
-    r"(?<!Core )(?<!Adjusted )(?:NAREIT )?"
-    r"FFO attributable to common (?:stock|share)holders"
+    r"(?<!Core )(?<!Adjusted )(?:NAREIT )?(?<![A-Za-z])"
+    r"FFO(?: attributable to common (?:stock|share)holders)?"
     r"\s*\$?\s*(?=\(?[\d,]{3,})", re.I)
 
 
@@ -34,8 +41,16 @@ def apply_annual_filings(filings: list, financials: dict, ctx: dict) -> None:
         # Equinix elected REIT status effective 2015. A FY2014 line under the
         # same wording is a pre-conversion measure, and at $153M against $629M
         # the year after it would read as a 4x jump that never happened.
-        from_year=2015)
+        from_year=2015,
+        # The FY2018-FY2021 tables print three fiscal years at once.
+        ncols=3)
 
 
 def postprocess(financials: dict) -> None:
     _reit_ffo.publish(financials, financials.pop("_reported_ffo", {}))
+
+
+def apply_quarterly(financials: dict, quarter_end_dates: dict,
+                    quarter_filing_links: dict, ctx: dict) -> None:
+    _reit_ffo.quarterly(financials, quarter_end_dates, quarter_filing_links,
+                        ctx, TOTAL)

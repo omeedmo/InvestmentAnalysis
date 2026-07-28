@@ -36,6 +36,8 @@ so overlapping filings cross-check each other the same way.
 from __future__ import annotations
 
 import re
+
+from . import _reit_ffo
 from itertools import combinations, product
 from typing import Optional
 
@@ -413,6 +415,21 @@ def extract_spg_ffo(text: str) -> dict[str, dict[str, float]]:
 # Simon's FFO row is its own reported figure too, so the quarterly proxy pass
 # is suppressed for the same reason as the other REIT plugins.
 REPORTED_FFO = True
+
+# Simon's 10-Q prints the same bridge as its 10-K, closing on "FFO allocable to
+# common stockholders" — the figure the annual row already carries (the 10-K
+# calls it "Dilutive FFO allocable to common stockholders", so both forms are
+# matched). "FFO of the Operating Partnership" above it and "FFO allocable to
+# limited partners" beside it are different measures and are not matched.
+_Q_TOTAL = re.compile(
+    r"(?:Dilutive )?FFO allocable to common stockholders\s*\$?\s*(?=\(?[\d,]{5,})",
+    re.I)
+
+
+def apply_quarterly(financials: dict, quarter_end_dates: dict,
+                    quarter_filing_links: dict, ctx: dict) -> None:
+    _reit_ffo.quarterly(financials, quarter_end_dates, quarter_filing_links,
+                        ctx, _Q_TOTAL)
 
 
 def apply_annual_filings(filings: list, financials: dict, ctx: dict) -> None:

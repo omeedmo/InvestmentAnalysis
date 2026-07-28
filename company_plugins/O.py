@@ -37,3 +37,9 @@ def apply_annual_filings(filings: list, financials: dict, ctx: dict) -> None:
 
 def postprocess(financials: dict) -> None:
     _reit_ffo.publish(financials, financials.pop("_reported_ffo", {}))
+
+
+def apply_quarterly(financials: dict, quarter_end_dates: dict,
+                    quarter_filing_links: dict, ctx: dict) -> None:
+    _reit_ffo.quarterly(financials, quarter_end_dates, quarter_filing_links,
+                        ctx, TOTAL)
