@@ -4486,21 +4486,47 @@ def apply_scorecard_overlay(ticker: str, cik: str, submissions: dict,
     }
 
 
-# Metrics the quarterly overlay does not write. Capital-quality and
-# returns/profitability figures are annual by construction: unlevered net
-# tangible assets and economic goodwill compare a full year's earnings against
-# a capital base, and a margin or return built from one quarter's flow against
-# a point-in-time balance is a different measure wearing the same label. The
-# annual columns carry them; the quarter columns are left blank rather than
-# filled with a number that does not mean what the row says.
+# The CAPITAL QUALITY and RETURNS & PROFITABILITY rows, which are annual-only.
+#
+# Every one of them divides a flow by a capital base. Over a year those agree
+# on period; over a quarter they do not — three months of earnings against a
+# balance-sheet figure is a quarterly rate wearing the label of an annual one,
+# and a reader comparing it across the row would be comparing a quarter to a
+# year. Annualising instead would be a projection, not something the company
+# reported. So the quarter columns stay empty: this set is both what the
+# quarterly overlay refuses to write and what is stripped at the end, so no
+# other path can quietly refill it.
 _QUARTER_EXCLUDED_METRICS = {
+    # CAPITAL QUALITY
     "unta", "nopat", "economic_goodwill", "pretax_economic_goodwill",
-    "tangible_equity", "roe", "roa", "rote", "roic", "pretax_roic",
-    "fcf_roe", "adj_fcf_roe", "nii_roe", "recourse_debt_share",
-    "float_to_equity", "effective_tax_rate",
-    "net_margin", "operating_margin", "gross_margin", "fcf_margin",
-    "adj_fcf_margin", "noi_margin",
+    # RETURNS & PROFITABILITY
+    "roe", "rote", "fcf_roe", "adj_fcf_roe", "nii_roe",
+    "roic", "pretax_roic", "roa",
 }
+
+
+def _strip_quarterly_excluded(financials: dict, ctemplate: Optional[dict]) -> None:
+    """
+    Drop every quarter cell from the annual-only rows, in place.
+
+    Run last, after the companyfacts pass, the scorecard overlay and the
+    template metrics have all had their say — several of them compute these
+    independently, so refusing to write one in a single place would not leave
+    the row empty. Company-template rows anchored to an excluded row (Berkshire
+    prints ROE on an operating-earnings basis directly beneath the reported
+    one) are cleared with their anchor; a blank headline row above a populated
+    variant would be the confusing half-state this is meant to avoid.
+    """
+    excluded = set(_QUARTER_EXCLUDED_METRICS)
+    for spec in ((ctemplate or {}).get("metrics") or []):
+        if spec.get("after") in excluded and spec.get("key"):
+            excluded.add(spec["key"])
+    for metric in excluded:
+        series = financials.get(metric)
+        if not isinstance(series, dict):
+            continue
+        for key in [k for k in series if k.startswith("Q")]:
+            del series[key]
 
 
 def apply_quarterly_scorecard_overlay(ticker: str, cik: str, submissions: dict,
@@ -5763,6 +5789,13 @@ def analyze():
     _tmpl_metrics = company_templates.compute_metrics(financials, ctemplate)
     for _k, _s in _tmpl_metrics.items():
         financials[_k] = _s
+
+    # Annual-only rows: clear their quarter cells now that every path that
+    # could have written one has run.
+    _strip_quarterly_excluded(financials, ctemplate)
+    for _k in list(_tmpl_metrics):
+        if _k in financials:
+            _tmpl_metrics[_k] = financials[_k]
 
     fin_data = serialize(financials, years, quarters)
 
