@@ -3,11 +3,11 @@
   "ticker": "BRK-B",
   "cik": 1067983,
   "sector": "insurance",
-  "note": "Berkshire presents its balance sheet and income statement as stacked segment columns \u2014 Insurance and Other, Railroad Utilities and Energy, and (through 2017) Finance and Financial Products \u2014 so most of what matters about it is dimensional and therefore invisible to companyfacts. That is the entire reason its insurance and debt lines came back empty.",
+  "note": "Berkshire presents its balance sheet and income statement as stacked segment columns — Insurance and Other, Railroad Utilities and Energy, and (through 2017) Finance and Financial Products — so most of what matters about it is dimensional and therefore invisible to companyfacts. That is the entire reason its insurance and debt lines came back empty.",
   "metrics": [
     {
       "metric": "debt_insurance_and_other",
-      "label": "Notes payable \u2014 Insurance and Other",
+      "label": "Notes payable — Insurance and Other",
       "section": "Debt by segment",
       "bind": [
         {
@@ -19,7 +19,7 @@
     },
     {
       "metric": "debt_railroad_utilities_energy",
-      "label": "Notes payable \u2014 Railroad, Utilities and Energy",
+      "label": "Notes payable — Railroad, Utilities and Energy",
       "section": "Debt by segment",
       "bind": [
         {
@@ -27,11 +27,11 @@
           "dimension": "Railroad, Utilities and Energy"
         }
       ],
-      "note": "BNSF and Berkshire Hathaway Energy borrowings. Berkshire states in its 10-K that it 'does not guarantee the repayment of debt issued by BNSF, BHE or any of their subsidiaries' \u2014 this is the NON-RECOURSE portion."
+      "note": "BNSF and Berkshire Hathaway Energy borrowings. Berkshire states in its 10-K that it 'does not guarantee the repayment of debt issued by BNSF, BHE or any of their subsidiaries' — this is the NON-RECOURSE portion."
     },
     {
       "metric": "debt_finance_products",
-      "label": "Notes payable \u2014 Finance and Financial Products",
+      "label": "Notes payable — Finance and Financial Products",
       "section": "Debt by segment",
       "bind": [
         {
@@ -57,7 +57,7 @@
     },
     {
       "metric": "revenue_insurance_and_other",
-      "label": "Revenues \u2014 Insurance and Other",
+      "label": "Revenues — Insurance and Other",
       "section": "Segment revenues",
       "bind": [
         {
@@ -68,7 +68,7 @@
     },
     {
       "metric": "revenue_railroad_utilities_energy",
-      "label": "Revenues \u2014 Railroad, Utilities and Energy",
+      "label": "Revenues — Railroad, Utilities and Energy",
       "section": "Segment revenues",
       "bind": [
         {
@@ -93,7 +93,7 @@
       "label": "Net earnings excluding investment gains",
       "section": "Income statement",
       "expr": "net_income - investment_gains",
-      "note": "A pre-tax-gains subtraction from two reported lines, NOT Berkshire's own operating earnings figure \u2014 its published number nets tax on the gains and differs. Berkshire's own figure is text-only in MD&A and is carried separately in company_templates/BRK-B.json."
+      "note": "A pre-tax-gains subtraction from two reported lines, NOT Berkshire's own operating earnings figure — its published number nets tax on the gains and differs. Berkshire's own figure is text-only in MD&A and is carried separately in company_templates/BRK-B.json."
     },
     {
       "metric": "short_term_investments",
@@ -109,7 +109,7 @@
     },
     {
       "metric": "cash_insurance_other",
-      "label": "Cash & Cash Equivalents \u2014 Insurance and Other",
+      "label": "Cash & Cash Equivalents — Insurance and Other",
       "section": "Balance sheet",
       "bind": [
         {
@@ -125,7 +125,7 @@
     },
     {
       "metric": "cash_railroad_utilities_energy",
-      "label": "Cash & Cash Equivalents \u2014 Railroad, Utilities and Energy",
+      "label": "Cash & Cash Equivalents — Railroad, Utilities and Energy",
       "section": "Balance sheet",
       "bind": [
         {
@@ -142,7 +142,7 @@
       "zero_if_absent": [
         "cash_railroad_utilities_energy"
       ],
-      "note": "Sum across segment columns \u2014 Berkshire tags no consolidated cash line either. The prior binding used the insurance-and-other column alone (~$47.7B in FY2025), understating consolidated cash by the ~$3-4B the railroad/utilities/energy segment holds every year, which fed directly into an understated cash deduction in UNTA."
+      "note": "Sum across segment columns — Berkshire tags no consolidated cash line either. The prior binding used the insurance-and-other column alone (~$47.7B in FY2025), understating consolidated cash by the ~$3-4B the railroad/utilities/energy segment holds every year, which fed directly into an understated cash deduction in UNTA."
     },
     {
       "metric": "total_cash",
@@ -168,7 +168,7 @@
     },
     {
       "metric": "intangibles_insurance_other",
-      "label": "Other Intangible Assets \u2014 Insurance and Other",
+      "label": "Other Intangible Assets — Insurance and Other",
       "section": "Balance sheet",
       "bind": [
         {
@@ -179,7 +179,7 @@
     },
     {
       "metric": "intangibles_railroad_utilities_energy",
-      "label": "Other Intangible Assets \u2014 Railroad, Utilities and Energy",
+      "label": "Other Intangible Assets — Railroad, Utilities and Energy",
       "section": "Balance sheet",
       "bind": [
         {
@@ -200,6 +200,39 @@
       "note": "Sum across segment columns. Berkshire tags no consolidated intangibles line, same as debt; binding only the insurance-segment figure understated total intangibles (and therefore overstated tangible equity and every ratio built on it) in the two years the railroad/utilities/energy segment carried its own intangibles balance."
     },
     {
+      "metric": "ppe_insurance_and_other",
+      "label": "Property, plant and equipment — Insurance and Other",
+      "section": "Balance sheet",
+      "bind": [
+        {
+          "element": "us-gaap:PropertyPlantAndEquipmentNet",
+          "dimension": "Insurance and Other",
+          "statement": "Balance Sheet"
+        }
+      ],
+      "note": "The manufacturing, service and retailing businesses' fixed assets. Dimensional, so invisible to companyfacts — which is why the global ppe_net binding found nothing for Berkshire and the row came back empty."
+    },
+    {
+      "metric": "ppe_railroad_utilities_energy",
+      "label": "Property, plant and equipment — Railroad, Utilities and Energy",
+      "section": "Balance sheet",
+      "bind": [
+        {
+          "element": "us-gaap:PropertyPlantAndEquipmentNet",
+          "dimension": "Railroad, Utilities and Energy",
+          "statement": "Balance Sheet"
+        }
+      ],
+      "note": "BNSF's track and rolling stock plus Berkshire Hathaway Energy's generation and transmission plant. By far the larger share — $184.7B of the $216.6B consolidated total in FY2025 — and the reason an empty PP&E row understated Berkshire's fixed-asset base by more than any other single omission on the page."
+    },
+    {
+      "metric": "ppe_net",
+      "label": "Property, plant and equipment",
+      "section": "Balance sheet",
+      "expr": "ppe_insurance_and_other + ppe_railroad_utilities_energy",
+      "note": "Sum of the two segment columns, matching exactly the lines Berkshire captions 'Property, plant and equipment'. Built the same way as total_debt above and for the same reason: Berkshire prints no consolidated PP&E figure anywhere, so the alternative to summing the columns it does print is an empty row.\n\nDeliberately excludes two neighbouring lines. 'Equipment held for lease' (us-gaap:PropertySubjectToOrAvailableForOperatingLeaseNet, $18.5B in FY2025) is a separate caption on the face of the balance sheet — XTRA and CORT lease inventory, not plant in operating use. The Finance and Financial Products column's 'Property, plant and equipment and assets held for lease' (2013-2017) is that same equipment under the older segment presentation: the two overlap in FY2017 at $9.9B and $10.2B, confirming they are the same assets renamed rather than a gap to fill. Including either would put two captions in one row; excluding both gives a smooth series that grows every year from $100.4B in FY2011 to $216.6B in FY2025."
+    },
+    {
       "metric": "sga_expense",
       "label": "Selling, General & Administrative",
       "section": "Income statement",
@@ -212,7 +245,7 @@
     },
     {
       "metric": "interest_expense_insurance_other",
-      "label": "Interest Expense \u2014 Insurance and Other",
+      "label": "Interest Expense — Insurance and Other",
       "section": "Income statement",
       "bind": [
         {
@@ -223,7 +256,7 @@
     },
     {
       "metric": "interest_expense_railroad_utilities_energy",
-      "label": "Interest Expense \u2014 Railroad, Utilities and Energy",
+      "label": "Interest Expense — Railroad, Utilities and Energy",
       "section": "Income statement",
       "bind": [
         {
@@ -234,7 +267,7 @@
     },
     {
       "metric": "interest_expense_finance_products",
-      "label": "Interest Expense \u2014 Finance and Financial Products",
+      "label": "Interest Expense — Finance and Financial Products",
       "section": "Income statement",
       "bind": [
         {
@@ -288,7 +321,7 @@
       "label": "Float / Equity",
       "section": "Capital quality",
       "expr": "insurance_float / equity",
-      "note": "How much investable policyholder money Berkshire runs per dollar of its own capital \u2014 the leverage that actually matters here, and the one no debt ratio captures."
+      "note": "How much investable policyholder money Berkshire runs per dollar of its own capital — the leverage that actually matters here, and the one no debt ratio captures."
     }
   ]
 }
