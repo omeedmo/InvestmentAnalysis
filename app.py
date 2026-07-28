@@ -5952,17 +5952,27 @@ def analyze():
         (6000 <= _sic_int <= 6199) or
         bool(financials.get("noninterest_expense"))
     )
-    # REIT detection: SIC 6798 (Real Estate Investment Trusts) or SIC 6500-6552,
-    # or presence of real estate asset / straight-line rent XBRL data.
-    # Note: we do NOT use ffo presence to detect REITs because FFO is derived
-    # and would produce false positives for non-REITs with D&A and NI.
-    # REIT detection: a real-estate SIC is definitive. Otherwise require the
-    # REIT-specific straight-line rent accrual (a lessor concept) — NOT merely
-    # holding real estate, since operating companies across sectors own property
-    # (e.g. FANG, an oil & gas E&P, tags RealEstateInvestmentPropertyNet for
-    # surface land) and insurers hold it as an investment (e.g. MET).
+    # REIT detection: SIC 6798 (Real Estate Investment Trusts) is definitive —
+    # every listed equity REIT checked files under it (SPG, O, PLD, AMT, EQIX,
+    # PSA, WELL, DLR, AVB and the rest: 23 of 23).
+    #
+    # The other real-estate codes are NOT definitive and used to be treated as
+    # such. SIC 6500 ("Real Estate") is a catch-all that holds brokerages and
+    # property managers alongside property owners, so Cushman & Wakefield —
+    # $10.3B of revenue against $0.13B of PP&E, a services business that owns
+    # almost nothing — was classified a REIT and shown a full set of REIT rows
+    # it can never populate. CBRE and FirstService sit in the same bucket, and
+    # 6512/6552 are almost entirely unlisted partnerships and shells.
+    #
+    # So a non-6798 filer has to show the lessor's own accrual, straight-line
+    # rent, which a services firm has no reason to report. Merely holding real
+    # estate is deliberately not enough: operating companies across sectors own
+    # property (FANG, an oil & gas E&P, tags RealEstateInvestmentPropertyNet
+    # for surface land) and insurers hold it as an investment (MET). FFO is not
+    # used either — it is derived, so any company with D&A and net income would
+    # appear to have it.
     is_reit = (
-        _sic in {"6798", "6500", "6512", "6552"} or
+        _sic == "6798" or
         (not is_insurance and not is_bank and not is_bdc and
          bool(financials.get("straight_line_rent")))
     )

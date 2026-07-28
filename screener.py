@@ -631,14 +631,26 @@ def _frame_ciks(tag: str) -> list[str]:
 
 
 def reit_ciks() -> set:
-    """REIT CIKs — real-estate SIC codes (matches the analyze REIT detection).
-    Cached 7 days; bundled fallback if browse-edgar is blocked (e.g. on Railway)."""
+    """
+    REIT CIKs — SIC 6798, matching the analyze view's REIT detection.
+
+    6798 only, not the wider real-estate range this used to sweep in. SIC 6500
+    is a catch-all holding brokerages and property managers (Cushman &
+    Wakefield, CBRE, FirstService) whose economics are nothing like a REIT's,
+    and 6512/6552 are almost entirely unlisted partnerships. Including them cut
+    both ways: those names were dropped from the general screen, where P/FCF
+    describes them perfectly well, and admitted to the REIT screen, where their
+    implied cap rate is computed from an NOI proxy they have no property to
+    earn. Every listed REIT checked files under 6798.
+
+    Cached 7 days; bundled fallback if browse-edgar is blocked (e.g. on
+    Railway). The cache key is versioned so the previous, wider set is not
+    served from disk after this narrowing.
+    """
     def fetch():
-        out: set = set()
-        for sic in ("6798", "6500", "6512", "6552"):
-            out |= set(_sic_ciks(sic))
-        return sorted(out) if out else _load_sector_fallback("reit")
-    return set(_cached("sector_reit_ciks.json", 7 * 86400, fetch) or _load_sector_fallback("reit"))
+        return sorted(set(_sic_ciks("6798"))) or _load_sector_fallback("reit")
+    return set(_cached("sector_reit_ciks_v2.json", 7 * 86400, fetch)
+               or _load_sector_fallback("reit"))
 
 
 def insurance_ciks() -> set:
