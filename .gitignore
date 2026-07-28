@@ -6,3 +6,7 @@ __pycache__/
 .DS_Store
 .screen_cache/
 .cache/
+
+# Personal, per-machine Claude Code settings (permission rules, modes).
+# The .local.json convention means "not shared"; it was tracked by accident.
+.claude/settings.local.json
