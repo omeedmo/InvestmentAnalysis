@@ -1,0 +1,19 @@
+{
+  "ticker": "O",
+  "cik": 726728,
+  "sector_template": "reit",
+  "plugin": "O",
+  "generated_by": "session-authored from 10-K MD&A FFO reconciliations, verified against XBRL net income",
+  "summary": "Net-lease REIT holding ~15,600 single-tenant commercial properties on long triple-net leases. The economics are spread-based: acquire at a cap rate above the cost of capital and collect contractual rent escalators. Reported Nareit FFO, not the app's net-income-plus-D&A proxy, is the figure Realty Income and its investors judge it on.",
+  "metrics": [],
+  "annotations": {
+    "ffo": "The company's own reported figure, read from its 10-K MD&A reconciliation and closing on its printed \"FFO available to common stockholders\" subtotal \u2014 not the app's generic Net Income + D&A proxy. FFO is not XBRL-tagged by any REIT checked (a 10-K's label linkbase contains no such element), so the MD&A table is the only source. Each filing is accepted only when its own net-income row agrees with the net income held from XBRL for that year, which verifies the right table, the right scale and the right column alignment together; years that fail are left blank rather than filled from the proxy. Nareit FFO only: the same table also prints Diluted FFO, Normalized FFO and Normalized FFO available to common stockholders, and carrying different variants in different years would change what the row means partway down."
+  },
+  "caveats": [
+    "FFO is a full replacement for the derived row, not a merge: a year the reconciliation could not verify is blank rather than falling back to Net Income + D&A, which would change the row's meaning partway across the series.",
+    "Company-specific variants in the same table (Core FFO, Normalized FFO, Adjusted FFO, Diluted FFO) are deliberately excluded; only the Nareit subtotal is carried."
+  ],
+  "row_labels": {
+    "ffo": "FFO available to common stockholders"
+  }
+}

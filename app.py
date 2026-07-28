@@ -5571,7 +5571,13 @@ def analyze():
         _q_re_gains = {k: v for k, v in financials.get("gains_on_real_estate",  {}).items() if k.startswith("Q")}
         _q_slr      = {k: v for k, v in financials.get("straight_line_rent",    {}).items() if k.startswith("Q")}
         _q_rec_cx   = {k: v for k, v in financials.get("recurring_capex",       {}).items() if k.startswith("Q")}
-        if _q_ni_reit and _q_re_dep:
+        # Skipped where the annual FFO row is the company's own reported
+        # figure. This block builds the NI+D&A proxy, and putting a proxy
+        # quarter beside as-reported years would make one row mean two
+        # different things depending on which column is being read — the
+        # quarter cell stays empty instead, as it does for every other figure
+        # a plugin sources from MD&A.
+        if _q_ni_reit and _q_re_dep and not getattr(_plugin, "REPORTED_FFO", False):
             _q_ffo = {}
             for qk in set(_q_ni_reit) & set(_q_re_dep):
                 gains_v = _q_re_gains.get(qk) or 0.0
@@ -5786,6 +5792,17 @@ def analyze():
     quarters = [f"Q{i+1}" for i in range(len(quarter_end_dates))]
     # Template-defined metrics are computed from the finished series, then
     # serialized alongside them so the UI renders them like any other row.
+    if getattr(_plugin, "REPORTED_FFO", False):
+        # Belt and braces: the plugin runs before the quarterly pass for some
+        # series and after it for others, so clear any quarter cell that
+        # slipped into the reported FFO family rather than rely on ordering.
+        for _k in ("ffo", "affo", "ffo_per_share", "affo_per_share",
+                   "ffo_payout_ratio"):
+            _s = financials.get(_k)
+            if isinstance(_s, dict):
+                for _q in [x for x in _s if str(x).startswith("Q")]:
+                    del _s[_q]
+
     _tmpl_metrics = company_templates.compute_metrics(financials, ctemplate)
     for _k, _s in _tmpl_metrics.items():
         financials[_k] = _s

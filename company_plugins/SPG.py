@@ -410,6 +410,11 @@ def extract_spg_ffo(text: str) -> dict[str, dict[str, float]]:
 
 # ── Hooks called by the core app (see company_templates.call_hook) ──────────
 
+# Simon's FFO row is its own reported figure too, so the quarterly proxy pass
+# is suppressed for the same reason as the other REIT plugins.
+REPORTED_FFO = True
+
+
 def apply_annual_filings(filings: list, financials: dict, ctx: dict) -> None:
     """Walk 10-Ks newest-first, filling FFO/NOI wherever not already covered."""
     fy_get = ctx["fy_get"]

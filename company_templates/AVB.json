@@ -1,0 +1,19 @@
+{
+  "ticker": "AVB",
+  "cik": 915912,
+  "sector_template": "reit",
+  "plugin": "AVB",
+  "generated_by": "session-authored from 10-K MD&A FFO reconciliations, verified against XBRL net income",
+  "summary": "Apartment REIT developing and operating multifamily communities in coastal supply-constrained markets. Development is a core earnings driver, so gains on sale and impairments move GAAP net income in ways Nareit FFO is designed to strip out.",
+  "metrics": [],
+  "annotations": {
+    "ffo": "The company's own reported figure, read from its 10-K MD&A reconciliation and closing on its printed \"FFO attributable to common stockholders\" subtotal \u2014 not the app's generic Net Income + D&A proxy. FFO is not XBRL-tagged by any REIT checked (a 10-K's label linkbase contains no such element), so the MD&A table is the only source. Each filing is accepted only when its own net-income row agrees with the net income held from XBRL for that year, which verifies the right table, the right scale and the right column alignment together; years that fail are left blank rather than filled from the proxy. AvalonBay's wording changed mid-history (\"FFO attributable to common stockholders\" earlier, a bare \"FFO\" line latterly); both are matched. Core FFO, its own adjusted measure directly beneath, is excluded."
+  },
+  "caveats": [
+    "FFO is a full replacement for the derived row, not a merge: a year the reconciliation could not verify is blank rather than falling back to Net Income + D&A, which would change the row's meaning partway across the series.",
+    "Company-specific variants in the same table (Core FFO, Normalized FFO, Adjusted FFO, Diluted FFO) are deliberately excluded; only the Nareit subtotal is carried."
+  ],
+  "row_labels": {
+    "ffo": "FFO attributable to common stockholders"
+  }
+}

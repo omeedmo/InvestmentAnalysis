@@ -1,0 +1,19 @@
+{
+  "ticker": "EQIX",
+  "cik": 1101239,
+  "sector_template": "reit",
+  "plugin": "EQIX",
+  "generated_by": "session-authored from 10-K MD&A FFO reconciliations, verified against XBRL net income",
+  "summary": "Data-centre REIT operating interconnection-dense IBX facilities. It elected REIT status in 2015 and reports Nareit FFO alongside AFFO. It tags plain property, plant and equipment rather than the real-estate concepts most REITs use, which is why the app's generic REIT derivations never fired for it.",
+  "metrics": [],
+  "annotations": {
+    "ffo": "The company's own reported figure, read from its 10-K MD&A reconciliation and closing on its printed \"FFO attributable to common stockholders\" subtotal \u2014 not the app's generic Net Income + D&A proxy. FFO is not XBRL-tagged by any REIT checked (a 10-K's label linkbase contains no such element), so the MD&A table is the only source. Each filing is accepted only when its own net-income row agrees with the net income held from XBRL for that year, which verifies the right table, the right scale and the right column alignment together; years that fail are left blank rather than filled from the proxy. Equinix reported in thousands through the late 2010s and in millions latterly, so the declared unit is read from the table rather than assumed. Series starts at FY2015, when Equinix elected REIT status; the FY2014 line under the same wording is a pre-conversion measure."
+  },
+  "caveats": [
+    "FFO is a full replacement for the derived row, not a merge: a year the reconciliation could not verify is blank rather than falling back to Net Income + D&A, which would change the row's meaning partway across the series.",
+    "Company-specific variants in the same table (Core FFO, Normalized FFO, Adjusted FFO, Diluted FFO) are deliberately excluded; only the Nareit subtotal is carried."
+  ],
+  "row_labels": {
+    "ffo": "FFO attributable to common stockholders"
+  }
+}
