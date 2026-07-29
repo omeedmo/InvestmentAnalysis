@@ -986,14 +986,20 @@ def screen_reits(universe: str, tickers: list[str],
     sector's own screen instead, built the same way (bulk `frames` fetch,
     then price), just with REIT-shaped metrics.
 
-    NOI and FFO here are both screening-scale proxies (EBITDA + G&A, and
-    Net Income + D&A respectively) — the same kind of generic formula the
-    main analyze view uses for every REIT except the ones with an authored
-    company template (Simon's own reported NOI and FFO, for instance), not a
-    company-by-company extraction, which doesn't scale to screening a few
-    hundred tickers. Treat these as screening filters to find candidates, not
-    as precise as the as-reported figures shown once you open a specific
-    ticker.
+    NOI and FFO here are both DERIVED screening proxies (EBITDA + G&A, and
+    Net Income + D&A respectively), and the UI labels them as such with a
+    dagger and a standing note. Nothing verifies them: no REIT reports either
+    figure, and neither is XBRL-tagged anywhere in the universe, so there is no
+    filed value to reconcile against — which is exactly why the analyze view no
+    longer derives them AT ALL. It reads FFO from the filing for the five REITs
+    with an authored plugin (SPG, O, FRT, AVB, EQIX), NOI for Simon, and leaves
+    the row blank for everyone else.
+
+    So the two views answer different questions and should not be read as the
+    same number at different precisions. This one ranks a few hundred tickers
+    on a formula applied uniformly; that one reports what a filer printed. A
+    company can rank well here and show blank rows there, and the honest
+    reading of that is "not checked yet", not "cheap".
     """
     if refresh:
         purge_price_cache()

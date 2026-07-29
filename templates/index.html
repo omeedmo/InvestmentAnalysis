@@ -1735,7 +1735,7 @@ const SECTOR_CONFIG = {
     label: 'REITs',
     endpoint: '/api/screen_reits',
     sortKey: 'cap_rate', sortDir: -1,
-    hint: 'Ranks highest-cap-rate-first (cheapest relative to property NOI). NOI and FFO are the same EBITDA+G&amp;A / NI+D&amp;A proxies the analyze view uses for most REITs — open a ticker for its as-reported figure where one exists (e.g. SPG). Leave cutoffs blank for no bound.',
+    hint: 'Ranks highest-cap-rate-first (cheapest relative to property NOI). <strong>Cap Rate, P/FFO and NOI are derived proxies</strong> (EBITDA+G&amp;A and NI+D&amp;A) — no filer reports them and neither is XBRL-tagged, so they are unverifiable against the filing. The analyze page does not derive them at all: it shows FFO only for the five REITs whose filings are read directly (SPG, O, FRT, AVB, EQIX) and leaves the row blank elsewhere. Screen to shortlist, then open the ticker. Leave cutoffs blank for no bound.',
   },
   bank: {
     label: 'Banks',
@@ -1799,11 +1799,11 @@ async function openScreener(){
         </div>
         <div id="scr-fields-reit" style="display:none;gap:12px;flex-wrap:wrap">
           <div class="scr-field">
-            <label>Min Cap Rate (%)</label>
+            <label title="Derived from an NOI proxy — see note below">Min Cap Rate (%)&dagger;</label>
             <input id="scr-capRate" type="number" placeholder="e.g. 6" min="0" step="0.1" style="width:110px">
           </div>
           <div class="scr-field">
-            <label>Max P/FFO</label>
+            <label title="Derived from Net Income + D&amp;A, not reported FFO — see note below">Max P/FFO&dagger;</label>
             <input id="scr-pffo" type="number" placeholder="e.g. 15" min="0" step="1" style="width:110px">
           </div>
         </div>
@@ -1952,14 +1952,15 @@ function renderScreenTable(stats){
   let h = `<div class="scr-hint" style="margin-bottom:8px">
     <strong>${st.label||st.universe||''}</strong> · ${st.passed} passed of ${st.evaluated} companies valued${st.excluded_sectors?` · ${st.excluded_sectors} insurers/banks/REITs excluded`:''}${notExcludedNote}${st.excluded_20f?` · ${st.excluded_20f} 20-F filers excluded`:''} · FY${st.fiscal_year} · click a row to analyze</div>
   ${st.guru_note?`<div class="scr-hint" style="margin-bottom:8px;color:#b45309">⚠ ${st.guru_note}</div>`:''}
+  ${mode==='reit'?`<div class="scr-hint" style="margin-bottom:8px;color:#b45309">&dagger; <strong>Cap Rate, P/FFO and NOI are derived, not as reported.</strong> NOI = Operating Income + D&amp;A + G&amp;A; FFO = Net Income + D&amp;A. No REIT reports either figure and neither is XBRL-tagged, so nothing here is checked against a filing — unlike every number on the analyze page. Treat this as a shortlist, then open a ticker: SPG, O, FRT, AVB and EQIX show FFO as the filer prints it (SPG also NOI), and every other REIT leaves those rows blank rather than derive them.</div>`:''}
   <table class="scr-table">
     <thead><tr>
       <th onclick="sortScreen('rank')">#</th>
       <th onclick="sortScreen('ticker')">Ticker${arrow('ticker')}</th>
       ${mode==='reit' ? `
-      <th onclick="sortScreen('cap_rate')">Cap Rate${arrow('cap_rate')}</th>
-      <th onclick="sortScreen('p_ffo')">P/FFO${arrow('p_ffo')}</th>
-      <th onclick="sortScreen('noi')">NOI${arrow('noi')}</th>
+      <th onclick="sortScreen('cap_rate')" title="DERIVED — NOI &divide; Enterprise Value. No filer reports this.">Cap Rate&dagger;${arrow('cap_rate')}</th>
+      <th onclick="sortScreen('p_ffo')" title="DERIVED — Market Cap &divide; (Net Income + D&amp;A). Not the filer's reported FFO.">P/FFO&dagger;${arrow('p_ffo')}</th>
+      <th onclick="sortScreen('noi')" title="DERIVED — Operating Income + D&amp;A + G&amp;A. No filer reports this.">NOI&dagger;${arrow('noi')}</th>
       <th onclick="sortScreen('enterprise_value')">EV${arrow('enterprise_value')}</th>
       ` : mode==='bank' ? `
       <th onclick="sortScreen('p_b')">P/B${arrow('p_b')}</th>
