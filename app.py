@@ -3580,100 +3580,25 @@ def build_financials(facts: dict, metric_tags: dict = None,
                 pretax_eco_gw[d] = oi[d] / u
         raw["pretax_economic_goodwill"] = pretax_eco_gw or None
 
-    # ── REIT-specific derived metrics ─────────────────────────────────────────
-    # Only compute REIT metrics when REIT-specific XBRL data is present.
-    # If neither RealEstateInvestmentPropertyNet nor DepreciationOfRealEstate is
-    # tagged, this is not a REIT and we skip FFO/AFFO derivation entirely.
-    _has_reit_data = bool(
-        raw.get("real_estate_assets") or
-        raw.get("real_estate_depreciation") or
-        raw.get("straight_line_rent")
-    )
-    # FFO (NAREIT definition) = Net Income + Real Estate Depreciation
-    #                         − Gains on sale of real estate properties
-    # Use DepreciationOfRealEstate when available; fall back to general D&A only
-    # when real estate assets are present (confirming this is a REIT).
-    re_dep_specific = raw.get("real_estate_depreciation", {})
-    re_dep = re_dep_specific if re_dep_specific else (dep if _has_reit_data else {})
-    re_gains = raw.get("gains_on_real_estate", {})
-    if ni and re_dep:
-        ffo: dict[str, float] = {}
-        for d in ni:
-            da_v = fy_get(re_dep, d[:4])
-            if da_v is not None:
-                gains_v = fy_get(re_gains, d[:4]) or 0.0
-                ffo[d] = ni[d] + abs(da_v) - gains_v
-        if ffo:
-            raw["ffo"] = ffo
-            # FFO per share
-            if share_base_for_per_share:
-                ffo_ps: dict[str, float] = {}
-                for d in ffo:
-                    s = fy_get(share_base_for_per_share, d[:4])
-                    if s and s > 0:
-                        ffo_ps[d] = ffo[d] / s
-                raw["ffo_per_share"] = ffo_ps or None
-
-    # AFFO (Adjusted FFO) = FFO − Straight-line Rent Adjustment − Recurring CapEx
-    # Straight-line rent is a non-cash accrual that inflates FFO; recurring CapEx
-    # (tenant improvements, leasing costs) is needed to maintain occupancy.
-    ffo_series   = raw.get("ffo", {})
-    slr          = raw.get("straight_line_rent", {})
-    rec_cx       = raw.get("recurring_capex", {})
-    if ffo_series:
-        affo: dict[str, float] = {}
-        for d in ffo_series:
-            sl_v  = fy_get(slr,    d[:4]) or 0.0
-            rc_v  = fy_get(rec_cx, d[:4]) or 0.0
-            affo[d] = ffo_series[d] - abs(sl_v) - abs(rc_v)
-        if affo:
-            raw["affo"] = affo
-            if share_base_for_per_share:
-                affo_ps: dict[str, float] = {}
-                for d in affo:
-                    s = fy_get(share_base_for_per_share, d[:4])
-                    if s and s > 0:
-                        affo_ps[d] = affo[d] / s
-                raw["affo_per_share"] = affo_ps or None
-
-    # NOI (Net Operating Income) for REITs
-    # Formula: NOI = EBITDA + G&A
-    # Derivation: Income Statement = Revenue − PropertyOpEx − RETax − G&A − D&A
-    #   → EBITDA (Operating Income + D&A) = Revenue − PropertyOpEx − RETax − G&A
-    #   → NOI   = Revenue − PropertyOpEx − RETax = EBITDA + G&A
-    # When G&A is not separately tagged, NOI ≈ EBITDA (acceptable for net-lease REITs
-    # where G&A is a small fraction of revenue and tenants pay most property costs).
-    ebitda_series = raw.get("ebitda", {})
-    ga_series     = raw.get("general_admin_expense", {})
-    if _has_reit_data and ebitda_series:
-        noi: dict[str, float] = {}
-        for d in ebitda_series:
-            eb = ebitda_series[d]
-            if eb is None:
-                continue
-            ga_v = fy_get(ga_series, d[:4]) or 0.0
-            noi[d] = eb + abs(ga_v)
-        if noi:
-            raw["noi"] = noi
-            margin(noi, rev, "noi_margin")
-            # NOI per share
-            if share_base_for_per_share:
-                noi_ps: dict[str, float] = {}
-                for d in noi:
-                    s = fy_get(share_base_for_per_share, d[:4])
-                    if s and s > 0:
-                        noi_ps[d] = noi[d] / s
-                raw["noi_per_share"] = noi_ps or None
-
-    # FFO payout ratio = Dividends Paid / FFO
-    divs = raw.get("dividends_paid", {})
-    if ffo_series and divs:
-        ffo_payout: dict[str, float] = {}
-        for d in ffo_series:
-            dv = fy_get(divs, d[:4])
-            if dv is not None and ffo_series[d] and ffo_series[d] > 0:
-                ffo_payout[d] = abs(dv) / ffo_series[d]
-        raw["ffo_payout_ratio"] = ffo_payout or None
+    # ── REIT metrics: reported only, never derived ────────────────────────────
+    # FFO, AFFO and NOI used to be computed here as proxies — FFO as net income
+    # plus depreciation, NOI as EBITDA plus G&A. Both are gone.
+    #
+    # Neither is what a REIT publishes. Real Nareit FFO also strips gains on
+    # property sales and impairments, adds the share of joint-venture
+    # depreciation and removes noncontrolling interests; for Realty Income the
+    # proxy and the reported figure differ by hundreds of millions. NOI was
+    # worse: the EBITDA + G&A identity assumes a rent-collecting property
+    # company, so it printed a confident number for Realty Income, whose own
+    # 10-K never states an NOI figure, and for Equinix, whose filings do not
+    # contain the words at all.
+    #
+    # These rows are now populated only where a company plugin reads the
+    # figure out of the filer's own MD&A reconciliation and verifies it against
+    # the printed subtotal (see company_plugins/_reit_ffo.py). A REIT with no
+    # plugin shows blank rather than a plausible-looking derivation, which is
+    # the same standard the rest of the app holds: a number on screen should be
+    # one the company reported.
 
     # ── Insurance-specific derived metrics ────────────────────────────────────
     prem_earned = raw.get("premiums_earned", {})
@@ -5557,67 +5482,11 @@ def analyze():
                 if _q_eq_bdc[qk] and _q_eq_bdc[qk] != 0:
                     _nii_roe_q[qk] = (_q_nii_flow[qk] * 4) / _q_eq_bdc[qk]
 
-        # Quarterly FFO / AFFO (REIT)
-        _q_ni_reit  = {k: v for k, v in financials.get("net_income",            {}).items() if k.startswith("Q")}
-        _q_re_dep   = {k: v for k, v in financials.get("real_estate_depreciation",{}).items() if k.startswith("Q")}
-        # Fall back to general D&A only when REIT-specific data (RE assets or SL rent) exists
-        _has_reit_q = bool(
-            {k for k in financials.get("real_estate_assets", {}) if k.startswith("Q")} or
-            {k for k in financials.get("straight_line_rent", {}) if k.startswith("Q")} or
-            {k for k in financials.get("real_estate_assets", {}) if not k.startswith("Q")}
-        )
-        if not _q_re_dep and _has_reit_q:
-            _q_re_dep = {k: v for k, v in financials.get("depreciation", {}).items() if k.startswith("Q")}
-        _q_re_gains = {k: v for k, v in financials.get("gains_on_real_estate",  {}).items() if k.startswith("Q")}
-        _q_slr      = {k: v for k, v in financials.get("straight_line_rent",    {}).items() if k.startswith("Q")}
-        _q_rec_cx   = {k: v for k, v in financials.get("recurring_capex",       {}).items() if k.startswith("Q")}
-        # Skipped where the annual FFO row is the company's own reported
-        # figure. This block builds the NI+D&A proxy, and putting a proxy
-        # quarter beside as-reported years would make one row mean two
-        # different things depending on which column is being read — the
-        # quarter cell stays empty instead, as it does for every other figure
-        # a plugin sources from MD&A.
-        if _q_ni_reit and _q_re_dep and not getattr(_plugin, "REPORTED_FFO", False):
-            _q_ffo = {}
-            for qk in set(_q_ni_reit) & set(_q_re_dep):
-                gains_v = _q_re_gains.get(qk) or 0.0
-                _q_ffo[qk] = _q_ni_reit[qk] + abs(_q_re_dep[qk]) - gains_v
-            if _q_ffo:
-                financials.setdefault("ffo", {}).update(_q_ffo)
-                # AFFO quarterly
-                _q_affo = {}
-                for qk, fv in _q_ffo.items():
-                    sl_v = _q_slr.get(qk) or 0.0
-                    rc_v = _q_rec_cx.get(qk) or 0.0
-                    _q_affo[qk] = fv - abs(sl_v) - abs(rc_v)
-                if _q_affo:
-                    financials.setdefault("affo", {}).update(_q_affo)
-                # FFO payout ratio quarterly (annualised FFO as denominator)
-                _q_divs_reit = {k: v for k, v in financials.get("dividends_paid", {}).items() if k.startswith("Q")}
-                if _q_divs_reit:
-                    _ffo_payout_q = financials.setdefault("ffo_payout_ratio", {})
-                    for qk, fv in _q_ffo.items():
-                        dv = _q_divs_reit.get(qk)
-                        ann_ffo = fv * 4
-                        if dv is not None and ann_ffo and ann_ffo > 0:
-                            _ffo_payout_q[qk] = abs(dv) * 4 / ann_ffo
-
-        # Quarterly NOI = quarterly EBITDA + G&A
-        _q_ebitda = {k: v for k, v in financials.get("ebitda", {}).items() if k.startswith("Q")}
-        _q_ga     = {k: v for k, v in financials.get("general_admin_expense", {}).items() if k.startswith("Q")}
-        if _has_reit_q and _q_ebitda:
-            _q_noi = {}
-            for qk, eb in _q_ebitda.items():
-                if eb is None:
-                    continue
-                ga_v = _q_ga.get(qk) or 0.0
-                _q_noi[qk] = eb + abs(ga_v)
-            if _q_noi:
-                financials.setdefault("noi", {}).update(_q_noi)
-                for qk, nv in _q_noi.items():
-                    rv = rev_q.get(qk)
-                    if rv and rv > 0:
-                        financials.setdefault("noi_margin", {})[qk] = nv / rv
+        # Quarterly FFO / AFFO / NOI are NOT derived here, for the same reason
+        # the annual ones are not: the proxies are not what a REIT reports.
+        # A quarter cell is filled only when a company plugin reads the figure
+        # from that quarter's 10-Q and verifies it against the filer's own
+        # printed subtotal — see company_plugins/_reit_ffo.quarterly.
 
         # Quarterly per-share FFO / AFFO
         _q_sb_reit = (

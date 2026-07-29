@@ -20,11 +20,6 @@ import re
 
 from . import _reit_ffo
 
-# The FFO row this plugin publishes is the company's own reported figure, so
-# the app's quarterly NI+D&A proxy stands down rather than putting a derived
-# quarter beside as-reported years.
-REPORTED_FFO = True
-
 TOTAL = re.compile(
     r"(?<!Normalized )(?<!Adjusted )(?<!Core )(?<!Diluted )"
     r"FFO available to common stockholders\s*\$?\s*(?=\(?[\d,]{5,})", re.I)

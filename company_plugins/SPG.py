@@ -412,10 +412,6 @@ def extract_spg_ffo(text: str) -> dict[str, dict[str, float]]:
 
 # ── Hooks called by the core app (see company_templates.call_hook) ──────────
 
-# Simon's FFO row is its own reported figure too, so the quarterly proxy pass
-# is suppressed for the same reason as the other REIT plugins.
-REPORTED_FFO = True
-
 # Simon's 10-Q prints the same bridge as its 10-K, closing on "FFO allocable to
 # common stockholders" — the figure the annual row already carries (the 10-K
 # calls it "Dilutive FFO allocable to common stockholders", so both forms are

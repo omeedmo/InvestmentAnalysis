@@ -17,11 +17,6 @@ import re
 
 from . import _reit_ffo
 
-# The FFO row this plugin publishes is the company's own reported figure, so
-# the app's quarterly NI+D&A proxy stands down rather than putting a derived
-# quarter beside as-reported years.
-REPORTED_FFO = True
-
 # Equinix names this line three ways across its history: "NAREIT FFO
 # attributable to common stockholders", "FFO attributable to common
 # shareholders", and — through FY2018-FY2021 — a bare "FFO". All three are

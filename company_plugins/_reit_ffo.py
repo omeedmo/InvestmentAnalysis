@@ -312,11 +312,17 @@ def quarterly(financials: dict, quarter_end_dates: dict,
         financials.setdefault("ffo_per_share", {}).update(
             {qk: v / shares[qk] for qk, v in out.items() if shares.get(qk)})
 
+    # AFFO only where the ANNUAL row exists. Straight-line rent and recurring
+    # capex are reported by some of these filers and not others, and a quarter
+    # cell sitting alone under an otherwise empty row reads as data rather than
+    # as the artefact of one series being available quarterly and not annually.
+    annual_affo = any(not str(k).startswith("Q")
+                      for k in (financials.get("affo") or {}))
     slr = {k: v for k, v in (financials.get("straight_line_rent") or {}).items()
            if str(k).startswith("Q")}
     rcx = {k: v for k, v in (financials.get("recurring_capex") or {}).items()
            if str(k).startswith("Q")}
-    if slr or rcx:
+    if annual_affo and (slr or rcx):
         affo = {qk: v - abs(slr.get(qk) or 0.0) - abs(rcx.get(qk) or 0.0)
                 for qk, v in out.items()}
         financials.setdefault("affo", {}).update(affo)
