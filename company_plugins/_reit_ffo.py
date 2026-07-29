@@ -136,6 +136,21 @@ def extract(text: str, total_re: re.Pattern, anchor_by_year: dict,
         vals = values_after(flat[m.end():], ncols)
         if len(vals) < 2:
             continue
+        # Trailing columns that are not a fiscal year at all. Asking for three
+        # columns from a two-column table reads on into the NEXT row: Realty
+        # Income's FY2025 table yields $3,860,323 and $3,467,659 and then
+        # $9,396, the "FFO allocable to dilutive noncontrolling interests" line
+        # beneath it. Mapped to a fiscal year that becomes a 99% collapse the
+        # following year, and in discovery it was enough to disqualify the whole
+        # series. Adjacent years of FFO never differ by 5x for a going concern,
+        # while a spilled adjustment row almost always does, so anything under a
+        # fifth of the first column is dropped rather than trusted.
+        keep = [vals[0]]
+        for v in vals[1:]:
+            if vals[0] and abs(v) < abs(vals[0]) * 0.2:
+                break
+            keep.append(v)
+        vals = keep
         scale = scale_before(flat, m.start())
         if scale is None:
             continue

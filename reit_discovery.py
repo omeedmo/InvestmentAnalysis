@@ -107,6 +107,39 @@ def _discontinuities(series: dict, limit: float = 0.6) -> list:
     return out
 
 
+def _implausible(series: dict, ni_by_year: dict) -> Optional[str]:
+    """
+    Why this series cannot be FFO, or None if nothing rules it out.
+
+    The XBRL anchor is necessary but NOT sufficient, which the first gated run
+    demonstrated. It asks whether a net-income row near the subtotal matches
+    the net income on file — and a pattern that matched the net income row
+    ITSELF, or a line beside it, satisfies that trivially. Essex came back with
+    $40M for FY2008 against a real FFO near $180M, having landed on a figure
+    within a few percent of its $38M net income; Prologis came back with
+    -$928M for FY2010.
+
+    Two properties of the measure close both. FFO is net income plus real
+    estate depreciation less gains, and depreciation on a property portfolio is
+    large, so FFO is reliably a multiple of net income rather than a near-copy
+    of it. And FFO is positive for a going-concern REIT even in years when net
+    income is not, because the depreciation add-back dominates.
+    """
+    if any(v <= 0 for v in series.values()):
+        neg = [y for y, v in series.items() if v <= 0]
+        return f"non-positive in {','.join(sorted(neg)[:3])}"
+    ratios = [series[y] / ni_by_year[y] for y in series
+              if ni_by_year.get(y) and ni_by_year[y] > 0]
+    if ratios:
+        ratios.sort()
+        median = ratios[len(ratios) // 2]
+        if median < 1.2:
+            return f"median FFO/NI {median:.2f} — too close to net income"
+        if median > 12:
+            return f"median FFO/NI {median:.1f} — implausibly high"
+    return None
+
+
 def _score(series: dict) -> dict:
     jumps = _discontinuities(series)
     ys = sorted(series)
@@ -146,6 +179,10 @@ def discover_company(filings: list, get_text, ni_by_year: dict,
             continue
         sc = _score(series)
         if len(sc["jumps"]) > max_jumps:
+            continue
+        bad = _implausible(series, ni_by_year)
+        if bad:
+            sc["rejected"] = bad
             continue
         rank = (sc["years"], -len(sc["jumps"]), -sc["gaps"])
         if best is None or rank > best[0]:
