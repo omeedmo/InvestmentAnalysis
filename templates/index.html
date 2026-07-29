@@ -6,7 +6,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<title>Investment Analysis</title>
+<title>ValueAnchor</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -56,7 +56,7 @@ body{font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:v
 .spinner{width:38px;height:38px;border:3px solid #e2e8f0;border-top-color:var(--blue);border-radius:50%;animation:spin .7s linear infinite;margin:0 auto 12px}
 @keyframes spin{to{transform:rotate(360deg)}}
 
-/* ── Value Line header ────────────────────────────────────────────────── */
+/* ── ValueAnchor header ───────────────────────────────────────────────── */
 .vl-card{background:var(--navy);color:#fff;border-radius:10px;margin-bottom:12px;overflow:hidden}
 .vl-top{display:flex;align-items:stretch;flex-wrap:wrap}
 .vl-title-block{flex:1;min-width:0;padding:12px 16px 8px}
@@ -343,7 +343,7 @@ th.hidden-col{display:none}
 </head>
 <body>
 <div class="topbar">
-  <h1>Investment <span>Analysis</span></h1>
+  <h1>Value<span>Anchor</span></h1>
   <div class="form-row" style="position:relative">
     <div style="position:relative">
       <input id="inp-ticker"  type="text"   placeholder="Ticker (AAPL, MSFT…)" maxlength="10" autocomplete="off" style="width:145px;text-transform:uppercase">
@@ -357,8 +357,8 @@ th.hidden-col{display:none}
 <div class="container">
 <div id="root">
   <div class="landing">
-    <h2>Value Line Style Financial Reports</h2>
-    <p>Enter a US stock ticker to pull up to 15 years of SEC EDGAR 10-K data — income statement, cash flow, balance sheet, returns, and a reverse DCF analysis at your chosen discount rate and exit multiple.</p>
+    <h2>Fifteen Years of As-Reported SEC Financials</h2>
+    <p>Enter a US stock ticker for up to 15 years of SEC EDGAR filings — income statement, cash flow, balance sheet, returns, and a reverse DCF at your chosen discount rate and exit multiple. Figures are read as filed; where a company does not report one, the cell is left blank rather than derived.</p>
   </div>
 </div>
 </div>
@@ -744,7 +744,7 @@ function render(data){
   }
   let h='';
 
-  // ── Value Line header ─────────────────────────────────────────────────────
+  // ── ValueAnchor header ────────────────────────────────────────────────────
   const lo=mk['52w_low'], hi=mk['52w_high'], pr=mk.price;
   let rangeHtml='';
   if(lo && hi && hi>lo){

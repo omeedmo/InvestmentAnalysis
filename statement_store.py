@@ -43,7 +43,7 @@ CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                          ".cache", "statements")
 
 HEADERS = {
-    "User-Agent": "InvestmentAnalysis research contact@example.com",
+    "User-Agent": "ValueAnchor/1.0 (omid.mola@gmail.com)",
     "Accept-Encoding": "gzip, deflate",
 }
 

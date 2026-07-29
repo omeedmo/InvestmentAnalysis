@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Value Line Style Investment Analysis – Flask Backend
+ValueAnchor – Flask Backend
 Pulls 15 years of financial data from SEC EDGAR (free, no API key).
 """
 
@@ -31,7 +31,7 @@ import screener
 app = Flask(__name__)
 
 EDGAR_BASE = "https://data.sec.gov"
-HEADERS = {"User-Agent": "InvestmentAnalysis research@example.com", "Accept": "application/json"}
+HEADERS = {"User-Agent": "ValueAnchor/1.0 (omid.mola@gmail.com)", "Accept": "application/json"}
 MAX_YEARS = 15
 SEC_ARCHIVES = "https://www.sec.gov/Archives/edgar/data/{cik_no_zero}/{accession_no_dash}/{document}"
 

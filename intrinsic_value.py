@@ -26,7 +26,7 @@ app = Flask(__name__)
 
 
 HEADERS = {
-    "User-Agent": "InvestmentAnalysis research@example.com",
+    "User-Agent": "ValueAnchor/1.0 (omid.mola@gmail.com)",
     "Accept": "application/json, text/html",
 }
 SEC_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"

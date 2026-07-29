@@ -32,11 +32,11 @@ import requests
 from bs4 import BeautifulSoup
 
 SEC_BASE = "https://data.sec.gov"
-H_SEC = {"User-Agent": "InvestmentAnalysis research@example.com", "Accept": "application/json"}
+H_SEC = {"User-Agent": "ValueAnchor/1.0 (omid.mola@gmail.com)", "Accept": "application/json"}
 H_YH  = {"User-Agent": "Mozilla/5.0"}
 # Wikipedia blocks bare/generic User-Agents (403) from datacenter IPs; its policy
 # requires a descriptive UA with contact info. Used for constituent scraping.
-H_WIKI = {"User-Agent": "InvestmentAnalysisScreener/1.0 "
+H_WIKI = {"User-Agent": "ValueAnchor/1.0 "
                         "(https://github.com/omeedmo/InvestmentAnalysis; omid.mola@gmail.com)"}
 
 # Bundled constituent lists, used as a fallback when Wikipedia is unreachable
