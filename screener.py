@@ -371,6 +371,9 @@ _CF_TAGS = {
     "cash":  [("us-gaap", "CashAndCashEquivalentsAtCarryingValue"),
               ("ifrs-full", "CashAndCashEquivalents")],
     "ltd":   [("us-gaap", "LongTermDebtNoncurrent"), ("us-gaap", "LongTermDebt"),
+              ("us-gaap", "DebtLongtermAndShorttermCombinedAmount"),
+              ("us-gaap", "LongTermDebtAndCapitalLeaseObligations"),
+              ("us-gaap", "LongTermDebtAndFinanceLeaseObligations"),
               ("ifrs-full", "NoncurrentPortionOfNoncurrentBorrowings"),
               ("ifrs-full", "LongtermBorrowings")],
     "std":   [("us-gaap", "LongTermDebtCurrent"), ("us-gaap", "DebtCurrent"),
@@ -747,6 +750,39 @@ def _ticker_score(tk: str) -> float:
     return s
 
 
+# Consolidated debt concepts, in preference order -- first that resolves wins.
+_DEBT_TOTAL_TAGS = [
+    "LongTermDebtNoncurrent",
+    "LongTermDebt",
+    "DebtLongtermAndShorttermCombinedAmount",
+    "LongTermDebtAndCapitalLeaseObligations",
+    "LongTermDebtAndFinanceLeaseObligations",
+]
+
+# Debt components, summed ONLY when no consolidated total resolved.
+#
+# A REIT does not file a classified balance sheet, so "noncurrent" rarely
+# applies, and many tag no consolidated total at all: Realty Income prints
+# revolving credit and commercial paper, term loans, mortgages payable and
+# notes payable as four separate lines totalling ~$28.8B, none of them
+# us-gaap:LongTermDebt. Binding only the totals resolved NOTHING for it, and
+# enterprise value silently collapsed to market cap less cash -- which is what
+# put Empire State Realty at a 46% implied cap rate.
+#
+# One concept per debt family, so two names for the same facility cannot both
+# land; and a total always wins over the sum, so a filer tagging both is not
+# double counted.
+_DEBT_COMPONENT_TAGS = [
+    "SecuredDebt",
+    "UnsecuredDebt",
+    "SeniorNotes",
+    "NotesPayable",
+    "LongTermLineOfCredit",
+    "CommercialPaper",
+    "LoansPayable",
+]
+
+
 def screen(universe: str, tickers: list[str],
            max_pfcf, max_ev_ebit,
            latest_fy: int = 2025,
@@ -772,7 +808,7 @@ def screen(universe: str, tickers: list[str],
                            "PaymentsToAcquireProductiveAssets"], "USD", annual)
     ebit = _merge_frames(["OperatingIncomeLoss"], "USD", annual)
     cash = _merge_frames(["CashAndCashEquivalentsAtCarryingValue"], "USD", instants)
-    ltd  = _merge_frames(["LongTermDebtNoncurrent", "LongTermDebt"], "USD", instants)
+    ltd  = _merge_frames(_DEBT_TOTAL_TAGS, "USD", instants)
     std  = _merge_frames(["LongTermDebtCurrent", "DebtCurrent", "ShortTermBorrowings"], "USD", instants)
     shares = _merge_frames(["EntityCommonStockSharesOutstanding"], "shares", instants)
 
@@ -970,8 +1006,10 @@ def screen_reits(universe: str, tickers: list[str],
     ga   = _merge_frames(["GeneralAndAdministrativeExpense"], "USD", annual)
     ni   = _merge_frames(["NetIncomeLoss", "ProfitLoss"], "USD", annual)
     cash = _merge_frames(["CashAndCashEquivalentsAtCarryingValue"], "USD", instants)
-    ltd  = _merge_frames(["LongTermDebtNoncurrent", "LongTermDebt"], "USD", instants)
+    ltd  = _merge_frames(_DEBT_TOTAL_TAGS, "USD", instants)
     std  = _merge_frames(["LongTermDebtCurrent", "DebtCurrent", "ShortTermBorrowings"], "USD", instants)
+    debt_parts = {name: _merge_frames([name], "USD", instants)
+                  for name in _DEBT_COMPONENT_TAGS}
     shares = _merge_frames(["EntityCommonStockSharesOutstanding"], "shares", instants)
 
     cik_map = ticker_cik_map()
@@ -1036,6 +1074,7 @@ def screen_reits(universe: str, tickers: list[str],
 
     results = []
     no_price = 0
+    no_debt = 0
     for tk in candidates:
         c = str(_cik_for(tk))
         price = prices.get(tk)
@@ -1045,7 +1084,20 @@ def screen_reits(universe: str, tickers: list[str],
             no_price += 1
             continue
         mktcap = price * sh
-        ev = mktcap + (ltd.get(c) or 0) + (std.get(c) or 0) - (cash.get(c) or 0)
+        # A total where the filer tags one, otherwise the sum of its components.
+        total_debt = ltd.get(c)
+        if total_debt is None:
+            parts = [v for v in (m.get(c) for m in debt_parts.values()) if v]
+            total_debt = sum(parts) if parts else None
+        if total_debt is None:
+            # Nothing resolved. Enterprise value would fall back to market cap
+            # less cash, and the cap rate built on it would be overstated by
+            # however leveraged the filer is -- worst exactly where the number
+            # looks most attractive, on small heavily mortgaged REITs. Skipped
+            # rather than published wrong.
+            no_debt += 1
+            continue
+        ev = mktcap + total_debt + (std.get(c) or 0) - (cash.get(c) or 0)
         # Same formula as the main analyze view: EBITDA + G&A, G&A defaulting
         # to zero (not excluded) when a filer doesn't tag it separately —
         # acceptable for net-lease REITs where tenants pay most property costs.
@@ -1096,6 +1148,7 @@ def screen_reits(universe: str, tickers: list[str],
             "passed":     len(filtered),
             "missing":    no_price,
             "not_reit":   removed_not_reit,
+            "no_debt":    no_debt,
             "cf_recovered": cf_recovered,
             "fiscal_year": latest_fy,
         },
