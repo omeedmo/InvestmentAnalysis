@@ -111,14 +111,21 @@ def scale_before(flat: str, pos: int, window: int = 900) -> Optional[float]:
     return _SCALES[decls[-1].lower()] if decls else None
 
 
-def extract(text: str, total_re: re.Pattern, ni_by_year: dict, fiscal_year: int,
-            ncols: int = 2, tolerance: float = 0.25) -> dict[int, float]:
+def extract(text: str, total_re: re.Pattern, anchor_by_year: dict,
+            fiscal_year: int, ncols: int = 2, tolerance: float = 0.25,
+            anchor_re: re.Pattern = None) -> dict[int, float]:
     """
-    {column index: FFO} for the company's own subtotal, verified.
+    {column index: value} for the company's own subtotal, verified.
 
-    `ni_by_year` is {"YYYY": net income} as the app already holds it from XBRL.
+    The verification compares a row ABOVE the subtotal against a figure known
+    from elsewhere. For FFO that anchor is the table's net income against XBRL.
+    For AFFO it is the FFO line the reconciliation starts from, against the FFO
+    this module already verified for that year — which is a tighter check than
+    net income, since the two should agree to the dollar.
+
     Column 0 is the filing's own fiscal year, column 1 the year before it.
     """
+    anchor_re = anchor_re or NET_INCOME_LABEL
     flat = normalise(text)
     for m in total_re.finditer(flat):
         # Up to `ncols` columns, but two is enough. These tables show two or
@@ -151,12 +158,12 @@ def extract(text: str, total_re: re.Pattern, ni_by_year: dict, fiscal_year: int,
         # consolidated net income, let genuinely wrong tables through and put
         # Federal Realty's series back to a shape its own filings contradict.
         # A year that cannot be confirmed at this tolerance is left blank.
-        expected = ni_by_year.get(str(fiscal_year))
+        expected = anchor_by_year.get(str(fiscal_year))
         if not expected:
             continue
         head = flat[max(0, m.start() - 2600):m.start()]
         ok = False
-        for ni_m in NET_INCOME_LABEL.finditer(head):
+        for ni_m in anchor_re.finditer(head):
             row = values_after(head[ni_m.end():], 1)
             if row and abs(row[0] * scale - expected) <= abs(expected) * tolerance:
                 ok = True
@@ -170,7 +177,9 @@ def extract(text: str, total_re: re.Pattern, ni_by_year: dict, fiscal_year: int,
 
 def walk_filings(filings: list, ctx: dict, total_re: re.Pattern,
                  ncols: int = 2, tolerance: float = 0.25,
-                 from_year: Optional[int] = None) -> dict[str, float]:
+                 from_year: Optional[int] = None,
+                 anchor_re: re.Pattern = None,
+                 anchor_series: Optional[dict] = None) -> dict[str, float]:
     """
     {fiscal year: FFO} across a filer's 10-K history, newest filing winning.
 
@@ -179,16 +188,20 @@ def walk_filings(filings: list, ctx: dict, total_re: re.Pattern,
     scorecard fact base resolves the same overlap.
     """
     get_text, min_year = ctx["get_text"], ctx["min_year"]
-    ni_by_year = {k[:4]: v for k, v in (ctx.get("net_income") or {}).items()
-                  if v is not None and not str(k).startswith("Q")}
+    if anchor_series is not None:
+        anchor_by_year = {str(k)[:4]: v for k, v in anchor_series.items()
+                          if v is not None and not str(k).startswith("Q")}
+    else:
+        anchor_by_year = {k[:4]: v for k, v in (ctx.get("net_income") or {}).items()
+                          if v is not None and not str(k).startswith("Q")}
     out: dict[str, float] = {}
     for f in filings:
         fy = f.get("fiscal_year")
         if not fy or int(fy) < min_year:
             break
         try:
-            cols = extract(get_text(f), total_re, ni_by_year, int(fy),
-                           ncols=ncols, tolerance=tolerance)
+            cols = extract(get_text(f), total_re, anchor_by_year, int(fy),
+                           ncols=ncols, tolerance=tolerance, anchor_re=anchor_re)
         except Exception:            # noqa: BLE001 - a bad parse is a gap
             continue
         for i, v in cols.items():
@@ -304,3 +317,72 @@ def quarterly(financials: dict, quarter_end_dates: dict,
         financials.setdefault("ffo_per_share", {}).update(
             {qk: v / shares[qk] for qk, v in out.items() if shares.get(qk)})
 
+
+
+def publish_affo(financials: dict, affo_by_year: dict) -> None:
+    """The reported AFFO series, and per-share off it. Nothing is derived."""
+    if not affo_by_year:
+        return
+    key_of = {d[:4]: d for d in financials.get("net_income", {})
+              if not str(d).startswith("Q")}
+    affo = {key_of.get(y, y): v for y, v in affo_by_year.items()}
+    financials["affo"] = affo
+
+    shares = {str(k)[:4]: v for k, v in
+              ((financials.get("shares_diluted_wtd")
+                or financials.get("shares_outstanding_end")) or {}).items()
+              if v and not str(k).startswith("Q")}
+    if shares:
+        financials["affo_per_share"] = {
+            key_of.get(y, y): v / shares[y]
+            for y, v in affo_by_year.items() if shares.get(y)}
+
+
+def quarterly_affo(financials: dict, quarter_end_dates: dict,
+                   quarter_filing_links: dict, ctx: dict,
+                   total_re: re.Pattern, ffo_total_re: re.Pattern,
+                   tolerance: float = 0.25) -> None:
+    """
+    The quarter's reported AFFO, anchored on the quarter's reported FFO.
+
+    Same shape as `quarterly`, but the check compares the FFO line the AFFO
+    reconciliation starts from against the FFO already verified for that
+    quarter, rather than against net income.
+    """
+    get_text_url = ctx.get("get_text_url")
+    ffo_q = {k: v for k, v in (financials.get("ffo") or {}).items()
+             if str(k).startswith("Q") and v is not None}
+    if not get_text_url or not ffo_q:
+        return
+
+    out: dict[str, float] = {}
+    for qk in quarter_end_dates:
+        url = quarter_filing_links.get(qk)
+        expected = ffo_q.get(qk)
+        if not url or not expected:
+            continue
+        try:
+            flat = normalise(get_text_url(url))
+        except Exception:            # noqa: BLE001 - a fetch failure is a gap
+            continue
+        for m in total_re.finditer(flat):
+            vals = values_after(flat[m.end():], 1)
+            scale = scale_before(flat, m.start())
+            if not vals or scale is None:
+                continue
+            head = flat[max(0, m.start() - 2600):m.start()]
+            if any((row := values_after(head[a.end():], 1))
+                   and abs(row[0] * scale - expected) <= abs(expected) * tolerance
+                   for a in ffo_total_re.finditer(head)):
+                out[qk] = vals[0] * scale
+                break
+
+    if not out:
+        return
+    financials.setdefault("affo", {}).update(out)
+    shares = {k: v for k, v in ((financials.get("shares_diluted_wtd")
+                                 or financials.get("shares_outstanding_end")) or {}).items()
+              if str(k).startswith("Q") and v}
+    if shares:
+        financials.setdefault("affo_per_share", {}).update(
+            {qk: v / shares[qk] for qk, v in out.items() if shares.get(qk)})

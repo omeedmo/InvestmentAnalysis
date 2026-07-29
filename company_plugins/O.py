@@ -21,20 +21,37 @@ import re
 from . import _reit_ffo
 
 TOTAL = re.compile(
-    r"(?<!Normalized )(?<!Adjusted )(?<!Core )(?<!Diluted )"
+    r"(?<!Normalized )(?<!Adjusted )(?<!Core )(?<!Diluted )(?<![A-Za-z])"
     r"FFO available to common stockholders\s*\$?\s*(?=\(?[\d,]{5,})", re.I)
 
 
+# Realty Income also publishes AFFO, on the same wording one line down. The
+# (?<![A-Za-z]) guard on TOTAL above is what keeps the FFO pattern from firing
+# inside this one; without it "AFFO available to common stockholders" matches
+# both, and only document order kept FFO on the right number.
+AFFO_TOTAL = re.compile(
+    r"(?<!Normalized )(?<!Core )"
+    r"AFFO available to common stockholders\s*\$?\s*(?=\(?[\d,]{5,})", re.I)
+
+
 def apply_annual_filings(filings: list, financials: dict, ctx: dict) -> None:
-    financials["_reported_ffo"] = _reit_ffo.walk_filings(
+    ffo = _reit_ffo.walk_filings(
         filings, {**ctx, "net_income": financials.get("net_income")}, TOTAL)
+    financials["_reported_ffo"] = ffo
+    # AFFO is checked against the FFO the reconciliation starts from, which is
+    # a tighter anchor than net income: the two should agree to the dollar.
+    financials["_reported_affo"] = _reit_ffo.walk_filings(
+        filings, ctx, AFFO_TOTAL, anchor_re=TOTAL, anchor_series=ffo)
 
 
 def postprocess(financials: dict) -> None:
     _reit_ffo.publish(financials, financials.pop("_reported_ffo", {}))
+    _reit_ffo.publish_affo(financials, financials.pop("_reported_affo", {}))
 
 
 def apply_quarterly(financials: dict, quarter_end_dates: dict,
                     quarter_filing_links: dict, ctx: dict) -> None:
     _reit_ffo.quarterly(financials, quarter_end_dates, quarter_filing_links,
                         ctx, TOTAL)
+    _reit_ffo.quarterly_affo(financials, quarter_end_dates,
+                             quarter_filing_links, ctx, AFFO_TOTAL, TOTAL)

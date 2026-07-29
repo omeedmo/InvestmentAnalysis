@@ -30,6 +30,15 @@ TOTAL = re.compile(
     r"\s*\$?\s*(?=\(?[\d,]{3,})", re.I)
 
 
+# Equinix publishes AFFO alongside FFO. Its FFO pattern already carries the
+# (?<![A-Za-z]) guard, so the bare "FFO" form cannot fire inside "AFFO"; this
+# pattern is the deliberate match for that line.
+AFFO_TOTAL = re.compile(
+    r"(?<!Core )(?<!Normalized )"
+    r"AFFO(?: attributable to common (?:stock|share)holders)?"
+    r"\s*\$?\s*(?=\(?[\d,]{3,})", re.I)
+
+
 def apply_annual_filings(filings: list, financials: dict, ctx: dict) -> None:
     financials["_reported_ffo"] = _reit_ffo.walk_filings(
         filings, {**ctx, "net_income": financials.get("net_income")}, TOTAL,
@@ -39,13 +48,19 @@ def apply_annual_filings(filings: list, financials: dict, ctx: dict) -> None:
         from_year=2015,
         # The FY2018-FY2021 tables print three fiscal years at once.
         ncols=3)
+    financials["_reported_affo"] = _reit_ffo.walk_filings(
+        filings, ctx, AFFO_TOTAL, anchor_re=TOTAL,
+        anchor_series=financials["_reported_ffo"], from_year=2015, ncols=3)
 
 
 def postprocess(financials: dict) -> None:
     _reit_ffo.publish(financials, financials.pop("_reported_ffo", {}))
+    _reit_ffo.publish_affo(financials, financials.pop("_reported_affo", {}))
 
 
 def apply_quarterly(financials: dict, quarter_end_dates: dict,
                     quarter_filing_links: dict, ctx: dict) -> None:
     _reit_ffo.quarterly(financials, quarter_end_dates, quarter_filing_links,
                         ctx, TOTAL)
+    _reit_ffo.quarterly_affo(financials, quarter_end_dates,
+                             quarter_filing_links, ctx, AFFO_TOTAL, TOTAL)
