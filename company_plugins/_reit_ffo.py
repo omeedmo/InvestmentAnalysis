@@ -231,22 +231,14 @@ def publish(financials: dict, ffo_by_year: dict, label_key: str = "ffo") -> None
             key_of.get(y, y): ffo_y[y] / shares_y[y]
             for y in ffo_y if shares_y.get(y)}
 
-    # AFFO and the payout ratio were derived from the proxy inside
-    # build_financials, before this hook ran. Rebuild them on the reported
-    # figure rather than leave them standing on the number it replaced.
-    slr_y = by_year(financials.get("straight_line_rent"))
-    rcx_y = by_year(financials.get("recurring_capex"))
-    if slr_y or rcx_y:
-        affo_y = {y: v - abs(slr_y.get(y, 0.0)) - abs(rcx_y.get(y, 0.0))
-                  for y, v in ffo_y.items()}
-        financials["affo"] = {key_of.get(y, y): v for y, v in affo_y.items()}
-        if shares_y:
-            financials["affo_per_share"] = {
-                key_of.get(y, y): affo_y[y] / shares_y[y]
-                for y in affo_y if shares_y.get(y)}
-    else:
-        for k in ("affo", "affo_per_share"):
-            financials.pop(k, None)
+    # AFFO is NOT computed. FFO less straight-line rent less recurring capex is
+    # a proxy in exactly the way the deleted app-level derivations were, and
+    # rebuilding it here on top of a reported FFO would only have moved the
+    # derivation into the plugin. Several of these filers do publish an AFFO of
+    # their own, with their own adjustments; until one is read from the filing
+    # and reconciled the row stays empty.
+    for k in ("affo", "affo_per_share"):
+        financials.pop(k, None)
 
     div_y = by_year(financials.get("dividends_paid"))
     financials["ffo_payout_ratio"] = {
@@ -312,20 +304,3 @@ def quarterly(financials: dict, quarter_end_dates: dict,
         financials.setdefault("ffo_per_share", {}).update(
             {qk: v / shares[qk] for qk, v in out.items() if shares.get(qk)})
 
-    # AFFO only where the ANNUAL row exists. Straight-line rent and recurring
-    # capex are reported by some of these filers and not others, and a quarter
-    # cell sitting alone under an otherwise empty row reads as data rather than
-    # as the artefact of one series being available quarterly and not annually.
-    annual_affo = any(not str(k).startswith("Q")
-                      for k in (financials.get("affo") or {}))
-    slr = {k: v for k, v in (financials.get("straight_line_rent") or {}).items()
-           if str(k).startswith("Q")}
-    rcx = {k: v for k, v in (financials.get("recurring_capex") or {}).items()
-           if str(k).startswith("Q")}
-    if annual_affo and (slr or rcx):
-        affo = {qk: v - abs(slr.get(qk) or 0.0) - abs(rcx.get(qk) or 0.0)
-                for qk, v in out.items()}
-        financials.setdefault("affo", {}).update(affo)
-        if shares:
-            financials.setdefault("affo_per_share", {}).update(
-                {qk: v / shares[qk] for qk, v in affo.items() if shares.get(qk)})
