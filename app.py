@@ -27,6 +27,7 @@ from flask import Flask, jsonify, render_template, request
 import company_templates
 import scorecard
 import screener
+import statement_store
 
 app = Flask(__name__)
 
@@ -2597,6 +2598,47 @@ def _discover_quarter_end_dates(facts: dict, tags: list[str], last_dt: datetime)
             if found:
                 break
     return sorted(found)[:3]
+
+
+def _cover_page_shares(cik: str, accession: str) -> Optional[float]:
+    """
+    Shares outstanding from a filing's cover page, or None.
+
+    `statement_store.filing_statements` keeps only reports the filer files
+    under the "Statements" menu category, so the cover page (always R1) is
+    excluded — correctly, since it is not a financial statement. It is however
+    where dei:EntityCommonStockSharesOutstanding is printed, and it is there
+    from the moment the document is filed rather than whenever the XBRL is
+    ingested downstream.
+
+    Two details this has to get right. The count is dated the COVER date, not
+    the period end, so it lands in whichever column carries a value rather
+    than a fixed one. And the concept can appear several times on one cover:
+    once per registrant for a joint filer, and once per class for a filer with
+    more than one. Only an UNAMBIGUOUS cover is used — exactly one distinct
+    value — because picking among them cannot be done from this page alone.
+
+    Taking the first was tried and is wrong. Brandywine files jointly with its
+    operating partnership and prints two blocks, but only the trust's carries a
+    figure, so first-wins looked correct. Berkshire prints two that both carry
+    figures, 505,697 Class A and 1,398,308,677 Class B, and first-wins returns
+    the Class A count for a page showing the B shares — off by a factor of
+    2,700. Nothing on the cover says which class the app's ticker refers to,
+    so an ambiguous cover yields nothing and the question is left to a company
+    plugin or to companyfacts once it catches up.
+    """
+    try:
+        base = (f"https://www.sec.gov/Archives/edgar/data/{str(cik).lstrip('0')}"
+                f"/{accession.replace('-', '')}")
+        rep = statement_store.parse_report(
+            statement_store._get(f"{base}/R1.htm"))
+        found: set = set()
+        for row in rep.get("rows", []):
+            if (row.get("element") or "").endswith(":EntityCommonStockSharesOutstanding"):
+                found.update(float(v) for v in (row.get("by_col") or []) if v)
+        return found.pop() if len(found) == 1 else None
+    except Exception:                # noqa: BLE001 - an unreadable cover is a gap
+        return None
 
 
 def extract_post_annual_quarters(
@@ -5228,6 +5270,26 @@ def analyze():
                                 _wtd_best[_qk] = (_period_days, _val)
                 for _qk, (_, _val) in _wtd_best.items():
                     _so_series[_qk] = _val
+
+        # Last resort: the 10-Q's own cover page. Every fallback above reads
+        # companyfacts, which trails the filing by days, so the quarter we just
+        # gained a column for is exactly the one they cannot answer. The number
+        # is on page one of the document itself the moment it is filed —
+        # Brandywine's Q2 FY2026 cover carries 174,576,897 shares as of its
+        # July 22 cover date while companyfacts still has nothing for that
+        # accession. Only runs for quarters still blank, so a settled quarter
+        # keeps whatever the passes above resolved and costs no extra fetch.
+        _still_missing = [qk for qk in quarter_end_dates if not _so_series.get(qk)]
+        if _still_missing:
+            _acc_by_date = {f["report_date"]: f.get("accession")
+                            for f in all_10q_filings if f.get("report_date")}
+            for _qk in _still_missing:
+                _acc = _acc_by_date.get(quarter_end_dates.get(_qk))
+                if not _acc:
+                    continue
+                _v = _cover_page_shares(cik, _acc)
+                if _v:
+                    _so_series[_qk] = _v
 
         # ── Company plugin quarterly overrides ──────────────────────────────
         # Company plugins may need to correct quarterly data too (e.g. BRK's
