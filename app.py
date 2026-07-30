@@ -3882,6 +3882,9 @@ def screen_route():
     _max_b      = _f("max_mktcap_b")
     min_mktcap  = _min_b * 1e9 if _min_b is not None else None
     max_mktcap  = _max_b * 1e9 if _max_b is not None else None
+    # Dividend yield arrives as a percent, e.g. 3 for 3%, like min_cap_rate.
+    _dy           = _f("min_dividend_yield")
+    min_div_yield = _dy / 100.0 if _dy is not None else None
 
     refresh = request.args.get("refresh", "").strip() in ("1", "true", "yes")
 
@@ -3917,6 +3920,7 @@ def screen_route():
 
         result = screener.screen(universe, tickers, max_pfcf, max_ev_ebit, fy,
                                  min_mktcap=min_mktcap, max_mktcap=max_mktcap,
+                                 min_div_yield=min_div_yield,
                                  refresh=refresh,
                                  remove_insurance=remove_insurance,
                                  remove_banks=remove_banks,
@@ -3956,6 +3960,9 @@ def _screen_common_params():
     _max_b = _f("max_mktcap_b")
     min_mktcap = _min_b * 1e9 if _min_b is not None else None
     max_mktcap = _max_b * 1e9 if _max_b is not None else None
+    # Dividend yield arrives as a percent, e.g. 3 for 3%, like min_cap_rate.
+    _dy = _f("min_dividend_yield")
+    min_div_yield = _dy / 100.0 if _dy is not None else None
     refresh = request.args.get("refresh", "").strip() in ("1", "true", "yes")
 
     if universe == "custom":
@@ -3963,7 +3970,8 @@ def _screen_common_params():
         tickers = [t.strip().upper() for t in re.split(r"[,\s]+", raw) if t.strip()]
     else:
         tickers = screener.get_universe(universe)
-    return universe, fy, _f, min_mktcap, max_mktcap, refresh, tickers
+    return (universe, fy, _f, min_mktcap, max_mktcap, min_div_yield,
+            refresh, tickers)
 
 
 @app.route("/api/screen_reits")
@@ -3977,7 +3985,8 @@ def screen_reits_route():
     REIT-only screen) and max_pfcf/max_ev_ebit, replaced by min_cap_rate and
     max_p_ffo.
     """
-    universe, fy, _f, min_mktcap, max_mktcap, refresh, tickers = _screen_common_params()
+    (universe, fy, _f, min_mktcap, max_mktcap, min_div_yield,
+     refresh, tickers) = _screen_common_params()
     if universe == "custom" and not tickers:
         return jsonify({"error": "Provide tickers for a custom screen"}), 400
     if universe != "custom" and not tickers:
@@ -3991,7 +4000,8 @@ def screen_reits_route():
     try:
         result = screener.screen_reits(universe, tickers, min_cap_rate, max_p_ffo,
                                        latest_fy=fy, min_mktcap=min_mktcap,
-                                       max_mktcap=max_mktcap, refresh=refresh)
+                                       max_mktcap=max_mktcap,
+                                       min_div_yield=min_div_yield, refresh=refresh)
     except Exception as e:
         return jsonify({"error": f"REIT screen failed: {e}"}), 500
 
@@ -4002,7 +4012,8 @@ def screen_reits_route():
 @app.route("/api/screen_banks")
 def screen_banks_route():
     """Bank-specific screener, ranked by P/B = Market Cap / Book Value of Equity."""
-    universe, fy, _f, min_mktcap, max_mktcap, refresh, tickers = _screen_common_params()
+    (universe, fy, _f, min_mktcap, max_mktcap, min_div_yield,
+     refresh, tickers) = _screen_common_params()
     if universe == "custom" and not tickers:
         return jsonify({"error": "Provide tickers for a custom screen"}), 400
     if universe != "custom" and not tickers:
@@ -4013,7 +4024,8 @@ def screen_banks_route():
     try:
         result = screener.screen_banks(universe, tickers, max_pb,
                                        latest_fy=fy, min_mktcap=min_mktcap,
-                                       max_mktcap=max_mktcap, refresh=refresh)
+                                       max_mktcap=max_mktcap,
+                                       min_div_yield=min_div_yield, refresh=refresh)
     except Exception as e:
         return jsonify({"error": f"Bank screen failed: {e}"}), 500
 
@@ -4024,7 +4036,8 @@ def screen_banks_route():
 @app.route("/api/screen_insurance")
 def screen_insurance_route():
     """Insurance-specific screener, ranked by P/Float = Market Cap / Float."""
-    universe, fy, _f, min_mktcap, max_mktcap, refresh, tickers = _screen_common_params()
+    (universe, fy, _f, min_mktcap, max_mktcap, min_div_yield,
+     refresh, tickers) = _screen_common_params()
     if universe == "custom" and not tickers:
         return jsonify({"error": "Provide tickers for a custom screen"}), 400
     if universe != "custom" and not tickers:
@@ -4035,7 +4048,8 @@ def screen_insurance_route():
     try:
         result = screener.screen_insurance(universe, tickers, max_pfloat,
                                            latest_fy=fy, min_mktcap=min_mktcap,
-                                           max_mktcap=max_mktcap, refresh=refresh)
+                                           max_mktcap=max_mktcap,
+                                           min_div_yield=min_div_yield, refresh=refresh)
     except Exception as e:
         return jsonify({"error": f"Insurance screen failed: {e}"}), 500
 

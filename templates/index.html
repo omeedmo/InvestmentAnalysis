@@ -1828,6 +1828,10 @@ async function openScreener(){
           <input id="scr-maxcap" type="number" placeholder="e.g. 10" min="0" step="0.1" style="width:120px">
         </div>
         <div class="scr-field">
+          <label title="Last full-year dividend per share, as tagged in the filing, over today's price. Applies to every sector. Setting it excludes any company without a full-year figure &mdash; non-payers, but also payers that only tag the concept quarterly.">Min Div Yield (%)</label>
+          <input id="scr-divyield" type="number" placeholder="e.g. 3" min="0" step="0.1" style="width:120px">
+        </div>
+        <div class="scr-field">
           <label>&nbsp;</label>
           <button class="btn" id="scr-go" onclick="runScreen()">Screen ▸</button>
         </div>
@@ -1857,6 +1861,7 @@ async function runScreen(){
   const universe = document.getElementById('scr-universe').value;
   const mincap= document.getElementById('scr-mincap').value.trim();
   const maxcap= document.getElementById('scr-maxcap').value.trim();
+  const mindiv= document.getElementById('scr-divyield').value.trim();
   const custom= (document.getElementById('scr-tickers')||{}).value || '';
   const go=document.getElementById('scr-go'); go.disabled=true; go.textContent='Screening…';
   const slowNote = universe==='all' ? ' First total-market run pulls thousands of prices — this can take a few minutes.'
@@ -1868,6 +1873,8 @@ async function runScreen(){
     const p=new URLSearchParams({universe});
     if(mincap)p.set('min_mktcap_b', mincap);
     if(maxcap)p.set('max_mktcap_b', maxcap);
+    // Applies to every sector, so it rides outside the per-mode branch below.
+    if(mindiv)p.set('min_dividend_yield', mindiv);
     if(document.getElementById('scr-refresh').checked) p.set('refresh','1');
     if(universe==='custom') p.set('tickers', custom);
     // Abort after 5 min so a dropped connection surfaces as a clear message.
@@ -1950,7 +1957,7 @@ function renderScreenTable(stats){
     : st.not_insurance ? ` · ${st.not_insurance} non-insurers excluded`
     : '';
   let h = `<div class="scr-hint" style="margin-bottom:8px">
-    <strong>${st.label||st.universe||''}</strong> · ${st.passed} passed of ${st.evaluated} companies valued${st.excluded_sectors?` · ${st.excluded_sectors} insurers/banks/REITs excluded`:''}${notExcludedNote}${st.excluded_20f?` · ${st.excluded_20f} 20-F filers excluded`:''} · FY${st.fiscal_year} · click a row to analyze</div>
+    <strong>${st.label||st.universe||''}</strong> · ${st.passed} passed of ${st.evaluated} companies valued${st.excluded_sectors?` · ${st.excluded_sectors} insurers/banks/REITs excluded`:''}${notExcludedNote}${st.excluded_20f?` · ${st.excluded_20f} 20-F filers excluded`:''}${st.dividend_payers!=null?` · ${st.dividend_payers} declare a dividend`:''} · FY${st.fiscal_year} · click a row to analyze</div>
   ${st.guru_note?`<div class="scr-hint" style="margin-bottom:8px;color:#b45309">⚠ ${st.guru_note}</div>`:''}
   ${mode==='reit'?`<div class="scr-hint" style="margin-bottom:8px;color:#b45309">&dagger; <strong>Cap Rate, P/FFO and NOI are derived, not as reported.</strong> NOI = Operating Income + D&amp;A + G&amp;A; FFO = Net Income + D&amp;A. No REIT reports either figure and neither is XBRL-tagged, so nothing here is checked against a filing — unlike every number on the analyze page. Treat this as a shortlist, then open a ticker: SPG, O, FRT, AVB and EQIX show FFO as the filer prints it (SPG also NOI), and every other REIT leaves those rows blank rather than derive them.</div>`:''}
   <table class="scr-table">
@@ -1973,6 +1980,7 @@ function renderScreenTable(stats){
       <th onclick="sortScreen('ev_ebit')">EV/EBIT${arrow('ev_ebit')}</th>
       <th onclick="sortScreen('fcf_yield')">FCF Yield${arrow('fcf_yield')}</th>
       `}
+      <th onclick="sortScreen('dividend_yield')" title="Last full-year dividend per share, as tagged in the filing, &divide; today's price. Trailing, not forward. Blank means no full-year figure was tagged &mdash; usually a non-payer, but also payers like Citigroup that only ever tag the concept quarterly.">Div Yield${arrow('dividend_yield')}</th>
       <th onclick="sortScreen('market_cap')">Mkt Cap${arrow('market_cap')}</th>
       <th onclick="sortScreen('price')">Price${arrow('price')}</th>
     </tr></thead><tbody>`;
@@ -1996,6 +2004,7 @@ function renderScreenTable(stats){
       <td>${r.ev_ebit!=null?r.ev_ebit.toFixed(1)+'×':'—'}</td>
       <td class="${r.fcf_yield>0?'scr-good':''}">${r.fcf_yield!=null?F.pct(r.fcf_yield):'—'}</td>
       `}
+      <td>${r.dividend_yield!=null?F.pct(r.dividend_yield):'—'}</td>
       <td>${F.$M(r.market_cap)}</td>
       <td>$${r.price.toFixed(2)}</td>
     </tr>`;

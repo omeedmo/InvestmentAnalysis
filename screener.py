@@ -782,11 +782,64 @@ _DEBT_COMPONENT_TAGS = [
     "LoansPayable",
 ]
 
+# Dividends per share -- the same two tags the analyze view uses
+# (app.METRIC_TAGS["dividends_per_share"]), so a yield read here and a yield
+# read after opening the ticker come from one source and agree.
+#
+# Declared first, cash-paid second. Declared is the rate the board set for the
+# year; cash-paid shifts a quarter whenever a December declaration settles in
+# January, which understates a payer in the year its timing moved. Monthly
+# payers aggregate correctly either way -- Realty Income's CY2025 frame is
+# $3.217, all twelve declarations, not one of them.
+#
+# Unlike the REIT proxies, this is as-reported: the filer tagged the number and
+# the only arithmetic is dividing by a price.
+#
+# ONLY full-year durations, which is a real coverage limit rather than an
+# oversight. Citigroup tags this concept every quarter and never for the year
+# (Q4 2025 = $0.60, no CY2025 fact at all), so the calendar-aligned frame skips
+# it and Citi reads blank despite plainly paying. Summing the four quarterly
+# frames looks like the obvious fix and was measured instead of assumed: across
+# the filers that publish BOTH, the sum disagrees with the filed annual for
+# 12 of 148 in CY2025 and 20 of 170 in CY2024 -- not by rounding but by 300% to
+# 3000%, filers tagging a quarterly rate in an annual slot and the reverse. The
+# arithmetic is self-consistent in every one of those cases, which is exactly
+# what makes it dangerous; it is the same trap that sank generic FFO discovery.
+# For the ~54 names a sum would recover there is by construction no annual value
+# to check it against, so it would ship a ~1-in-10 error rate into a filter.
+# Left blank instead.
+_DPS_TAGS = [
+    "CommonStockDividendsPerShareDeclared",
+    "CommonStockDividendsPerShareCashPaid",
+]
+
+
+def _div_yield(dps, price):
+    """
+    Trailing dividend yield, or None when no full-year DPS was tagged.
+
+    None rather than 0.0, deliberately. A zero would render as a measured rate,
+    and "declared nothing" is a different claim from "tagged nothing this way".
+    Both land here: Berkshire, which pays nothing, and Citigroup, which pays but
+    only ever tags the concept quarterly (see _DPS_TAGS). A blank covers both
+    without asserting a rate for either -- but it does mean a min-yield cutoff
+    silently drops the second kind, so the count of payers is published in
+    stats["dividend_payers"] to keep that visible.
+
+    Trailing, not forward: the numerator is the last fiscal year the filer
+    closed and the denominator is today's price, so a payer that has since cut
+    or raised still shows the old rate against the new price until it files.
+    """
+    if not dps or dps <= 0 or not price or price <= 0:
+        return None
+    return round(dps / price, 4)
+
 
 def screen(universe: str, tickers: list[str],
            max_pfcf, max_ev_ebit,
            latest_fy: int = 2025,
-           min_mktcap=None, max_mktcap=None, refresh: bool = False,
+           min_mktcap=None, max_mktcap=None, min_div_yield=None,
+           refresh: bool = False,
            remove_insurance: bool = True, remove_banks: bool = True,
            remove_reits: bool = True, remove_20f: bool = True) -> dict:
     """
@@ -811,6 +864,7 @@ def screen(universe: str, tickers: list[str],
     ltd  = _merge_frames(_DEBT_TOTAL_TAGS, "USD", instants)
     std  = _merge_frames(["LongTermDebtCurrent", "DebtCurrent", "ShortTermBorrowings"], "USD", instants)
     shares = _merge_frames(["EntityCommonStockSharesOutstanding"], "shares", instants)
+    dps  = _merge_frames(_DPS_TAGS, "USD-per-shares", annual)
 
     cik_map = ticker_cik_map()
 
@@ -923,6 +977,7 @@ def screen(universe: str, tickers: list[str],
             "p_fcf":    p_fcf,
             "ev_ebit":  ev_ebit,
             "fcf_yield": fcf_yld,
+            "dividend_yield": _div_yield(dps.get(c), price),
             "market_cap": round(mktcap),
             "price":    round(price, 2),
         })
@@ -939,6 +994,10 @@ def screen(universe: str, tickers: list[str],
                 return False
         if max_ev_ebit is not None:
             if r["ev_ebit"] is None or r["ev_ebit"] > max_ev_ebit:
+                return False
+        # A non-payer has no yield to compare, so asking for one excludes it.
+        if min_div_yield is not None:
+            if r["dividend_yield"] is None or r["dividend_yield"] < min_div_yield:
                 return False
         # With no valuation cutoffs, still require at least one valuation metric
         if max_pfcf is None and max_ev_ebit is None:
@@ -964,6 +1023,11 @@ def screen(universe: str, tickers: list[str],
             "excluded_sectors": removed_sectors,
             "excluded_20f": removed_20f,
             "cf_recovered": cf_recovered,
+            # How many of the evaluated names declare a dividend at all,
+            # so a min-yield cutoff is read against the payers it can
+            # actually match rather than the whole evaluated set.
+            "dividend_payers": sum(1 for r in results
+                                   if r["dividend_yield"] is not None),
             "fiscal_year": latest_fy,
         },
     }
@@ -972,7 +1036,8 @@ def screen(universe: str, tickers: list[str],
 def screen_reits(universe: str, tickers: list[str],
                  min_cap_rate, max_p_ffo=None,
                  latest_fy: int = 2025,
-                 min_mktcap=None, max_mktcap=None, refresh: bool = False) -> dict:
+                 min_mktcap=None, max_mktcap=None, min_div_yield=None,
+                 refresh: bool = False) -> dict:
     """
     REIT-specific screen, ranked by Implied Cap Rate = NOI / Enterprise Value
     (higher = cheaper relative to the property portfolio's operating income —
@@ -1017,6 +1082,7 @@ def screen_reits(universe: str, tickers: list[str],
     debt_parts = {name: _merge_frames([name], "USD", instants)
                   for name in _DEBT_COMPONENT_TAGS}
     shares = _merge_frames(["EntityCommonStockSharesOutstanding"], "shares", instants)
+    dps  = _merge_frames(_DPS_TAGS, "USD-per-shares", annual)
 
     cik_map = ticker_cik_map()
     reit_set = reit_ciks()
@@ -1120,6 +1186,7 @@ def screen_reits(universe: str, tickers: list[str],
             "noi":      round(noi),
             "p_ffo":    p_ffo,
             "ffo":      round(ffo) if ffo is not None else None,
+            "dividend_yield": _div_yield(dps.get(c), price),
             "market_cap": round(mktcap),
             "enterprise_value": round(ev),
             "price":    round(price, 2),
@@ -1136,6 +1203,9 @@ def screen_reits(universe: str, tickers: list[str],
                 return False
         if max_p_ffo is not None:
             if r["p_ffo"] is None or r["p_ffo"] > max_p_ffo:
+                return False
+        if min_div_yield is not None:
+            if r["dividend_yield"] is None or r["dividend_yield"] < min_div_yield:
                 return False
         return r["cap_rate"] is not None
 
@@ -1156,6 +1226,11 @@ def screen_reits(universe: str, tickers: list[str],
             "not_reit":   removed_not_reit,
             "no_debt":    no_debt,
             "cf_recovered": cf_recovered,
+            # How many of the evaluated names declare a dividend at all,
+            # so a min-yield cutoff is read against the payers it can
+            # actually match rather than the whole evaluated set.
+            "dividend_payers": sum(1 for r in results
+                                   if r["dividend_yield"] is not None),
             "fiscal_year": latest_fy,
         },
     }
@@ -1164,7 +1239,8 @@ def screen_reits(universe: str, tickers: list[str],
 def screen_banks(universe: str, tickers: list[str],
                  max_pb,
                  latest_fy: int = 2025,
-                 min_mktcap=None, max_mktcap=None, refresh: bool = False) -> dict:
+                 min_mktcap=None, max_mktcap=None, min_div_yield=None,
+                 refresh: bool = False) -> dict:
     """
     Bank-specific screen, ranked by P/B = Market Cap / Book Value of Equity
     (lower = cheaper, like P/FCF). Banks don't have a P/FCF or EV/EBIT in any
@@ -1183,6 +1259,7 @@ def screen_banks(universe: str, tickers: list[str],
                             "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"],
                            "USD", instants)
     shares = _merge_frames(["EntityCommonStockSharesOutstanding"], "shares", instants)
+    dps    = _merge_frames(_DPS_TAGS, "USD-per-shares", annual)
 
     cik_map = ticker_cik_map()
     bank_set = bank_ciks()
@@ -1251,6 +1328,7 @@ def screen_banks(universe: str, tickers: list[str],
             "ticker":     tk,
             "p_b":        p_b,
             "book_value": round(eq),
+            "dividend_yield": _div_yield(dps.get(c), price),
             "market_cap": round(mktcap),
             "price":      round(price, 2),
         })
@@ -1263,6 +1341,9 @@ def screen_banks(universe: str, tickers: list[str],
             return False
         if max_pb is not None:
             if r["p_b"] is None or r["p_b"] > max_pb:
+                return False
+        if min_div_yield is not None:
+            if r["dividend_yield"] is None or r["dividend_yield"] < min_div_yield:
                 return False
         return r["p_b"] is not None
 
@@ -1280,6 +1361,11 @@ def screen_banks(universe: str, tickers: list[str],
             "missing":    no_price,
             "not_bank":   removed_not_bank,
             "cf_recovered": cf_recovered,
+            # How many of the evaluated names declare a dividend at all,
+            # so a min-yield cutoff is read against the payers it can
+            # actually match rather than the whole evaluated set.
+            "dividend_payers": sum(1 for r in results
+                                   if r["dividend_yield"] is not None),
             "fiscal_year": latest_fy,
         },
     }
@@ -1288,7 +1374,8 @@ def screen_banks(universe: str, tickers: list[str],
 def screen_insurance(universe: str, tickers: list[str],
                      max_pfloat,
                      latest_fy: int = 2025,
-                     min_mktcap=None, max_mktcap=None, refresh: bool = False) -> dict:
+                     min_mktcap=None, max_mktcap=None, min_div_yield=None,
+                     refresh: bool = False) -> dict:
     """
     Insurance-specific screen, ranked by P/Float = Market Cap / Float (lower
     = cheaper, like P/B). Float — premiums collected but not yet paid out as
@@ -1309,6 +1396,7 @@ def screen_insurance(universe: str, tickers: list[str],
     claims   = _merge_frames(["LiabilityForClaimsAndClaimsAdjustmentExpense"], "USD", instants)
     unearned = _merge_frames(["UnearnedPremiumsLiability"], "USD", instants)
     shares   = _merge_frames(["EntityCommonStockSharesOutstanding"], "shares", instants)
+    dps      = _merge_frames(_DPS_TAGS, "USD-per-shares", annual)
 
     cik_map = ticker_cik_map()
     ins_set = insurance_ciks()
@@ -1380,6 +1468,7 @@ def screen_insurance(universe: str, tickers: list[str],
             "ticker":     tk,
             "p_float":    p_float,
             "float":      round(flt),
+            "dividend_yield": _div_yield(dps.get(c), price),
             "market_cap": round(mktcap),
             "price":      round(price, 2),
         })
@@ -1392,6 +1481,9 @@ def screen_insurance(universe: str, tickers: list[str],
             return False
         if max_pfloat is not None:
             if r["p_float"] is None or r["p_float"] > max_pfloat:
+                return False
+        if min_div_yield is not None:
+            if r["dividend_yield"] is None or r["dividend_yield"] < min_div_yield:
                 return False
         return r["p_float"] is not None
 
@@ -1409,6 +1501,11 @@ def screen_insurance(universe: str, tickers: list[str],
             "missing":    no_price,
             "not_insurance": removed_not_ins,
             "cf_recovered": cf_recovered,
+            # How many of the evaluated names declare a dividend at all,
+            # so a min-yield cutoff is read against the payers it can
+            # actually match rather than the whole evaluated set.
+            "dividend_payers": sum(1 for r in results
+                                   if r["dividend_yield"] is not None),
             "fiscal_year": latest_fy,
         },
     }
