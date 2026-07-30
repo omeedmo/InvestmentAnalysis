@@ -1,0 +1,23 @@
+{
+  "tier": "company",
+  "ticker": "BDN",
+  "cik": 790816,
+  "sector": "reit",
+  "note": "One override, for the dividend. Brandywine tagged its distributions with us-gaap:PaymentsOfDividends from 2008 through 2019 and then moved the same cash-flow line into its own extension namespace, bdn:PaymentOfOrdinaryDividendsCommonStockAndPreferredStock, where it has stayed since. The companyfacts API carries only dei, srt and us-gaap, so from FY2020 there was nothing for it to return and the row simply stopped -- populated 2011-2019, blank every year after, and blank for the quarters. Nothing was wrong with the reading; the concept had moved somewhere companyfacts cannot see. The filing's own rendered cash flow statement does carry extension elements, which is what this binding reads. Everything else about this filer resolves from the global tier and is deliberately left alone -- in particular total debt, which is NOT bound here because the clean total lives only in the debt note (not among the parsed statements) and the balance sheet's two us-gaap:UnsecuredDebt rows share one element with no dimension, so the fact base keeps the first and drops the second.",
+  "metrics": [
+    {
+      "metric": "dividends_paid",
+      "label": "Dividends Paid",
+      "section": "Cash flow",
+      "bind": [
+        {
+          "element": "bdn:PaymentOfOrdinaryDividendsCommonStockAndPreferredStock",
+          "statement": "Cash Flow",
+          "from": 2020,
+          "negate": true
+        }
+      ],
+      "note": "Scoped from FY2020 so it picks up exactly where the us-gaap concept stopped, rather than competing with it across the overlap. Negated because the two sources disagree on sign for the same cash outflow: companyfacts returns the magnitude positive, while a rendered cash flow statement prints it as the negative it is on the page (FY2025: -93,022 thousand). The automatic sign correction in the fact base cannot reconcile them here, since it compares against raw XBRL only for us-gaap elements and this is a company extension. Without the flip the row would change sign midway through the series at the 2019/2020 boundary, which is the same figure meaning two different things in one column."
+    }
+  ]
+}
