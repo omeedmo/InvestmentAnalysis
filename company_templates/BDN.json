@@ -1,0 +1,24 @@
+{
+  "ticker": "BDN",
+  "cik": 790816,
+  "sector_template": "reit",
+  "plugin": "BDN",
+  "generated_by": "session-authored from 10-K MD&A and Note 18 reconciliations, verified against XBRL net income",
+  "summary": "Office REIT concentrated in Philadelphia CBD, the Pennsylvania suburbs and Austin, with a development pipeline and a large book of unconsolidated joint ventures. Reported FFO has fallen by roughly two thirds since 2019 while NOI has held near $300M, so the gap between the two — interest expense and impairments — is where the story is. Files as a dual registrant with its operating partnership, and the FFO reconciliation is presented on the partnership basis.",
+  "metrics": [],
+  "annotations": {
+    "ffo": "The company's own reported Nareit figure, read from the 10-K MD&A reconciliation and closing on its printed \"Funds from operations\" subtotal — not the app's generic Net Income + D&A proxy, which is not published anywhere and cannot be checked. FFO is not XBRL-tagged by any REIT examined, so the MD&A table is the only source. Each filing is accepted only where its own net-income row agrees with the net income held from XBRL for that year, which verifies the right table, the right scale and the right column alignment at once; a year that fails is left blank rather than filled from the proxy. FY2025 reconciles exactly: -180,015 + 1,231 + 227 - 9,396 + 63,392 + 4,149 + 154,009 + 19,130 + 41,959 - 88 = 94,598. The Nareit subtotal only, not the line beneath it (funds from operations available to common share and unit holders, after amounts allocable to unvested restricted shareholders), since carrying different variants in different years would change what the row means partway down.",
+    "noi": "Brandywine's own \"Consolidated net operating income\", read from Note 18 (Segment Information), where it reconciles consolidated net loss back up through interest, depreciation, general and administrative expense and gains. The company defines it as total property revenue less property operating expenses, real estate taxes and third-party management expenses. Verified the same way as FFO, against XBRL net income, and cross-checked against the separate comparative table in MD&A, which prints the same figures rounded to millions ($299.2M for FY2025, $318.2M for FY2024). The series starts at FY2016 because earlier filings word the reconciliation differently; those years are blank rather than approximated."
+  },
+  "caveats": [
+    "AFFO is intentionally absent. Brandywine does not report one — no spelling of the term appears anywhere in the 10-K — and what it publishes instead is cash available for distribution, a different measure with different adjustments. Nothing is derived to fill the row.",
+    "FFO replaces the derived row rather than merging with it: a year the reconciliation could not verify stays blank instead of falling back to Net Income + D&A, which would change the row's meaning partway across the series.",
+    "The FFO table's opening line is the operating partnership's net loss attributable to common unitholders, about 0.3% away from the Trust's XBRL net income (FY2025: -180,015 against -179,478). That is the dual-registrant structure, not a discrepancy, and it sits well inside the verification tolerance.",
+    "Quarterly FFO is read from the 10-Q MD&A table. Quarterly NOI is not: the segment note's quarterly columns do not follow the same leading-column rule the annual path relies on, so those cells stay blank rather than being filled from a column whose period is unconfirmed.",
+    "Total debt is NOT bound here and is currently overstated for this filer. Brandywine tags us-gaap:LongTermDebt at the full 2,556,862 thousand for FY2025, which already ties to the three debt lines on the balance sheet, and separately tags LongTermDebtMaturitiesRepaymentsOfPrincipalInNextTwelveMonths at 178,014 thousand. The app's current_debt tag list contains the second concept, so the two are added and FY2025 reads 2,734,876 thousand. A binding cannot fix it: the clean total appears only in the debt note, which is not among the parsed statements, and the balance sheet's two separate us-gaap:UnsecuredDebt rows share one element with no dimension, so the fact base keeps the first and drops the 2,073,394 thousand line. The fix belongs in the shared tag list, not in a company override."
+  ],
+  "row_labels": {
+    "ffo": "Funds from operations",
+    "noi": "Consolidated net operating income"
+  }
+}
