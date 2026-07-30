@@ -2604,6 +2604,7 @@ def extract_post_annual_quarters(
     tags: list[str],
     last_annual_date: str,
     is_balance_sheet: bool = False,
+    quarter_dates: Optional[list] = None,
 ) -> dict[str, float]:
     """
     Extract up to 3 standalone quarterly values for 10-Q periods whose end date
@@ -2614,7 +2615,15 @@ def extract_post_annual_quarters(
     end-dates after the annual.
 
     Returns {"Q1": value, "Q2": value, "Q3": value}  (relative numbering).
-    The caller should also store the matching end-dates for display labels.
+
+    `quarter_dates` is the page's canonical end-date list, and passing it is
+    what keeps every metric in the same column. Without it each metric numbers
+    the dates IT happens to have, so a line first tagged in Q2 — or missing a
+    Q1 value — silently lands its Q2 figure under the Q1 heading. That is the
+    column-level form of splicing two periods into one row: the number is real,
+    the heading above it is wrong, and nothing in the output reveals it. With
+    the list supplied, a date maps to the column it actually belongs to and a
+    metric with no value for a quarter simply leaves that cell empty.
     """
     try:
         last_dt = datetime.strptime(last_annual_date, "%Y-%m-%d")
@@ -2669,14 +2678,17 @@ def extract_post_annual_quarters(
             break  # right unit type found; stop
 
     if is_balance_sheet:
+        if quarter_dates:
+            return {f"Q{i+1}": bs_by_end[d]
+                    for i, d in enumerate(quarter_dates) if d in bs_by_end}
         sorted_ends = sorted(bs_by_end)[:3]
         return {f"Q{i+1}": bs_by_end[e] for i, e in enumerate(sorted_ends)}
 
     if not flow_by_end:
         return {}
 
-    # Sort quarter-end dates; take first 3 unique quarter-end dates
-    sorted_ends = sorted(flow_by_end)[:3]
+    # The canonical list when the caller has one, else this metric's own dates.
+    sorted_ends = list(quarter_dates) if quarter_dates else sorted(flow_by_end)[:3]
 
     # Compute standalone values.
     # standalone[end] = value if a ~3-month period exists
@@ -2694,7 +2706,11 @@ def extract_post_annual_quarters(
 
     result: dict[str, float] = {}
     running_ytd = 0.0
-    prev_ytd_end = None
+    # Whether every quarter before this one contributed to running_ytd. A YTD
+    # figure can only be differenced into one quarter when the stretch behind it
+    # is fully known; across a gap it spans two quarters or more and splitting
+    # it would invent a number.
+    contiguous = True
 
     for i, end in enumerate(sorted_ends):
         label = f"Q{i+1}"
@@ -2708,10 +2724,18 @@ def extract_post_annual_quarters(
                 # First post-annual quarter: YTD == standalone
                 result[label] = ytd_v
                 running_ytd = ytd_v
-            else:
+            elif contiguous:
                 result[label] = ytd_v - running_ytd
                 running_ytd = ytd_v
-        # else: no data for this quarter
+            else:
+                # Left blank, but the YTD still re-anchors the running total so
+                # the NEXT quarter can be differenced normally.
+                running_ytd = ytd_v
+                contiguous = True
+        else:
+            # No figure for this quarter, so nothing downstream may difference
+            # against a total that now spans it.
+            contiguous = False
 
     return result
 
@@ -4475,22 +4499,32 @@ def apply_quarterly_scorecard_overlay(ticker: str, cik: str, submissions: dict,
     """
     The same bindings, read from 10-Qs, overlaid onto the quarter columns.
 
-    Only runs for tickers with an authored binding file — exactly like the
-    annual overlay, and for the same reason: without one there is nothing the
-    global tier alone would improve on, and the companyfacts quarterly path
-    already covers those filers well.
+    For a ticker with an authored binding file this overwrites the companyfacts
+    pass, which is the point: it supplies what companyfacts structurally cannot,
+    the dimensional lines. Berkshire reports property, plant and equipment only
+    inside its segment columns, so before this its quarterly PP&E was blank
+    however many tags were tried.
 
-    What this adds is what companyfacts structurally cannot give: dimensional
-    lines. Berkshire reports property, plant and equipment only inside its
-    segment columns, so before this its quarterly PP&E was blank however many
-    tags were tried.
+    Without a binding it still runs, but in FILL-ONLY mode: global-tier bindings
+    only, and a cell is written only where the companyfacts pass left a blank.
+    That case used to return immediately, on the reasoning that the global tier
+    had nothing to add for an unbound filer. True while companyfacts has the
+    quarter — and false in the days before it does. SEC lists a 10-Q the day it
+    is filed and takes several more to ingest its XBRL, so in that window the
+    filing is not a second opinion, it is the only source there is. Brandywine
+    filed Q2 FY2026 on 2026-07-28 with no fact under that accession two days
+    later, while the filing's own statements parsed cleanly and reconciled to
+    the cent against the quarter companyfacts did have.
+
+    Fill-only is what keeps the blast radius at the gap. An unbound filer's
+    settled quarters keep coming from companyfacts exactly as before; the only
+    cells this can touch are ones that were empty.
     """
     reserved = reserved or set()
     tk = ticker.upper().replace(".", "-")
     binding = scorecard._read_json(
         os.path.join(scorecard.BINDING_DIR, "companies", f"{tk}.json"))
-    if not binding:
-        return None
+    fill_only = not binding
 
     wanted = [d for d in quarter_end_dates.values() if d]
     if not wanted:
@@ -4502,7 +4536,7 @@ def apply_quarterly_scorecard_overlay(ticker: str, cik: str, submissions: dict,
         return None
 
     sc = scorecard.build_quarters(cik, q_filings, wanted,
-                                  sector=binding.get("sector"),
+                                  sector=(binding or {}).get("sector"),
                                   ticker=tk, facts=facts)
 
     date_to_qk = {d: qk for qk, d in quarter_end_dates.items() if d}
@@ -4517,6 +4551,8 @@ def apply_quarterly_scorecard_overlay(ticker: str, cik: str, submissions: dict,
             qk = date_to_qk.get(qend)
             if not qk or cell.get("value") is None:
                 continue
+            if fill_only and series.get(qk) is not None:
+                continue          # companyfacts already answered this cell
             series[qk] = cell["value"]
             n += 1
             sources.setdefault(metric, {})[qk] = {
@@ -5028,7 +5064,30 @@ def analyze():
                 _q_end_dates = _discover_quarter_end_dates(facts, METRIC_TAGS.get(_fallback_key, []), _last_dt)
                 if _q_end_dates:
                     break
+
+        # companyfacts trails the filing itself. SEC publishes the 10-Q to the
+        # submissions index the day it is filed but takes several days to ingest
+        # its XBRL, so a quarter discovered only from companyfacts is invisible
+        # in between — Brandywine filed Q2 FY2026 on 2026-07-28 and had no fact
+        # under that accession two days later, while the filing's own statements
+        # parsed fine. The submissions index is the earlier of the two signals,
+        # so the quarter list is the union: whatever companyfacts knows, plus
+        # any 10-Q period after the last annual that has been filed.
+        #
+        # This only creates the COLUMN. Values still come from wherever they
+        # come from, so a just-filed quarter fills from the as-reported overlay
+        # (which reads the filing directly) and stays blank for anything sourced
+        # solely from companyfacts until SEC catches up. A partly-filled newest
+        # quarter, with the gaps visible as gaps.
+        _filed_q_ends = sorted({
+            f["report_date"] for f in all_10q_filings
+            if f.get("report_date") and f["report_date"] > _last_annual_date
+        })
+        _q_end_dates = sorted(set(_q_end_dates) | set(_filed_q_ends))
         quarter_end_dates = {f"Q{i+1}": d for i, d in enumerate(_q_end_dates[:3])}
+        # Canonical column order, so every metric below lands under the right
+        # heading rather than numbering whatever dates it happens to have.
+        _canonical_q_dates = list(quarter_end_dates.values())
 
         # Match each quarter-end date to its 10-Q filing URL
         # 10-Q report_date is typically within a few days of the quarter end
@@ -5060,7 +5119,8 @@ def analyze():
             if not tags:
                 continue
             is_bs = key in _point_in_time_metrics
-            q_vals = extract_post_annual_quarters(facts, tags, _last_annual_date, is_bs)
+            q_vals = extract_post_annual_quarters(facts, tags, _last_annual_date, is_bs,
+                                                  quarter_dates=_canonical_q_dates)
             if q_vals:
                 existing = financials.setdefault(key, {})
                 for qk, v in q_vals.items():
@@ -5082,7 +5142,7 @@ def analyze():
         _q_int_exp_existing = {k for k in financials.get("interest_expense", {})}
         _q_int_net = extract_post_annual_quarters(
             facts, ["InterestIncomeExpenseNet", "InterestIncomeExpenseNonoperatingNet"],
-            _last_annual_date, False)
+            _last_annual_date, False, quarter_dates=_canonical_q_dates)
         if _q_int_net:
             _ie = financials.setdefault("interest_expense", {})
             for qk, v in _q_int_net.items():
