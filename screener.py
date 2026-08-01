@@ -795,44 +795,81 @@ _DEBT_COMPONENT_TAGS = [
 # Unlike the REIT proxies, this is as-reported: the filer tagged the number and
 # the only arithmetic is dividing by a price.
 #
-# ONLY full-year durations, which is a real coverage limit rather than an
-# oversight. Citigroup tags this concept every quarter and never for the year
-# (Q4 2025 = $0.60, no CY2025 fact at all), so the calendar-aligned frame skips
-# it and Citi reads blank despite plainly paying. Summing the four quarterly
-# frames looks like the obvious fix and was measured instead of assumed: across
-# the filers that publish BOTH, the sum disagrees with the filed annual for
-# 12 of 148 in CY2025 and 20 of 170 in CY2024 -- not by rounding but by 300% to
-# 3000%, filers tagging a quarterly rate in an annual slot and the reverse. The
-# arithmetic is self-consistent in every one of those cases, which is exactly
-# what makes it dangerous; it is the same trap that sank generic FFO discovery.
-# For the ~54 names a sum would recover there is by construction no annual value
-# to check it against, so it would ship a ~1-in-10 error rate into a filter.
-# Left blank instead.
+# Both spellings are needed, and which one a filer uses is not predictable.
+# Declared covers Procter & Gamble, Verizon, AT&T, Apple, Microsoft, JPMorgan
+# and Brandywine; CashPaid covers Coca-Cola, Johnson & Johnson, Realty Income,
+# Simon, Exxon and Main Street, none of which tag Declared at all in recent
+# periods (Exxon has never tagged it -- the concept 404s for that filer).
+# Merging the two gives 1,650 filers a current quarterly rate; Declared alone
+# gives 1,343 and drops every name in that second list.
 _DPS_TAGS = [
     "CommonStockDividendsPerShareDeclared",
     "CommonStockDividendsPerShareCashPaid",
 ]
 
 
-def _div_yield(dps, price):
-    """
-    Trailing dividend yield, or None when no full-year DPS was tagged.
+def _recent_quarters(n: int = 6) -> list[str]:
+    """The last `n` calendar quarters, newest first."""
+    now = datetime.now()
+    y, q = now.year, (now.month - 1) // 3 + 1
+    out = []
+    for _ in range(n):
+        out.append(f"CY{y}Q{q}")
+        y, q = (y - 1, 4) if q == 1 else (y, q - 1)
+    return out
 
-    None rather than 0.0, deliberately. A zero would render as a measured rate,
-    and "declared nothing" is a different claim from "tagged nothing this way".
-    Both land here: Berkshire, which pays nothing, and Citigroup, which pays but
-    only ever tags the concept quarterly (see _DPS_TAGS). A blank covers both
-    without asserting a rate for either -- but it does mean a min-yield cutoff
-    silently drops the second kind, so the count of payers is published in
-    stats["dividend_payers"] to keep that visible.
 
-    Trailing, not forward: the numerator is the last fiscal year the filer
-    closed and the denominator is today's price, so a payer that has since cut
-    or raised still shows the old rate against the new price until it files.
+def _latest_quarter_dps(periods: list[str]) -> dict[str, float]:
     """
-    if not dps or dps <= 0 or not price or price <= 0:
+    {cik: most recent quarterly dividend per share}.
+
+    Periods are walked newest-first and the first hit per filer wins, so a
+    company that has raised or cut is measured on the rate it is paying now
+    rather than the one it averaged last year. Brandywine is the case in point:
+    it pays $0.08 a quarter today against the $0.53 a share its FY2025 works
+    out to, and only the quarterly reading sees the cut.
+
+    Reading through the frames API rather than per-filer facts is what makes
+    the three-month span safe. A CYnnnnQn frame IS the calendar quarter, so a
+    monthly payer's one-month fact cannot be mistaken for a quarter's -- Realty
+    Income files both $0.81 for Q1 and $0.27 for March alone, and taking the
+    wrong one would understate it threefold.
+    """
+    out: dict[str, float] = {}
+    for period in periods:
+        for tag in _DPS_TAGS:
+            for cik, val in _frame(tag, "USD-per-shares", period).items():
+                if val and val > 0:
+                    out.setdefault(cik, val)
+    return out
+
+
+def _div_yield(q_dps, price):
+    """
+    Annualised dividend yield: the latest quarterly rate times four, over price.
+
+    A forward run rate, not a trailing total. It answers "what does holding
+    this pay from here", which is the question a screen is asking, and it
+    reprices a cut or a raise the quarter it happens instead of a year later.
+
+    Two consequences worth stating. A filer paying a large variable or special
+    dividend is measured on its REGULAR rate only -- Progressive's quarterly
+    $0.10 annualises to $0.40 and says nothing about the several dollars it
+    declares separately most years, so it will look far cheaper on yield here
+    than its actual distributions warrant. And a quarter with no dividend
+    annualises to nothing at all, so a payer that skipped one reads as a
+    non-payer until it resumes.
+
+    None rather than 0.0 where nothing was tagged, deliberately: a zero would
+    render as a measured rate, and "pays nothing" is a different claim from
+    "tagged nothing this way". Berkshire is the first kind and reads blank
+    correctly; a filer whose quarters never align to a calendar quarter is the
+    second. stats["dividend_payers"] publishes how many names the cutoff can
+    actually match so the difference stays visible.
+    """
+    if not q_dps or q_dps <= 0 or not price or price <= 0:
         return None
-    return round(dps / price, 4)
+    return round(q_dps * 4 / price, 4)
 
 
 def screen(universe: str, tickers: list[str],
@@ -864,7 +901,7 @@ def screen(universe: str, tickers: list[str],
     ltd  = _merge_frames(_DEBT_TOTAL_TAGS, "USD", instants)
     std  = _merge_frames(["LongTermDebtCurrent", "DebtCurrent", "ShortTermBorrowings"], "USD", instants)
     shares = _merge_frames(["EntityCommonStockSharesOutstanding"], "shares", instants)
-    dps  = _merge_frames(_DPS_TAGS, "USD-per-shares", annual)
+    dps  = _latest_quarter_dps(_recent_quarters())
 
     cik_map = ticker_cik_map()
 
@@ -1082,7 +1119,7 @@ def screen_reits(universe: str, tickers: list[str],
     debt_parts = {name: _merge_frames([name], "USD", instants)
                   for name in _DEBT_COMPONENT_TAGS}
     shares = _merge_frames(["EntityCommonStockSharesOutstanding"], "shares", instants)
-    dps  = _merge_frames(_DPS_TAGS, "USD-per-shares", annual)
+    dps  = _latest_quarter_dps(_recent_quarters())
 
     cik_map = ticker_cik_map()
     reit_set = reit_ciks()
@@ -1259,7 +1296,7 @@ def screen_banks(universe: str, tickers: list[str],
                             "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"],
                            "USD", instants)
     shares = _merge_frames(["EntityCommonStockSharesOutstanding"], "shares", instants)
-    dps    = _merge_frames(_DPS_TAGS, "USD-per-shares", annual)
+    dps    = _latest_quarter_dps(_recent_quarters())
 
     cik_map = ticker_cik_map()
     bank_set = bank_ciks()
@@ -1396,7 +1433,7 @@ def screen_insurance(universe: str, tickers: list[str],
     claims   = _merge_frames(["LiabilityForClaimsAndClaimsAdjustmentExpense"], "USD", instants)
     unearned = _merge_frames(["UnearnedPremiumsLiability"], "USD", instants)
     shares   = _merge_frames(["EntityCommonStockSharesOutstanding"], "shares", instants)
-    dps      = _merge_frames(_DPS_TAGS, "USD-per-shares", annual)
+    dps      = _latest_quarter_dps(_recent_quarters())
 
     cik_map = ticker_cik_map()
     ins_set = insurance_ciks()

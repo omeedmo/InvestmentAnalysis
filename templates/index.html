@@ -1828,7 +1828,7 @@ async function openScreener(){
           <input id="scr-maxcap" type="number" placeholder="e.g. 10" min="0" step="0.1" style="width:120px">
         </div>
         <div class="scr-field">
-          <label title="Last full-year dividend per share, as tagged in the filing, over today's price. Applies to every sector. Setting it excludes any company without a full-year figure &mdash; non-payers, but also payers that only tag the concept quarterly.">Min Div Yield (%)</label>
+          <label title="Latest quarterly dividend per share, &times;4, over today's price &mdash; an annualised run rate. Applies to every sector. Setting it excludes any company with no quarterly figure, and measures variable payers on their regular rate only.">Min Div Yield (%)</label>
           <input id="scr-divyield" type="number" placeholder="e.g. 3" min="0" step="0.1" style="width:120px">
         </div>
         <div class="scr-field">
@@ -1980,7 +1980,7 @@ function renderScreenTable(stats){
       <th onclick="sortScreen('ev_ebit')">EV/EBIT${arrow('ev_ebit')}</th>
       <th onclick="sortScreen('fcf_yield')">FCF Yield${arrow('fcf_yield')}</th>
       `}
-      <th onclick="sortScreen('dividend_yield')" title="Last full-year dividend per share, as tagged in the filing, &divide; today's price. Trailing, not forward. Blank means no full-year figure was tagged &mdash; usually a non-payer, but also payers like Citigroup that only ever tag the concept quarterly.">Div Yield${arrow('dividend_yield')}</th>
+      <th onclick="sortScreen('dividend_yield')" title="Latest quarterly dividend per share as tagged in the filing, &times;4, &divide; today's price &mdash; an annualised run rate, so a cut or raise shows the quarter it happens. Regular rate only: a large special or variable dividend is not counted. Blank means no quarterly figure was tagged.">Div Yield${arrow('dividend_yield')}</th>
       <th onclick="sortScreen('market_cap')">Mkt Cap${arrow('market_cap')}</th>
       <th onclick="sortScreen('price')">Price${arrow('price')}</th>
     </tr></thead><tbody>`;
