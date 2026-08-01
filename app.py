@@ -5951,9 +5951,26 @@ def analyze():
     # net premiums earned in XBRL.
     is_insurance = ((6300 <= _sic_int <= 6411) or
                     bool(financials.get("premiums_earned")))
-    # BDC detection: NetInvestmentIncome present — but insurers also file that
-    # tag for their investment portfolios, so exclude anything flagged insurance.
-    is_bdc  = bool(financials.get("net_investment_income")) and not is_insurance
+    # BDC detection: NetInvestmentIncome present — but the tag is a generic
+    # investment-portfolio concept, not a BDC one, so anything that holds a
+    # portfolio can trip it. Insurers were the known case; REITs are the other.
+    #
+    # SIC 6798 settles it, the same way it settles the REIT test below. A BDC
+    # is a registered investment company electing regulation under section 54
+    # of the Investment Company Act; a 6798 filer is an operating company. No
+    # genuine BDC is excluded by this: checked against Ares Capital, Main
+    # Street, Hercules and Golub, and SEC carries NO SIC code at all for any of
+    # them, so none can collide with 6798.
+    #
+    # NexPoint Diversified (NXDT) is what this fixes. It converted from a
+    # closed-end fund to a REIT in 2022 — last N-CSR March 2022, first 10-K for
+    # FY2022, and no N-54A anywhere in its 1,025 filings, so it was never a BDC
+    # even beforehand. It reported net investment income in FY2021 as a fund
+    # and that single pre-conversion year kept it flagged one ever after, so it
+    # rendered as a REIT and a BDC at once, carrying both row sets.
+    is_bdc  = (bool(financials.get("net_investment_income"))
+               and not is_insurance
+               and _sic != "6798")
     # Bank detection: SIC 6000-6199 (depository institutions, credit agencies) OR
     # presence of NoninterestExpense (a tag essentially exclusive to bank filers).
     # We intentionally do NOT use net_interest_income alone — many non-banks (e.g.
