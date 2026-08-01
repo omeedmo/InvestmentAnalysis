@@ -1,0 +1,17 @@
+{
+  "ticker": "GDDY",
+  "cik": 1609711,
+  "plugin": "GDDY",
+  "generated_by": "session-authored from 10-K balance-sheet parentheticals, verified against the two years companyfacts holds",
+  "summary": "Domain registrar and small-business web services. Carried two share classes from its 2015 IPO until Class B was retired during 2024, and presented share counts and per-share figures per class throughout, which is why its XBRL leaves the count blank for five years in the middle of that period.",
+  "metrics": [],
+  "annotations": {
+    "shares_outstanding_end": "Read from the 10-K balance-sheet parenthetical and summed across the two share classes, because companyfacts carries no share count at all for FY2019-FY2023 — no outstanding, no issued, no weighted average, in any namespace. GoDaddy presented those figures per class, so every fact is dimensional, and companyfacts publishes only the undimensioned context. Summing is verified rather than assumed: the FY2019 10-K reports its prior year as 168,549,000 Class A plus 6,254,000 Class B, and companyfacts carries FY2018 as 174,803,000 — the sum exactly. FY2024 agrees the same way at 141,208,000. Every other year is accepted only where the filing reporting it also agrees, on an overlapping column, with a year already established, so the reading spreads outward from those two anchors rather than being trusted on its own."
+  },
+  "caveats": [
+    "Summing share classes is specific to this filer and deliberately not a general rule. It is right here because GoDaddy's two classes are economically equivalent and its own filings reconcile to the sum; a filer whose classes differ in economics — Berkshire's A against its B — must be converted rather than added.",
+    "FY2023 previously showed 151,452,000, which is that year's diluted weighted-average share count standing in for a period-end figure. It is replaced here by 142,310,000, the actual count, so the row means one thing across the whole series rather than changing definition for a single year.",
+    "The FY2021 10-K's balance-sheet parenthetical does not parse, so FY2021 comes from the FY2022 filing's prior-year column instead. Both filings agree on FY2022, which is what licenses using it.",
+    "Only shares outstanding is authored here. Everything else about this filer resolves from the global tier and is left alone."
+  ]
+}
