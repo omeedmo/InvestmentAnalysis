@@ -593,11 +593,43 @@ def get_prices(tickers: list[str], deadline_s: float = 150.0) -> dict[str, float
 # Recent annual (duration) and instantaneous (balance-sheet) periods to try,
 # newest first. Updated as fiscal years roll forward.
 def _recent_periods(latest_fy: int):
-    annual   = [f"CY{latest_fy}", f"CY{latest_fy - 1}"]
+    """
+    (annual duration periods, quarter-end instant periods newest-first).
+
+    The two lists are anchored differently on purpose. Flow metrics -- revenue,
+    operating income, D&A -- are only meaningful over a completed year, so the
+    annual list stays pinned to latest_fy. Balance-sheet items are a snapshot
+    and should be the most recent snapshot that exists, so the instants now
+    start at the CURRENT calendar quarter and walk back, rather than starting
+    at latest_fy's year-end.
+
+    That is what pairs a live price with a current balance sheet. Before this,
+    every screen multiplied today's price by a December share count and added
+    December's net debt, however many months had passed -- and CY2026Q1I was
+    on file for 5,495 filers while the list began at CY2025Q4I. The error is
+    not uniform, which is what makes it bite: most REITs moved a couple of
+    percent between those dates, but Equinix's net debt rose 19.5% and
+    Welltower's 11.3%. Understated debt understates EV, and since a cap rate
+    is NOI over EV it OVERSTATES the yield -- so the filers raising the most
+    debt looked the cheapest, and could clear a minimum cap-rate filter they
+    fail on current figures.
+
+    First hit per CIK wins in _merge_frames, so ordering newest-first is what
+    selects the latest available quarter per company. A filer that has already
+    reported June gets June; one that has not gets March, then December. Mixed
+    vintages across companies, each as current as that company allows, which is
+    wrong in a smaller way than holding everyone at a shared stale date.
+    """
+    annual = [f"CY{latest_fy}", f"CY{latest_fy - 1}"]
+    now = datetime.now()
+    y, q = now.year, (now.month - 1) // 3 + 1
     instants = []
-    for y in (latest_fy, latest_fy - 1):
-        for q in ("Q4I", "Q3I", "Q2I", "Q1I"):
-            instants.append(f"CY{y}{q}")
+    # Down to the year before latest_fy, matching the old floor, so a screen
+    # run against an earlier fiscal year still reaches that year's balance
+    # sheet rather than stopping short of it.
+    while (y, q) >= (latest_fy - 1, 1):
+        instants.append(f"CY{y}Q{q}I")
+        y, q = (y - 1, 4) if q == 1 else (y, q - 1)
     return annual, instants
 
 
