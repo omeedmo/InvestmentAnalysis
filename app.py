@@ -5865,8 +5865,28 @@ def analyze():
     current_ni   = L("net_income")
     current_rev  = L("revenue")
     current_ebitda = L("ebitda")
-    current_tc   = L("total_cash")
-    current_td   = L("total_debt")
+    # Balance-sheet inputs to EV take the newest quarter the filer has posted,
+    # falling back to the fiscal year only when there is no quarter — the same
+    # preference the share count above already applies, and for the same
+    # reason: market cap is priced today, so pairing it with a year-old balance
+    # sheet compares two different companies.
+    #
+    # Rayonier is the case that exposed it. Its merger with PotlatchDeltic
+    # closed on 2026-01-30, after the FY2025 year-end, so the 10-K carries it
+    # as a subsequent event. The cover-page share count was already the
+    # combined 300.7M because a cover is dated when the document is filed, but
+    # total debt was still standalone. EV was therefore built from a combined
+    # share count and a pre-merger balance sheet: $202M of net debt where the
+    # first post-merger quarter reports $1,373M, understating EV by $1.17B.
+    def _newest(key):
+        s = financials.get(key, {}) or {}
+        for _qk in ("Q3", "Q2", "Q1"):
+            if s.get(_qk) is not None:
+                return s[_qk]
+        return L(key)
+
+    current_tc   = _newest("total_cash")
+    current_td   = _newest("total_debt")
 
     ev = (mktcap + (current_td or 0) - (current_tc or 0)) if mktcap else None
 
@@ -5919,12 +5939,27 @@ def analyze():
         return sum(v for _, v in vals) / len(vals) if vals else None
 
     # ── Dividend yield from EDGAR (dividends_per_share / price) ──────────────
+    # The newest quarterly rate annualised, matching the screener, so a company
+    # is quoted the same yield on both surfaces. The fiscal-year figure is the
+    # fallback, used only where no quarter is on file.
+    #
+    # Annualising is what keeps a special dividend out of the run rate.
+    # Rayonier's FY2025 dividends per share are $2.49 against a regular $0.26 a
+    # quarter, because 2025 included a large distribution out of land-sale
+    # proceeds; dividing the year by the price called that an 11.4% yield for a
+    # company paying 4.8%. It also reprices a cut or raise the quarter it
+    # happens rather than a year later.
     dps_series = financials.get("dividends_per_share", {})
     dividend_yield = None
-    if dps_series and price:
-        latest_dps = fy_get(dps_series, latest_yr) if latest_yr else None
-        if latest_dps and price > 0:
-            dividend_yield = latest_dps / price
+    if dps_series and price and price > 0:
+        q_dps = next((dps_series[q] for q in ("Q3", "Q2", "Q1")
+                      if dps_series.get(q)), None)
+        if q_dps:
+            dividend_yield = q_dps * 4 / price
+        else:
+            latest_dps = fy_get(dps_series, latest_yr) if latest_yr else None
+            if latest_dps:
+                dividend_yield = latest_dps / price
 
     # ── Reverse DCF scenario (single, user-adjustable horizon) ────────────────
     dcf_scenarios = {}
