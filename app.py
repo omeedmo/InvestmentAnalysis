@@ -5219,6 +5219,20 @@ def analyze():
                 for qk, v in q_vals.items():
                     existing[qk] = v
 
+        # The senior-notes fallback again, for the quarter columns. This pass
+        # reads the same tag list as the annual one, so fixing that alone left
+        # VeriSign's quarterly debt blank for exactly the reason its annual
+        # debt had been — and quarterly total debt is assembled from this row,
+        # so net cash went with it. Only where nothing resolved, same as above.
+        _q_senior = extract_post_annual_quarters(
+            facts, ["SeniorLongTermNotes", "SeniorNotes"], _last_annual_date,
+            True, quarter_dates=_canonical_q_dates)
+        if _q_senior:
+            _ltd_q = financials.setdefault("long_term_debt", {})
+            for _qk, _v in _q_senior.items():
+                if _ltd_q.get(_qk) is None:
+                    _ltd_q[_qk] = _v
+
         # As-reported quarterly overlay. Runs AFTER the companyfacts pass so
         # the filing's own statements win where both have a figure, matching
         # how the annual overlay relates to the annual companyfacts pass.
