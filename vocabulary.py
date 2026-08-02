@@ -79,11 +79,34 @@ the screener reads a `frames` slice across ~3,700 filers at once and a
 loose tag there mis-prices the whole screen. `capex` is the clearest case —
 nine concepts on the analyze side, two on the screen.
 
-KIND — flow or instant
-──────────────────────
+KIND — flow, instant or ratio
+─────────────────────────────
 A property of the concept, not of the surface, though the two extraction
 paths in app.py had drifted into disagreeing about `equity_securities`
 (see its note below). Consumers read `kind` rather than keeping a set.
+
+SOURCE — and why metrics with no concepts are declared here at all
+──────────────────────────────────────────────────────────────────
+Only 77 of the metrics below are extracted from concepts. The rest are
+DERIVED (computed in app.py from the others: margins, returns, FFO, float),
+BINDING (read from, or computed within, a filer's own statements via
+bindings/) or TEMPLATE (concepts supplied per filer by a company template).
+
+They are declared here because a metric NAME is a shared thing even when its
+values are not. The UI names one in a row key, a binding names one in its
+`metric` field, the scorecard writes one, app.py computes one — and until this
+file listed them, they agreed only by coincidence. Nothing declared the set, so
+a row key and a binding could drift apart and the only symptom would be a
+permanently empty row: no error, no blank-versus-missing distinction, nothing
+to grep. `tag_audit.py` now closes it in both directions — every UI row and
+chart series names a declared metric, and every metric a binding names is
+declared here with a kind and a row decision.
+
+What does NOT move here is the bindings' element lists. A binding ties a
+metric to an element in a NAMED filed statement, with dimensions; the concepts
+above are candidates scanned across companyfacts for whichever resolves. Those
+are different jobs and collapsing them would blur the distinction that makes a
+bound figure trustworthy.
 
 TEMPLATES — extending this for one filer
 ────────────────────────────────────────
@@ -94,11 +117,11 @@ one. Reaching past a decision made here is not, and `template_conflicts()`
 refuses it: a concept declared screen-only, or declared as a component or a
 gap-fill rather than a candidate, would undo on one filer the distinction that
 keeps a row meaning one thing. What a template no longer decides is `kind` —
-a metric it introduces is declared here with `by_template=True`, so the annual
+a metric it introduces is declared here with `source=TEMPLATE`, so the annual
 and quarterly columns cannot classify it differently.
 
-Run `python3 tag_audit.py` to check that no consumer has grown a literal of
-its own again.
+Run `python3 tag_audit.py` to check that no consumer has grown a literal — or a
+metric name — of its own again.
 """
 from __future__ import annotations
 
@@ -124,6 +147,13 @@ DEI  = "dei"
 # ─── Kinds ───────────────────────────────────────────────────────────────────
 FLOW    = "flow"       # duration fact: a period's income / cash movement
 INSTANT = "instant"    # point-in-time fact: a balance-sheet position
+RATIO   = "ratio"      # dimensionless, derived from the two above
+
+# ─── Where a metric's values come from ───────────────────────────────────────
+CONCEPTS = "concepts"  # extracted from the concepts declared here (the default)
+TEMPLATE = "template"  # concepts supplied per filer by a company template
+BINDING  = "binding"   # read from a filer's own statements via bindings/
+DERIVED  = "derived"   # computed in app.py from other metrics
 
 
 @dataclass(frozen=True)
@@ -144,7 +174,7 @@ class Metric:
     concepts: tuple
     quarterly: bool = False   # extracted for the quarter columns as well
     row: bool = True          # has a UI row; False must carry a `note` saying why
-    by_template: bool = False # concepts come per filer from company_templates
+    source: str = CONCEPTS    # where the values come from
     note: str = ""
 
 
@@ -186,6 +216,17 @@ def M(kind, concepts, **kw):
     return Metric(kind,
                   tuple(c if isinstance(c, Concept) else Concept(c) for c in concepts),
                   **kw)
+
+
+def D(kind, note, row=True, quarterly=False):
+    """Derived: computed in app.py from other metrics, no concepts of its own."""
+    return Metric(kind, (), quarterly=quarterly, row=row, source=DERIVED, note=note)
+
+
+def B(kind, note, row=False):
+    """Owned by the bindings layer: read from, or computed within, a filer's own
+    statements. No global concepts, so nothing resolves it for an unbound filer."""
+    return Metric(kind, (), row=row, source=BINDING, note=note)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -814,13 +855,193 @@ VOCAB: dict[str, Metric] = {
     # DXC divides backlog by revenue, DXC and LUMN divide cumulative impairment
     # by total assets — so the template renders the ratio and the raw balance
     # stays behind it.
-    "goodwill_impairment_accumulated": M(INSTANT, [], by_template=True, row=False,
+    "goodwill_impairment_accumulated": M(INSTANT, [], source=TEMPLATE, row=False,
         note="Numerator of a company-template ratio (DXC, LUMN); the ratio is the row."),
-    "backlog_rpo": M(INSTANT, [], by_template=True, row=False,
+    "backlog_rpo": M(INSTANT, [], source=TEMPLATE, row=False,
         note="Numerator of a company-template ratio (DXC); the ratio is the row."),
-    "real_estate_gross": M(INSTANT, [], by_template=True, row=False,
+    "real_estate_gross": M(INSTANT, [], source=TEMPLATE, row=False,
         note="Real estate before depreciation (REIT sector template, SPG); "
              "feeds template rows, not a row of its own."),
+
+    # ═════════════════════════════════════════════════════════════════════════
+    # Derived metrics — computed in app.py from the metrics above
+    # ═════════════════════════════════════════════════════════════════════════
+    # No concepts, and that is the point: nothing extracts these, so listing
+    # them is not about resolution but about the NAMESPACE. Before this, the UI
+    # and the bindings each named metrics the vocabulary had never heard of, so
+    # a row key and a binding could disagree about what a metric is called and
+    # the only symptom would be a permanently empty row. Every name any surface
+    # uses is now declared in one place, with what it is and whether it shows.
+
+    # Margins and the tax rate
+    "gross_margin":        D(RATIO, "Gross profit / revenue."),
+    "operating_margin":    D(RATIO, "Operating income / revenue."),
+    "net_margin":          D(RATIO, "Net income / revenue."),
+    "effective_tax_rate":  D(RATIO, "Income tax / pretax income."),
+
+    # Cash generation
+    "fcf":            D(FLOW,  "Operating cash flow less capex."),
+    "fcf_margin":     D(RATIO, "FCF / revenue."),
+    "adj_fcf":        D(FLOW,  "FCF less stock-based compensation."),
+    "adj_fcf_margin": D(RATIO, "Adjusted FCF / revenue."),
+
+    # Balance-sheet aggregates
+    "total_cash":     D(INSTANT, "Cash plus short-term investments."),
+    "total_debt":     D(INSTANT, "Long-term plus current debt."),
+    "net_cash":       D(INSTANT, "Total cash less total debt; negative is net debt."),
+    "working_capital": D(INSTANT, "Current assets less current liabilities."),
+    "operating_lease_liability": D(INSTANT,
+        "The ASC 842 total: the filer's own total where tagged, else current "
+        "plus noncurrent. The three component metrics stay separate so the "
+        "total can never be whichever of them happens to be largest."),
+
+    # Per share
+    "revenue_per_share":               D(FLOW,    "Revenue / diluted shares."),
+    "fcf_per_share":                   D(FLOW,    "FCF / diluted shares."),
+    "book_value_per_share":            D(INSTANT, "Equity / shares outstanding."),
+    "tangible_book_value_per_share":   D(INSTANT,
+        "Equity less goodwill and intangibles, per share."),
+
+    # Returns
+    "roe":          D(RATIO, "Net income / equity."),
+    "roa":          D(RATIO, "Net income / total assets."),
+    "rote":         D(RATIO, "Net income / tangible equity."),
+    "roic":         D(RATIO, "NOPAT / invested capital."),
+    "pretax_roic":  D(RATIO, "EBIT / invested capital."),
+    "fcf_roe":      D(RATIO, "FCF / equity."),
+    "adj_fcf_roe":  D(RATIO, "Adjusted FCF / equity."),
+    "nii_roe":      D(RATIO, "BDC net investment income / NAV."),
+
+    # Capital quality
+    "unta":  D(INSTANT,
+        "Unlevered net tangible assets — the capital the business actually "
+        "runs on. Where a filer's UNTA deducts the marketable equity portfolio, "
+        "equity_securities has to exist quarterly as well or the annual and "
+        "quarterly figures are two different definitions in one row."),
+    "nopat": D(FLOW,  "EBIT after tax."),
+    "economic_goodwill":        D(RATIO, "NOPAT / UNTA."),
+    "pretax_economic_goodwill": D(RATIO, "EBIT / UNTA."),
+
+    # REIT
+    "noi":            D(FLOW,  "Net operating income: EBITDA plus G&A."),
+    "noi_margin":     D(RATIO, "NOI / revenue."),
+    "noi_per_share":  D(FLOW,  "NOI / diluted shares."),
+    "ffo":            D(FLOW,
+        "Funds from operations: net income plus real-estate depreciation less "
+        "gains on property sales. A company plugin replaces this with the "
+        "filer's own reported Nareit figure where it prints one."),
+    "ffo_per_share":  D(FLOW,  "FFO / diluted shares."),
+    "affo":           D(FLOW,
+        "Adjusted FFO: FFO less straight-line rent and recurring capex."),
+    "affo_per_share": D(FLOW,  "AFFO / diluted shares."),
+    "ffo_payout_ratio": D(RATIO, "Dividends per share / FFO per share."),
+
+    # Insurance
+    "loss_ratio":      D(RATIO, "Losses and LAE incurred / premiums earned."),
+    "expense_ratio":   D(RATIO, "Underwriting expenses / premiums earned."),
+    "combined_ratio":  D(RATIO,
+        "Benefits, losses and expenses / premiums earned. Above 100% means the "
+        "underwriting itself loses money before investment income."),
+    "insurance_float": D(INSTANT,
+        "Reserves held against future claims, less what offsets them — claims "
+        "reserve plus unearned premiums, less premiums receivable, deferred "
+        "acquisition costs and reinsurance recoverables."),
+    "float_per_share": D(INSTANT, "Insurance float / shares outstanding."),
+
+    # Bank
+    "nim":   D(RATIO, "Net interest income / total assets."),
+    "ppnr":  D(FLOW,
+        "Pre-provision net revenue: net interest income plus non-interest "
+        "income less non-interest expense."),
+    "net_charge_offs": D(FLOW,
+        "Taken from the write-off-after-recovery concepts where a filer tags "
+        "them, else gross write-offs less recoveries."),
+    "nco_rate":              D(RATIO, "Net charge-offs / average loans."),
+    "normalized_loss_rate":  D(RATIO, "Through-cycle average NCO rate."),
+    "normalized_pretax_earnings": D(FLOW,
+        "PPNR less the normalized loss rate applied to loans — what the bank "
+        "earns through a cycle rather than in this year's credit conditions."),
+    "efficiency_ratio":      D(RATIO,
+        "Non-interest expense / revenue. Lower is better, which is why the UI "
+        "colours it inversely to every other ratio."),
+
+    # ═════════════════════════════════════════════════════════════════════════
+    # Owned by the bindings layer
+    # ═════════════════════════════════════════════════════════════════════════
+    # Bindings do a different job from the concepts above: they tie a metric to
+    # an element in a NAMED filed statement, with dimensions, rather than
+    # scanning candidates across companyfacts. So their element lists stay in
+    # bindings/ — but their metric NAMES belong here, because a name is what the
+    # UI, the scorecard and a binding have to agree on, and a typo in one of
+    # them produces a series nothing renders and no error anywhere.
+    #
+    # None of these has global concepts, so nothing resolves them for an unbound
+    # filer. Most are segment or sub-line detail that exists to make a bound
+    # total checkable against its parts.
+
+    # Global
+    "costs_and_expenses": B(FLOW, "Total costs and expenses; the bound "
+        "complement of revenue, so pretax income can be checked against both."),
+
+    # Insurance sector
+    "losses_incurred_life": B(FLOW,
+        "Life, annuity and health benefits incurred — the non-P&C half of "
+        "losses, kept separate so the loss ratio stays a P&C measure."),
+    "underwriting_expenses": B(FLOW, "Numerator of the bound expense ratio."),
+    "underwriting_profit":   B(FLOW,
+        "Premiums earned less losses and underwriting expenses; computed "
+        "inside the binding spec, not extracted."),
+    "unpaid_losses":         B(INSTANT, "Unpaid losses and LAE — float component."),
+    "unpaid_losses_retro":   B(INSTANT,
+        "Unpaid losses under retroactive reinsurance — a float component with "
+        "its own run-off behaviour, so not folded into unpaid_losses."),
+    "future_policy_benefits": B(INSTANT, "Life, annuity and health benefit "
+        "reserves — float component."),
+    "policyholder_funds":     B(INSTANT, "Other policyholder liabilities — float component."),
+    "premium_receivables":    B(INSTANT, "Premiums not yet collected — offsets float."),
+    "deferred_reinsurance_charges": B(INSTANT,
+        "Deferred charges on retroactive reinsurance — offsets float."),
+
+    # REIT sector
+    "accumulated_depreciation_real_estate": B(INSTANT,
+        "Gross real estate less net; the bridge between real_estate_gross and "
+        "real_estate_assets, which is the whole reason a REIT's book value "
+        "understates it."),
+    "lease_income": B(FLOW, "Lease income as a REIT prints it, bound to the "
+        "statement rather than read from a concept list."),
+
+    # Berkshire — segment detail behind the consolidated rows
+    "revenue_insurance_and_other":       B(FLOW, "BRK segment revenue."),
+    "revenue_railroad_utilities_energy": B(FLOW, "BRK segment revenue."),
+    "operating_earnings_ex_investment_gains": B(FLOW,
+        "BRK net earnings with investment gains removed — the figure Buffett "
+        "asks readers to use, since GAAP net income is dominated by "
+        "mark-to-market swings on the equity portfolio."),
+    "interest_expense_insurance_other":           B(FLOW, "BRK segment interest expense."),
+    "interest_expense_railroad_utilities_energy": B(FLOW, "BRK segment interest expense."),
+    "interest_expense_finance_products":          B(FLOW, "BRK segment interest expense."),
+    "cash_insurance_other":            B(INSTANT, "BRK segment cash."),
+    "cash_railroad_utilities_energy":  B(INSTANT, "BRK segment cash."),
+    "debt_insurance_and_other":            B(INSTANT, "BRK segment notes payable."),
+    "debt_railroad_utilities_energy":      B(INSTANT, "BRK segment notes payable."),
+    "debt_finance_products":               B(INSTANT, "BRK segment notes payable."),
+    "recourse_debt_share": B(RATIO,
+        "BRK recourse debt / total debt — computed in the binding spec."),
+    "intangibles_insurance_other":           B(INSTANT, "BRK segment intangibles."),
+    "intangibles_railroad_utilities_energy": B(INSTANT, "BRK segment intangibles."),
+    "ppe_insurance_and_other":               B(INSTANT, "BRK segment PP&E."),
+    "ppe_railroad_utilities_energy":         B(INSTANT, "BRK segment PP&E."),
+    "tangible_equity": B(INSTANT,
+        "BRK equity less goodwill and intangibles; computed in the binding spec."),
+    "float_to_equity": B(RATIO,
+        "BRK insurance float / equity — computed in the binding spec."),
+
+    # Lumen — the intangible split behind the total
+    "intangibles_customer_relationships": B(INSTANT, "LUMN intangible component."),
+    "intangibles_other":                  B(INSTANT, "LUMN intangible component."),
+    "intangibles_total_reported":         B(INSTANT,
+        "LUMN's own combined intangibles line, kept beside the two components "
+        "so the split can be checked against the total it came from."),
 }
 
 
@@ -856,14 +1077,17 @@ def ns_tags(metric: str, roles=SERIES, surface: str = SCREEN) -> list[tuple[str,
 def metric_tags(surface: str = ANALYZE) -> dict[str, list[str]]:
     """{metric: priority-ordered element names} — the shape app.py's
     METRIC_TAGS has always had, now derived rather than declared."""
-    return {k: tags(k, SERIES, surface) for k in VOCAB}
+    return {k: tags(k, SERIES, surface)
+            for k, m in VOCAB.items() if m.source in (CONCEPTS, TEMPLATE)}
 
 
 def gap_fill_tags(surface: str = ANALYZE) -> dict[str, list[str]]:
     """{metric: element names applied only where the series list resolved
     nothing}. Metrics with no gap-fill are omitted."""
     out = {}
-    for k in VOCAB:
+    for k, m in VOCAB.items():
+        if m.source not in (CONCEPTS, TEMPLATE):
+            continue
         t = tags(k, GAP_FILL, surface)
         if t:
             out[k] = t
@@ -891,9 +1115,13 @@ def internal() -> set[str]:
     return {k for k, m in VOCAB.items() if not m.row}
 
 
+def of_source(*sources) -> set[str]:
+    return {k for k, m in VOCAB.items() if m.source in sources}
+
+
 def by_template() -> set[str]:
     """Metrics whose concepts come per filer from a company template."""
-    return {k for k, m in VOCAB.items() if m.by_template}
+    return of_source(TEMPLATE)
 
 
 def template_conflicts(metric: str, added: list) -> list:

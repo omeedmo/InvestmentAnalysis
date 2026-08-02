@@ -47,6 +47,15 @@ for real:
                declaring its own point_in_time list (kind is the vocabulary's,
                so the annual and quarterly columns cannot disagree).
 
+  namespace    a metric name one surface uses and the vocabulary does not
+               declare — a UI row key, a chart series, or a binding's `metric`
+               field. These agreed only by coincidence before: nothing declared
+               the set, so a row key and a binding could drift apart and the
+               only symptom would be a permanently empty row, with no error and
+               no way to tell it from a filer that simply does not report the
+               line. Checked in both directions, so a binding-owned metric no
+               binding names fails too.
+
   asymmetry    a concept one surface reads and the other does not. Not a
                failure — the `on` map exists to record exactly this, and there
                are good reasons for most of them (the screen resolves a frames
@@ -90,17 +99,41 @@ NOT_CONCEPTS = {
 }
 
 
-def _ui_row_keys() -> set:
+def _js_array(name: str) -> str:
+    """The source of one top-level JS array in the template."""
     html = open("templates/index.html").read()
-    return set(re.findall(r"key:'([a-z0-9_]+)'", html))
+    start = html.index(name)
+    return html[start:html.index("\n];", start)]
 
 
-def _binding_metrics() -> set:
-    try:
-        g = json.load(open("bindings/global.json"))
-    except Exception:
-        return set()
-    return {m.get("metric") for m in g.get("metrics", []) if m.get("metric")}
+def _ui_row_keys() -> set:
+    """Statement row keys only.
+
+    Scoped to the ROWS array on purpose. A bare regex over the whole template
+    also matches the universe selectors (sp500, dow30, nasdaq100) and the
+    screener's sort key, which are not metrics at all — it was reporting them
+    as rows nothing backs, which is noise in the one list that has to stay
+    worth reading.
+    """
+    return set(re.findall(r"key:'([a-z0-9_]+)'", _js_array("const ROWS = [")))
+
+
+def _ui_chart_keys() -> set:
+    return set(re.findall(r"key:'([a-z0-9_]+)'", _js_array("const CHART_DEFS=[")))
+
+
+def _binding_metrics() -> dict:
+    """{metric: [binding files that name it]}, across every tier."""
+    out: dict = {}
+    for path in sorted(glob.glob("bindings/**/*.json", recursive=True)):
+        try:
+            d = json.load(open(path))
+        except Exception:
+            continue
+        for m in d.get("metrics", []):
+            if m.get("metric"):
+                out.setdefault(m["metric"], []).append(path)
+    return out
 
 
 def _all_concepts() -> set:
@@ -136,15 +169,17 @@ def main() -> int:
     failures += len(stray)
 
     # ── untagged ────────────────────────────────────────────────────────────
-    untagged = sorted(k for k, m in V.VOCAB.items()
-                      if not m.concepts and not m.by_template)
+    # Only metrics that are SUPPOSED to carry concepts. Derived, binding-owned
+    # and template-supplied metrics have none by declaration.
+    concept_backed = V.of_source(V.CONCEPTS)
+    untagged = sorted(k for k in concept_backed if not V.VOCAB[k].concepts)
     print(f"\n── metrics with no concepts ({len(untagged)}) "
-          f"— excludes the {len(V.by_template())} whose concepts a template supplies")
+          f"— of the {len(concept_backed)} declared to have them")
     for k in untagged:
         print(f"     {k}")
     failures += len(untagged)
 
-    unreadable = sorted(k for k in metrics - V.by_template()
+    unreadable = sorted(k for k in concept_backed
                         if not V.tags(k, V.SERIES, V.ANALYZE)
                         and not V.tags(k, V.SERIES, V.SCREEN)
                         and not V.ns_tags(k, V.SERIES, V.SCREEN))
@@ -221,12 +256,38 @@ def main() -> int:
     failures += len(unnoted)
 
     # ── informational ───────────────────────────────────────────────────────
-    known = metrics | _binding_metrics()
-    orphan = sorted(k for k in ui_keys if k not in known)
-    print(f"\n── UI rows the vocabulary does not name ({len(orphan)}) "
-          f"— derived rows; not a failure, but each is a row no concept backs")
+    # ── the metric namespace ────────────────────────────────────────────────
+    # A metric NAME is what the UI, the bindings and the scorecard have to
+    # agree on. They used to agree by coincidence: nothing declared the set, so
+    # a row key and a binding could drift apart and the only symptom would be a
+    # permanently empty row with no error anywhere.
+    orphan = sorted(k for k in ui_keys if k not in metrics)
+    print(f"\n── UI rows naming a metric the vocabulary does not declare ({len(orphan)})")
     for k in orphan:
         print(f"     {k}")
+    failures += len(orphan)
+
+    chart_orphan = sorted(k for k in _ui_chart_keys() if k not in metrics)
+    print(f"\n── chart series naming a metric the vocabulary does not declare "
+          f"({len(chart_orphan)})")
+    for k in chart_orphan:
+        print(f"     {k}")
+    failures += len(chart_orphan)
+
+    binds = _binding_metrics()
+    unbound_name = sorted((k, v) for k, v in binds.items() if k not in metrics)
+    print(f"\n── binding metrics the vocabulary does not declare ({len(unbound_name)}) "
+          f"— a name only the bindings know produces a series nothing renders")
+    for k, files in unbound_name:
+        print(f"     {k:44} {', '.join(files)}")
+    failures += len(unbound_name)
+
+    never_bound = sorted(V.of_source(V.BINDING) - set(binds))
+    print(f"\n── metrics declared binding-owned that no binding names ({len(never_bound)}) "
+          f"— nothing can ever resolve them")
+    for k in never_bound:
+        print(f"     {k}")
+    failures += len(never_bound)
 
     asym = []
     for name, m in sorted(V.VOCAB.items()):

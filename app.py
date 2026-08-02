@@ -4661,6 +4661,32 @@ def analyze():
     # EV/EBIT for lease-heavy filers and distorts cross-company comparison.
     # The liability is surfaced as its own balance-sheet line instead.
 
+    # Recompute FCF now that operating cash flow and capex are final.
+    #
+    # build_financials derives it near the top, from whatever companyfacts
+    # alone returned, and nothing revisited it once the overlay filled those
+    # inputs from the filings. Lumen is the case: the overlay supplies sixteen
+    # years of operating cash flow and four of capex, so both rows are complete
+    # on screen, while FCF stopped at 2013 -- three years, computed before any
+    # of that arrived. A blank FCF beside a full cash-flow statement invites
+    # the reading that the company generates none.
+    #
+    # Filled only where absent, so a filer whose FCF came from a binding, a
+    # template or a plugin keeps that value rather than having it overwritten
+    # by a subtraction. Same reason total_cash above merges rather than
+    # replaces.
+    _ocf_f = financials.get("operating_cash_flow", {})
+    _cap_f = financials.get("capex", {})
+    if _ocf_f:
+        _fcf_f = dict(financials.get("fcf") or {})
+        for _d, _v in _ocf_f.items():
+            if str(_d).startswith("Q") or _v is None:
+                continue
+            if _fcf_f.get(_d) is None:
+                _fcf_f[_d] = _v - abs(fy_get(_cap_f, str(_d)[:4]) or 0)
+        if _fcf_f:
+            financials["fcf"] = _fcf_f
+
     # Recompute net_cash after any BRK debt/cash injections
     _tc = financials.get("total_cash", {})
     _td = financials.get("total_debt", {})
