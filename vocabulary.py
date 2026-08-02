@@ -1,12 +1,14 @@
 """
-One vocabulary, five consumers.
+One vocabulary, every consumer.
 
 Every surface in this app answers questions about the same handful of ideas —
 revenue, debt, net income — but until now each kept its own list of the XBRL
 concepts that spell them. The analyze page had `METRIC_TAGS`; the screener had
 four named lists plus a scatter of literals passed inline to `_merge_frames`;
 the quarterly pass had its own copy of which metrics are balance-sheet
-instants; the UI had row keys that matched none of them by construction.
+instants; the UI had row keys that matched none of them by construction; and
+each company template carried its own concepts plus a `point_in_time` list
+that was a third copy of the same flow-or-balance question.
 Nothing checked any list against any other, so a concept added to one was
 simply absent from the rest until a filer happened to need it, and the gap
 surfaced as a blank cell someone noticed months later:
@@ -83,6 +85,18 @@ A property of the concept, not of the surface, though the two extraction
 paths in app.py had drifted into disagreeing about `equity_securities`
 (see its note below). Consumers read `kind` rather than keeping a set.
 
+TEMPLATES — extending this for one filer
+────────────────────────────────────────
+A company template may add element names to a metric for its own filer, which
+is the mechanism that lets a coverage gap real for one company stay noise for
+the next. An element name nothing here has heard of is exactly what belongs in
+one. Reaching past a decision made here is not, and `template_conflicts()`
+refuses it: a concept declared screen-only, or declared as a component or a
+gap-fill rather than a candidate, would undo on one filer the distinction that
+keeps a row meaning one thing. What a template no longer decides is `kind` —
+a metric it introduces is declared here with `by_template=True`, so the annual
+and quarterly columns cannot classify it differently.
+
 Run `python3 tag_audit.py` to check that no consumer has grown a literal of
 its own again.
 """
@@ -130,6 +144,7 @@ class Metric:
     concepts: tuple
     quarterly: bool = False   # extracted for the quarter columns as well
     row: bool = True          # has a UI row; False must carry a `note` saying why
+    by_template: bool = False # concepts come per filer from company_templates
     note: str = ""
 
 
@@ -781,6 +796,31 @@ VOCAB: dict[str, Metric] = {
         "ReinsuranceRecoverablesOnPaidAndUnpaidLosses",
         "ReinsuranceRecoverableForUnpaidClaimsAndClaimsAdjustments",
     ], quarterly=True, row=False, note="Offsets the insurance float row."),
+
+    # ── Introduced by company templates ─────────────────────────────────────
+    # These carry no global concepts: nothing here is read for a filer whose
+    # template does not ask for it, which is the whole point of the mechanism —
+    # a coverage gap that is real for one company is noise for the next.
+    #
+    # What the vocabulary owns even so is what the metric IS: whether it is a
+    # balance or a flow, and whether it is a row. A template used to declare its
+    # own `point_in_time` list, which was a second copy of `kind` living in a
+    # JSON file, and it was already wrong in the same way the app's two copies
+    # were: the annual pass merged it and the quarterly pass never did, so a
+    # template-introduced balance would have been read largest-value in the
+    # quarter columns. Inert only because none of them is a quarterly metric.
+    #
+    # All three are inputs to ratios a template defines, not rows themselves —
+    # DXC divides backlog by revenue, DXC and LUMN divide cumulative impairment
+    # by total assets — so the template renders the ratio and the raw balance
+    # stays behind it.
+    "goodwill_impairment_accumulated": M(INSTANT, [], by_template=True, row=False,
+        note="Numerator of a company-template ratio (DXC, LUMN); the ratio is the row."),
+    "backlog_rpo": M(INSTANT, [], by_template=True, row=False,
+        note="Numerator of a company-template ratio (DXC); the ratio is the row."),
+    "real_estate_gross": M(INSTANT, [], by_template=True, row=False,
+        note="Real estate before depreciation (REIT sector template, SPG); "
+             "feeds template rows, not a row of its own."),
 }
 
 
@@ -849,3 +889,49 @@ def rendered() -> set[str]:
 
 def internal() -> set[str]:
     return {k for k, m in VOCAB.items() if not m.row}
+
+
+def by_template() -> set[str]:
+    """Metrics whose concepts come per filer from a company template."""
+    return {k for k, m in VOCAB.items() if m.by_template}
+
+
+def template_conflicts(metric: str, added: list) -> list:
+    """[(tag, why)] for concepts a company template must NOT add to `metric`.
+
+    A template extends the vocabulary for one filer, which is the mechanism
+    that lets a coverage gap real for one company stay noise for the next. What
+    it must not do is reach past a decision the vocabulary made about the
+    analyze surface itself, because that decision is what keeps a row meaning
+    one thing.
+
+    The case this was written for: ORCL's template appended
+    DebtLongtermAndShorttermCombinedAmount and UnsecuredDebt to long_term_debt.
+    The first is declared here as screen-only because it already contains the
+    current portion, and the analyze page adds current_debt to this row
+    separately — so it double counts on exactly the surface a template extends.
+    The second is a debt COMPONENT, which may stand for a total only where no
+    total resolved, never alongside one. Neither ever won for ORCL (an earlier
+    concept resolved in all 18 annual years and all 3 quarters), so the entry
+    was dead weight rather than a live fault — but it was one filing away from
+    being live, and nothing would have said so.
+
+    An unknown concept is fine and expected: that IS the extension.
+    """
+    m = VOCAB.get(metric)
+    if not m:
+        return [(t, f"no metric named {metric!r} in the vocabulary") for t in added]
+    out = []
+    declared = {c.tag: c for c in m.concepts}
+    for tag in added:
+        c = declared.get(tag)
+        if c is None:
+            continue                       # a genuine per-filer extension
+        role = c.role(ANALYZE)
+        if role is None:
+            out.append((tag, f"declared for {metric} on the screen only — "
+                             f"the vocabulary keeps it off the analyze surface"))
+        elif role != SERIES:
+            out.append((tag, f"declared for {metric} as a {role}, which is not "
+                             f"interchangeable with the candidate list"))
+    return out

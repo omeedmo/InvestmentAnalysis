@@ -32,6 +32,21 @@ for real:
   untagged     a metric the vocabulary names but gives no concepts, on either
                surface. pretax_income was one.
 
+  template     a company template reaching past a vocabulary decision rather
+               than extending it. Adding an element name nothing else has heard
+               of is the whole point of a template — a coverage gap real for one
+               filer is noise for the next. Adding one the vocabulary declares
+               screen-only, or declares as a component or gap-fill, is not:
+               ORCL's template appended DebtLongtermAndShorttermCombinedAmount
+               to long_term_debt, which already contains the current portion the
+               analyze page adds separately. It never won for Oracle, so it was
+               dead weight rather than a live double count — but nothing said
+               so, and nothing would have when it started winning.
+               Also checked: a template naming a metric the vocabulary does not
+               have (it would arrive with no kind and no row), and a template
+               declaring its own point_in_time list (kind is the vocabulary's,
+               so the annual and quarterly columns cannot disagree).
+
   asymmetry    a concept one surface reads and the other does not. Not a
                failure — the `on` map exists to record exactly this, and there
                are good reasons for most of them (the screen resolves a frames
@@ -43,6 +58,7 @@ Usage:  python3 tag_audit.py      (exit 0 = clean)
 """
 from __future__ import annotations
 
+import glob
 import json
 import re
 import sys
@@ -120,13 +136,15 @@ def main() -> int:
     failures += len(stray)
 
     # ── untagged ────────────────────────────────────────────────────────────
-    untagged = sorted(k for k, m in V.VOCAB.items() if not m.concepts)
-    print(f"\n── metrics with no concepts ({len(untagged)})")
+    untagged = sorted(k for k, m in V.VOCAB.items()
+                      if not m.concepts and not m.by_template)
+    print(f"\n── metrics with no concepts ({len(untagged)}) "
+          f"— excludes the {len(V.by_template())} whose concepts a template supplies")
     for k in untagged:
         print(f"     {k}")
     failures += len(untagged)
 
-    unreadable = sorted(k for k in metrics
+    unreadable = sorted(k for k in metrics - V.by_template()
                         if not V.tags(k, V.SERIES, V.ANALYZE)
                         and not V.tags(k, V.SERIES, V.SCREEN)
                         and not V.ns_tags(k, V.SERIES, V.SCREEN))
@@ -147,6 +165,54 @@ def main() -> int:
     for k in contradicted:
         print(f"     {k}")
     failures += len(contradicted)
+
+    # ── company templates ───────────────────────────────────────────────────
+    # A template extends the vocabulary for one filer. An element name nothing
+    # else has heard of is exactly what belongs in one; reaching past a
+    # decision the vocabulary made about the analyze surface is not.
+    tmpl_files = sorted(glob.glob("company_templates/*.json")
+                        + glob.glob("company_templates/_sectors/*.json"))
+    bad_tmpl, unknown_metric, stale_pit, supplied = [], [], [], set()
+    for path in tmpl_files:
+        try:
+            d = json.load(open(path))
+        except Exception as e:
+            bad_tmpl.append((path, "", f"unreadable: {e}"))
+            continue
+        if "point_in_time" in d:
+            stale_pit.append(path)
+        for metric, added in (d.get("add_tags") or {}).items():
+            if metric not in metrics:
+                unknown_metric.append((path, metric))
+                continue
+            supplied.add(metric)
+            for tag, why in V.template_conflicts(metric, added or []):
+                bad_tmpl.append((path, metric, f"{tag} — {why}"))
+
+    print(f"\n── template concepts the vocabulary refuses ({len(bad_tmpl)}) "
+          f"— apply_add_tags drops these at request time")
+    for path, metric, why in bad_tmpl:
+        print(f"     {path}: {metric}: {why}")
+    failures += len(bad_tmpl)
+
+    print(f"\n── template add_tags naming a metric the vocabulary does not have "
+          f"({len(unknown_metric)}) — no kind, no row, nothing checks it")
+    for path, metric in unknown_metric:
+        print(f"     {path}: {metric}")
+    failures += len(unknown_metric)
+
+    print(f"\n── templates still declaring point_in_time ({len(stale_pit)}) "
+          f"— kind is the vocabulary's to say, so both columns agree")
+    for path in stale_pit:
+        print(f"     {path}")
+    failures += len(stale_pit)
+
+    orphan_tmpl = sorted(V.by_template() - supplied)
+    print(f"\n── metrics declared by_template that no template supplies "
+          f"({len(orphan_tmpl)}) — nothing can ever resolve them")
+    for k in orphan_tmpl:
+        print(f"     {k}")
+    failures += len(orphan_tmpl)
 
     unnoted = sorted(k for k, m in V.VOCAB.items() if not m.row and not m.note)
     print(f"\n── metrics with no UI row and no note saying why ({len(unnoted)})")

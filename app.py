@@ -2567,18 +2567,17 @@ def fy_get(data: dict[str, float], year: str) -> Optional[float]:
 
 # ─── Derived metrics ─────────────────────────────────────────────────────────
 
-def build_financials(facts: dict, metric_tags: dict = None,
-                     extra_point_in_time: set = None) -> dict[str, dict[str, float]]:
-    """`metric_tags`/`extra_point_in_time` let a company template extend the
-    global mapping (see company_templates.apply_add_tags)."""
+def build_financials(facts: dict, metric_tags: dict = None) -> dict[str, dict[str, float]]:
+    """`metric_tags` lets a company template extend the global mapping for one
+    filer (see company_templates.apply_add_tags). Whether a metric is a balance
+    or a flow is NOT a template's to say — it is the vocabulary's, so a
+    template-introduced metric is classified the same way in every column."""
     metric_tags = metric_tags if metric_tags is not None else METRIC_TAGS
     raw: dict[str, dict[str, float]] = {}
     # Whether a concept is a duration or a point-in-time fact is a property of
     # the concept, so it is declared once in the vocabulary rather than kept as
     # a set here and a second, slightly different set in the quarterly pass.
     point_in_time_metrics = vocabulary.instants()
-    if extra_point_in_time:
-        point_in_time_metrics |= set(extra_point_in_time)
     for key, tags in metric_tags.items():
         if not tags:
             continue
@@ -4404,7 +4403,6 @@ def analyze():
     financials = build_financials(
         facts,
         metric_tags=company_templates.apply_add_tags(METRIC_TAGS, ctemplate),
-        extra_point_in_time=set((ctemplate or {}).get("point_in_time", [])),
     )
     if not financials:
         return jsonify({"error": "No XBRL financial data found for this company"}), 404

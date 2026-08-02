@@ -3,11 +3,7 @@
   "cik": 1341439,
   "generated_by": "session-authored (Claude Opus 4.8) from ORCL 10-K XBRL + coverage audit",
   "summary": "Enterprise software mid-transition into capital-intensive AI cloud. Two things break the standard template: years of buybacks drove shareholders' equity negative or near-zero, making ROE/P-B meaningless; and a capex surge ($40B construction in progress) is turning historically fat free cash flow negative. Judge it on EV-based multiples, RPO growth, and cash generation before versus after the buildout.",
-
-  "add_tags": {
-    "long_term_debt": ["DebtLongtermAndShorttermCombinedAmount", "UnsecuredDebt"]
-  },
-
+  "removed_add_tags_note": "Carried an add_tags entry appending DebtLongtermAndShorttermCombinedAmount and UnsecuredDebt to long_term_debt. Removed: the vocabulary keeps the first off the analyze surface because it already contains the current portion, which this page adds separately as current_debt, and the second is a debt component that may stand for a total only where no total resolved. Neither ever won for Oracle - an earlier concept resolves in all 18 annual years and all 3 quarters - so removing them changes no figure. See vocabulary.template_conflicts.",
   "metrics": [
     {
       "key": "orcl_fcf_before_growth_capex",
@@ -21,14 +17,12 @@
       "confidence": "medium"
     }
   ],
-
   "annotations": {
     "equity": "Sustained buybacks have driven shareholders' equity to negative or near-zero. Book value carries no information here, and any ratio using it as a denominator is meaningless.",
     "roe": "Not meaningful — equity is negative or near-zero from buybacks, so the ratio is an artifact of capital structure rather than a return.",
     "gross_profit": "Oracle stopped tagging cost of revenue after FY2011 and gross profit after FY2018, so the gross-margin series is largely unavailable. This is a disclosure gap, not a deterioration.",
     "fcf": "Depressed since FY2025 by AI/cloud capex, not by operating weakness — see the maintenance-capex-adjusted line."
   },
-
   "caveats": [
     "cost_of_revenue is tagged only 2009-2011 and gross_profit only 2015-2018; long-run margin analysis is not possible from XBRL for this filer.",
     "Remaining performance obligation reached $638B in FY2026 (RevenueRemainingPerformanceObligation) — larger than 2x total assets and the single most important forward indicator for Oracle, but it is not currently a tracked metric.",

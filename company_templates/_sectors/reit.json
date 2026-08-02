@@ -4,7 +4,6 @@
     "revenue": ["OperatingLeaseLeaseIncome", "LeaseIncome"],
     "real_estate_gross": ["RealEstateGrossAtCarryingValue", "RealEstateInvestmentPropertyAtCost"]
   },
-  "point_in_time": ["real_estate_gross"],
   "_note_add_tags": "Gross real-estate tags are deliberately a SEPARATE key, not appended to real_estate_assets: the extractor keeps the largest value per year across a metric's tag list, so mixing gross into the net series would silently convert it to gross and break anything measuring depreciated book value.",
   "annotations": {
     "equity": "GAAP book value understates a REIT: real estate is carried at depreciated historical cost, so long-held properties sit far below market value. Book-value and ROE measures are not meaningful here.",

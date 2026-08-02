@@ -15,7 +15,13 @@ missing for 100% of banks, real estate for 96% of REITs).
 
 Four things a template can do:
 
-  add_tags    extend METRIC_TAGS for this filer, closing coverage gaps
+  add_tags    extend the shared vocabulary for this filer, closing coverage
+              gaps. The element names are checked through vocabulary.py on the
+              way in: an unknown concept is the point of the mechanism, but a
+              concept the vocabulary declares screen-only, or declares as a
+              component or gap-fill rather than a candidate, is refused — those
+              are the distinctions that keep a row meaning one thing, and a
+              template extending one filer must not quietly undo them.
   metrics     define derived metrics, including ADJUSTED ones that pair with
               the reported figure so both are shown (never silently replaced)
   annotations attach a caveat to a metric where the right adjustment is known
@@ -33,6 +39,8 @@ import importlib
 import json
 import os
 from typing import Optional
+
+import vocabulary
 
 TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                             "company_templates")
@@ -204,9 +212,14 @@ def load_template(ticker: str) -> Optional[dict]:
         "ticker": tk,
         "sector_template": company.get("sector_template"),
         "add_tags":    {**sector.get("add_tags", {}),    **company.get("add_tags", {})},
-        # New series introduced via add_tags that are balances, not flows.
-        "point_in_time": sorted(set(sector.get("point_in_time", []))
-                                | set(company.get("point_in_time", []))),
+        # No `point_in_time` here any more. A template used to declare which of
+        # the series it introduces are balances rather than flows, which was a
+        # second copy of the vocabulary's `kind` living in a JSON file — and it
+        # had already drifted the way every second copy in this app has: the
+        # annual pass merged it in and the quarterly pass never did, so a
+        # template-introduced balance would have been read first-tag-wins in one
+        # column and largest-value in the others. vocabulary.VOCAB declares the
+        # kind for every metric a template can introduce, so both columns agree.
         # Sector metrics first so company entries with the same key override.
         "metrics":     _dedupe_by_key(sector.get("metrics", []) + company.get("metrics", [])),
         "annotations": {**sector.get("annotations", {}), **company.get("annotations", {})},
@@ -343,13 +356,28 @@ def _dedupe_by_key(metrics: list) -> list:
 
 def apply_add_tags(metric_tags: dict, template: Optional[dict]) -> dict:
     """METRIC_TAGS with this company's extra tags appended (originals first,
-    so a company tag is only a fallback, never a silent override)."""
+    so a company tag is only a fallback, never a silent override).
+
+    Checked against the shared vocabulary on the way through. A template
+    extends it for one filer — that is the mechanism, and an element name the
+    vocabulary has never heard of is exactly what belongs here. What a template
+    cannot do is reach past a decision the vocabulary made about the analyze
+    surface: a concept declared screen-only, or declared as a component or a
+    gap-fill rather than a candidate, is refused, because those are the
+    distinctions that keep a row meaning one thing.
+
+    Refused rather than dropped quietly: `tag_audit.py` reports the same
+    conflicts from the template files directly, so a template that grows one
+    fails the audit rather than waiting for a filer to make it matter.
+    """
     if not template or not template.get("add_tags"):
         return metric_tags
     merged = dict(metric_tags)
     for metric, tags in template["add_tags"].items():
+        refused = {t for t, _ in vocabulary.template_conflicts(metric, tags)}
         base = list(merged.get(metric) or [])
-        merged[metric] = base + [t for t in tags if t not in base]
+        merged[metric] = base + [t for t in tags
+                                 if t not in base and t not in refused]
     return merged
 
 

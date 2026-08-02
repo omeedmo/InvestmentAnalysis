@@ -11,9 +11,6 @@
       "GoodwillImpairedAccumulatedImpairmentLoss"
     ]
   },
-  "point_in_time": [
-    "goodwill_impairment_accumulated"
-  ],
   "metrics": [
     {
       "key": "lumn_ocf_less_capex_vs_debt",
