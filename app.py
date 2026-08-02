@@ -2981,6 +2981,33 @@ def build_financials(facts: dict, metric_tags: dict = None,
         if _ni_filled:
             raw["net_income"] = _ni_filled
 
+    # Long-term debt fallback: senior notes. A filer whose only borrowing is a
+    # note issue may tag just that and never a consolidated debt concept.
+    # VeriSign is the case — $1,788,200 thousand under SeniorLongTermNotes and
+    # SeniorNotes at FY2025, nothing under any of the eight tags tried, so its
+    # debt, net cash and enterprise value were all blank. The screener already
+    # reads SeniorNotes among its debt components; only this path did not.
+    #
+    # A gap-fill for the same reason as net income above: senior notes are a
+    # COMPONENT of debt, and where a filer tags both a component and a total,
+    # the point-in-time extractor's largest-value rule could let the component
+    # stand in for the total, or push a figure that already includes the
+    # current portion into a row that current debt is then added to. Applied
+    # per year, only where nothing was found.
+    #
+    # DebtInstrumentFairValue is deliberately not used. VeriSign carries it at
+    # $1,750,000 thousand against the $1,788,200 thousand carrying amount, and
+    # a fair value is a different measure, not a substitute.
+    _senior = extract_point_in_time_series(
+        facts, ["SeniorLongTermNotes", "SeniorNotes"])
+    if _senior:
+        _ltd_filled = dict(raw.get("long_term_debt") or {})
+        for _d, _v in normalize_to_fiscal_years(_senior).items():
+            if _ltd_filled.get(_d) is None:
+                _ltd_filled[_d] = _v
+        if _ltd_filled:
+            raw["long_term_debt"] = _ltd_filled
+
     # Interest expense fallback: some filers (e.g. CHTR from FY2014) stop
     # tagging a dedicated InterestExpense and only report a combined
     # "net interest income/expense" figure — signed negative-for-expense,
