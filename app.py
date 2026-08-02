@@ -2249,6 +2249,18 @@ METRIC_TAGS: dict[str, list[str]] = {
     "income_tax": ["IncomeTaxExpenseBenefit"],
     "net_income": ["NetIncomeLoss", "NetIncomeLossAvailableToCommonStockholdersBasic"],
 
+    # Pretax income had no entry here at all, so it was never read from
+    # companyfacts: a bound filer picked it up from the binding overlay and
+    # every unbound one showed an empty row. It is NOT operating income —
+    # VeriSign's FY2025 operating income is $1,121.0M against pretax income of
+    # $1,068.5M, the $52.5M difference being net interest on its senior notes.
+    # The check that the right concept is bound: $1,068.5M less the $242.8M tax
+    # provision is $825.7M, its net income to the dollar.
+    "pretax_income": [
+        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
+    ],
+
     # Bank-specific income statement metrics
     "interest_income":      ["InterestAndDividendIncomeOperating", "InterestAndFeeIncomeLoansAndLeases",
                              "InterestIncomeOperating"],
