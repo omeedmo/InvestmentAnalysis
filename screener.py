@@ -31,6 +31,9 @@ from typing import Optional
 import requests
 from bs4 import BeautifulSoup
 
+import vocabulary
+from vocabulary import COMPONENT, GAP_FILL, PROXY, SCREEN, SERIES
+
 SEC_BASE = "https://data.sec.gov"
 H_SEC = {"User-Agent": "ValueAnchor/1.0 (omid.mola@gmail.com)", "Accept": "application/json"}
 H_YH  = {"User-Agent": "Mozilla/5.0"}
@@ -205,8 +208,10 @@ def _fetch_fortune500() -> list[str]:
     the margins differs slightly.)
     """
     rev: dict[str, float] = {}
-    for tag in ("Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax",
-                "SalesRevenueNet"):
+    # Ranking only, so the largest across the shared revenue concepts wins and
+    # their order does not matter. vocabulary.py records which spellings are
+    # deliberately left to the analyze page.
+    for tag in vocabulary.tags("revenue", SERIES, SCREEN):
         for period in ("CY2025", "CY2024"):
             for cik, val in _frame(tag, "USD", period).items():
                 if val and (cik not in rev or val > rev[cik]):
@@ -349,6 +354,24 @@ def _merge_frames(tags: list[str], unit: str, periods: list[str]) -> dict[str, f
     return out
 
 
+def _frames_for(metric: str, unit: str, periods: list[str],
+                roles=(SERIES, GAP_FILL), ns=(vocabulary.GAAP, vocabulary.DEI)) -> dict[str, float]:
+    """`_merge_frames` over whatever the shared vocabulary says this metric is.
+
+    Every concept name this module reads comes through here or through
+    `_CF_TAGS`, so the screen cannot grow a tag the analyze page has never
+    heard of again — which is how ProfitLoss and SeniorNotes came to resolve
+    here and nowhere else, and VeriSign appeared on the screen with earnings
+    and debt it showed none of when you opened it.
+
+    GAP_FILL concepts are included by default because this surface takes the
+    first tag that resolves, so appending them is exactly the "only where
+    nothing else resolved" rule the analyze page has to implement as a separate
+    pass.
+    """
+    return _merge_frames(vocabulary.tags(metric, roles, SCREEN, ns), unit, periods)
+
+
 # ─── companyfacts fallback (foreign / odd-fiscal-year filers) ─────────────────
 # The frames API only returns facts aligned to calendar frames and only under
 # us-gaap tags, so 20-F foreign filers (IFRS) and some odd-fiscal-year filers
@@ -359,63 +382,60 @@ def _merge_frames(tags: list[str], unit: str, periods: list[str]) -> dict[str, f
 # ADR price × ordinary shares is overstated by the ratio, which makes the
 # stock look MORE expensive — conservative for a cheapness screen.)
 
-_CF_TAGS = {
-    "ocf":   [("us-gaap", "NetCashProvidedByUsedInOperatingActivities"),
-              ("us-gaap", "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations"),
-              ("ifrs-full", "CashFlowsFromUsedInOperatingActivities")],
-    "capex": [("us-gaap", "PaymentsToAcquirePropertyPlantAndEquipment"),
-              ("us-gaap", "PaymentsToAcquireProductiveAssets"),
-              ("ifrs-full", "PurchaseOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities")],
-    "ebit":  [("us-gaap", "OperatingIncomeLoss"),
-              ("ifrs-full", "ProfitLossFromOperatingActivities")],
-    "cash":  [("us-gaap", "CashAndCashEquivalentsAtCarryingValue"),
-              ("ifrs-full", "CashAndCashEquivalents")],
-    "ltd":   [("us-gaap", "LongTermDebtNoncurrent"), ("us-gaap", "LongTermDebt"),
-              ("us-gaap", "DebtLongtermAndShorttermCombinedAmount"),
-              ("us-gaap", "LongTermDebtAndCapitalLeaseObligations"),
-              ("us-gaap", "LongTermDebtAndFinanceLeaseObligations"),
-              ("ifrs-full", "NoncurrentPortionOfNoncurrentBorrowings"),
-              ("ifrs-full", "LongtermBorrowings")],
-    "std":   [("us-gaap", "LongTermDebtCurrent"), ("us-gaap", "DebtCurrent"),
-              ("us-gaap", "ShortTermBorrowings"),
-              ("ifrs-full", "CurrentPortionOfNoncurrentBorrowings"),
-              ("ifrs-full", "ShorttermBorrowings")],
+# Which vocabulary metric each screen key reads, and in which roles. The
+# concept names themselves are in vocabulary.py, shared with the analyze page;
+# `on={SCREEN: ...}` there records the several places where a concept the
+# analyze page reads is deliberately NOT read here, always for the same reason:
+# this path resolves one `frames` slice across ~3,700 filers at once, so a
+# loose tag reprices the whole screen rather than one company.
+#
+# Where a metric has GAP_FILL concepts they are simply the tail of the list.
+# `_cf_extract` and `_merge_frames` both take the first tag that resolves, so
+# for this surface a gap-fill needs no separate pass — unlike the analyze page,
+# whose largest-absolute-value rule would let a gap-fill outrank the concept it
+# is meant to stand in for.
+_CF_METRICS = {
+    "ocf":    ("operating_cash_flow",     SERIES),
+    "capex":  ("capex",                   SERIES),
+    "ebit":   ("operating_income",        SERIES),
+    "cash":   ("cash",                    SERIES),
+    "ltd":    ("long_term_debt",          SERIES),
+    "std":    ("current_debt",            SERIES),
     # 20-F filers often lack the dei cover-page share count in companyfacts —
     # fall back to the reported share count or FY weighted-average (fine as a
     # screener market-cap proxy).
-    "shares": [("dei", "EntityCommonStockSharesOutstanding"),
-               ("us-gaap", "CommonStockSharesOutstanding"),
-               ("ifrs-full", "NumberOfSharesIssued"),
-               ("us-gaap", "WeightedAverageNumberOfSharesOutstandingBasic"),
-               ("ifrs-full", "WeightedAverageShares")],
-    # REIT-screen only: NOI = EBITDA + G&A, so these two feed screen_reits(),
-    # not the general screen(). Reuses the same fallback machinery because the
-    # bulk `frames` API gap that motivates this whole fallback path hits REITs
-    # especially hard — e.g. Simon Property Group's dual Inc./L.P. registrant
-    # filing structure (see company_plugins/SPG.py) makes its own
-    # dei:EntityCommonStockSharesOutstanding absent from `frames` entirely.
-    "dep":   [("us-gaap", "DepreciationDepletionAndAmortization"),
-              ("us-gaap", "DepreciationAndAmortization")],
-    "ga":    [("us-gaap", "GeneralAndAdministrativeExpense")],
+    "shares": ("shares_outstanding_end",  (SERIES, GAP_FILL, PROXY)),
+    # REIT-screen only: NOI = EBITDA + G&A, so "dep" and "ga" feed
+    # screen_reits(), not the general screen(). They reuse the same fallback
+    # machinery because the bulk `frames` API gap that motivates this whole
+    # path hits REITs especially hard — e.g. Simon Property Group's dual
+    # Inc./L.P. registrant filing structure (see company_plugins/SPG.py) makes
+    # its own dei:EntityCommonStockSharesOutstanding absent from `frames`
+    # entirely.
+    "dep":    ("depreciation",            SERIES),
+    "ga":     ("general_admin_expense",   SERIES),
     # REIT P/FFO: FFO (proxy) = Net Income + D&A. Real FFO also backs out gains
     # on property sales and adds back impairments, but those aren't reliably
     # tagged across filers at scale — this is the same kind of screening-scale
     # proxy "dep"/"ga" already are for NOI, not a company-specific extraction.
-    "ni":    [("us-gaap", "NetIncomeLoss"), ("us-gaap", "ProfitLoss"),
-              ("ifrs-full", "ProfitLoss")],
+    "ni":     ("net_income",              (SERIES, GAP_FILL)),
     # Bank P/B.
-    "equity": [("us-gaap", "StockholdersEquity"),
-               ("us-gaap", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"),
-               ("ifrs-full", "Equity")],
+    "equity": ("equity",                  SERIES),
     # Insurance P/Float: float (proxy) = loss & LAE reserves + unearned premium
     # reserves — the two reserve lines available at scale via SEC frames.
     # Coarser than a company-specific extraction (e.g. BRK's own disclosed
     # float) but the only thing that scales to screening hundreds of tickers.
-    "claims_reserve":  [("us-gaap", "LiabilityForClaimsAndClaimsAdjustmentExpense")],
-    "unearned_prem":   [("us-gaap", "UnearnedPremiumsLiability")],
+    "claims_reserve": ("claims_reserve",  SERIES),
+    "unearned_prem":  ("unearned_premiums", SERIES),
 }
 
-_CF_FLOW_KEYS = {"ocf", "capex", "ebit", "dep", "ga", "ni"}   # duration facts; the rest are instants
+_CF_TAGS = {key: vocabulary.ns_tags(metric, roles, SCREEN)
+            for key, (metric, roles) in _CF_METRICS.items()}
+
+# Duration facts; the rest are instants. Also from the vocabulary, so a metric
+# cannot be a flow here and a balance-sheet position on the analyze page.
+_CF_FLOW_KEYS = {key for key, (metric, _) in _CF_METRICS.items()
+                 if vocabulary.VOCAB[metric].kind == vocabulary.FLOW}
 
 
 def _cf_extract(facts: dict, latest_fy: int) -> dict:
@@ -691,14 +711,16 @@ def reit_ciks() -> set:
 def insurance_ciks() -> set:
     """Insurer CIKs — companies reporting net premiums earned (cached 7 days)."""
     def fetch():
-        return _frame_ciks("PremiumsEarnedNet") or _load_sector_fallback("insurance")
+        probe = vocabulary.tags("premiums_earned", SERIES, SCREEN)[0]
+        return _frame_ciks(probe) or _load_sector_fallback("insurance")
     return set(_cached("sector_insurance_ciks.json", 7 * 86400, fetch) or _load_sector_fallback("insurance"))
 
 
 def bank_ciks() -> set:
     """Bank CIKs — companies reporting non-interest expense (cached 7 days)."""
     def fetch():
-        return _frame_ciks("NoninterestExpense") or _load_sector_fallback("bank")
+        probe = vocabulary.tags("noninterest_expense", SERIES, SCREEN)[0]
+        return _frame_ciks(probe) or _load_sector_fallback("bank")
     return set(_cached("sector_bank_ciks.json", 7 * 86400, fetch) or _load_sector_fallback("bank"))
 
 
@@ -782,62 +804,34 @@ def _ticker_score(tk: str) -> float:
     return s
 
 
-# Consolidated debt concepts, in preference order -- first that resolves wins.
-_DEBT_TOTAL_TAGS = [
-    "LongTermDebtNoncurrent",
-    "LongTermDebt",
-    "DebtLongtermAndShorttermCombinedAmount",
-    "LongTermDebtAndCapitalLeaseObligations",
-    "LongTermDebtAndFinanceLeaseObligations",
-]
+# The debt, dividend and net-income concept names are shared with the analyze
+# page -- see vocabulary.py, which also records why each concept sits where it
+# does. Read here in the roles this surface resolves:
+#
+#   SERIES     consolidated totals, in preference order, first that resolves
+#              wins. Bare LongTermDebt sits LAST among them because it is the
+#              generic concept and filers use it for wildly different scopes,
+#              sometimes a fraction of the real balance. This screen used to
+#              take it second and so read the partial figure for 107 of 3,682
+#              filers -- one of them $23M against $15.3B under the lease-
+#              obligations concept -- and priced their enterprise value off it.
+#
+#   COMPONENT  summed ONLY when no total resolved. A REIT does not file a
+#              classified balance sheet, so "noncurrent" rarely applies and
+#              many tag no consolidated total at all: Realty Income prints
+#              revolving credit and commercial paper, term loans, mortgages
+#              payable and notes payable as four separate lines totalling
+#              ~$28.8B, none of them us-gaap:LongTermDebt. Binding only the
+#              totals resolved NOTHING for it, and enterprise value silently
+#              collapsed to market cap less cash -- which is what put Empire
+#              State Realty at a 46% implied cap rate.
+_DEBT_TOTAL_TAGS     = vocabulary.tags("long_term_debt", SERIES, SCREEN)
+_DEBT_COMPONENT_TAGS = vocabulary.tags("long_term_debt", COMPONENT, SCREEN)
 
-# Debt components, summed ONLY when no consolidated total resolved.
-#
-# A REIT does not file a classified balance sheet, so "noncurrent" rarely
-# applies, and many tag no consolidated total at all: Realty Income prints
-# revolving credit and commercial paper, term loans, mortgages payable and
-# notes payable as four separate lines totalling ~$28.8B, none of them
-# us-gaap:LongTermDebt. Binding only the totals resolved NOTHING for it, and
-# enterprise value silently collapsed to market cap less cash -- which is what
-# put Empire State Realty at a 46% implied cap rate.
-#
-# One concept per debt family, so two names for the same facility cannot both
-# land; and a total always wins over the sum, so a filer tagging both is not
-# double counted.
-_DEBT_COMPONENT_TAGS = [
-    "SecuredDebt",
-    "UnsecuredDebt",
-    "SeniorNotes",
-    "NotesPayable",
-    "LongTermLineOfCredit",
-    "CommercialPaper",
-    "LoansPayable",
-]
-
-# Dividends per share -- the same two tags the analyze view uses
-# (app.METRIC_TAGS["dividends_per_share"]), so a yield read here and a yield
-# read after opening the ticker come from one source and agree.
-#
-# Declared first, cash-paid second. Declared is the rate the board set for the
-# year; cash-paid shifts a quarter whenever a December declaration settles in
-# January, which understates a payer in the year its timing moved. Monthly
-# payers aggregate correctly either way -- Realty Income's CY2025 frame is
-# $3.217, all twelve declarations, not one of them.
-#
-# Unlike the REIT proxies, this is as-reported: the filer tagged the number and
-# the only arithmetic is dividing by a price.
-#
-# Both spellings are needed, and which one a filer uses is not predictable.
-# Declared covers Procter & Gamble, Verizon, AT&T, Apple, Microsoft, JPMorgan
-# and Brandywine; CashPaid covers Coca-Cola, Johnson & Johnson, Realty Income,
-# Simon, Exxon and Main Street, none of which tag Declared at all in recent
-# periods (Exxon has never tagged it -- the concept 404s for that filer).
-# Merging the two gives 1,650 filers a current quarterly rate; Declared alone
-# gives 1,343 and drops every name in that second list.
-_DPS_TAGS = [
-    "CommonStockDividendsPerShareDeclared",
-    "CommonStockDividendsPerShareCashPaid",
-]
+# Dividends per share -- the same tags the analyze view uses, now literally the
+# same list, so a yield read here and a yield read after opening the ticker
+# cannot come apart.
+_DPS_TAGS = vocabulary.tags("dividends_per_share", SERIES, SCREEN)
 
 
 def _recent_quarters(n: int = 6) -> list[str]:
@@ -923,16 +917,13 @@ def screen(universe: str, tickers: list[str],
 
     annual, instants = _recent_periods(latest_fy)
 
-    ocf  = _merge_frames(["NetCashProvidedByUsedInOperatingActivities",
-                          "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations"],
-                         "USD", annual)
-    capex = _merge_frames(["PaymentsToAcquirePropertyPlantAndEquipment",
-                           "PaymentsToAcquireProductiveAssets"], "USD", annual)
-    ebit = _merge_frames(["OperatingIncomeLoss"], "USD", annual)
-    cash = _merge_frames(["CashAndCashEquivalentsAtCarryingValue"], "USD", instants)
-    ltd  = _merge_frames(_DEBT_TOTAL_TAGS, "USD", instants)
-    std  = _merge_frames(["LongTermDebtCurrent", "DebtCurrent", "ShortTermBorrowings"], "USD", instants)
-    shares = _merge_frames(["EntityCommonStockSharesOutstanding"], "shares", instants)
+    ocf    = _frames_for("operating_cash_flow", "USD", annual)
+    capex  = _frames_for("capex", "USD", annual)
+    ebit   = _frames_for("operating_income", "USD", annual)
+    cash   = _frames_for("cash", "USD", instants)
+    ltd    = _merge_frames(_DEBT_TOTAL_TAGS, "USD", instants)
+    std    = _frames_for("current_debt", "USD", instants)
+    shares = _frames_for("shares_outstanding_end", "shares", instants, ns=vocabulary.DEI)
     dps  = _latest_quarter_dps(_recent_quarters())
 
     cik_map = ticker_cik_map()
@@ -1140,17 +1131,16 @@ def screen_reits(universe: str, tickers: list[str],
 
     annual, instants = _recent_periods(latest_fy)
 
-    ebit = _merge_frames(["OperatingIncomeLoss"], "USD", annual)
-    dep  = _merge_frames(["DepreciationDepletionAndAmortization",
-                          "DepreciationAndAmortization"], "USD", annual)
-    ga   = _merge_frames(["GeneralAndAdministrativeExpense"], "USD", annual)
-    ni   = _merge_frames(["NetIncomeLoss", "ProfitLoss"], "USD", annual)
-    cash = _merge_frames(["CashAndCashEquivalentsAtCarryingValue"], "USD", instants)
+    ebit = _frames_for("operating_income", "USD", annual)
+    dep  = _frames_for("depreciation", "USD", annual)
+    ga   = _frames_for("general_admin_expense", "USD", annual)
+    ni   = _frames_for("net_income", "USD", annual)
+    cash = _frames_for("cash", "USD", instants)
     ltd  = _merge_frames(_DEBT_TOTAL_TAGS, "USD", instants)
-    std  = _merge_frames(["LongTermDebtCurrent", "DebtCurrent", "ShortTermBorrowings"], "USD", instants)
+    std  = _frames_for("current_debt", "USD", instants)
     debt_parts = {name: _merge_frames([name], "USD", instants)
                   for name in _DEBT_COMPONENT_TAGS}
-    shares = _merge_frames(["EntityCommonStockSharesOutstanding"], "shares", instants)
+    shares = _frames_for("shares_outstanding_end", "shares", instants, ns=vocabulary.DEI)
     dps  = _latest_quarter_dps(_recent_quarters())
 
     cik_map = ticker_cik_map()
@@ -1324,10 +1314,8 @@ def screen_banks(universe: str, tickers: list[str],
 
     annual, instants = _recent_periods(latest_fy)
 
-    equity = _merge_frames(["StockholdersEquity",
-                            "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"],
-                           "USD", instants)
-    shares = _merge_frames(["EntityCommonStockSharesOutstanding"], "shares", instants)
+    equity = _frames_for("equity", "USD", instants)
+    shares = _frames_for("shares_outstanding_end", "shares", instants, ns=vocabulary.DEI)
     dps    = _latest_quarter_dps(_recent_quarters())
 
     cik_map = ticker_cik_map()
@@ -1462,9 +1450,9 @@ def screen_insurance(universe: str, tickers: list[str],
 
     annual, instants = _recent_periods(latest_fy)
 
-    claims   = _merge_frames(["LiabilityForClaimsAndClaimsAdjustmentExpense"], "USD", instants)
-    unearned = _merge_frames(["UnearnedPremiumsLiability"], "USD", instants)
-    shares   = _merge_frames(["EntityCommonStockSharesOutstanding"], "shares", instants)
+    claims   = _frames_for("claims_reserve", "USD", instants)
+    unearned = _frames_for("unearned_premiums", "USD", instants)
+    shares   = _frames_for("shares_outstanding_end", "shares", instants, ns=vocabulary.DEI)
     dps      = _latest_quarter_dps(_recent_quarters())
 
     cik_map = ticker_cik_map()

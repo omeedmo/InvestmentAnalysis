@@ -28,6 +28,7 @@ import company_templates
 import scorecard
 import screener
 import statement_store
+import vocabulary
 
 app = Flask(__name__)
 
@@ -2196,372 +2197,19 @@ def get_short_interest(ticker: str) -> dict:
 
 
 # ─── XBRL tag priority lists ─────────────────────────────────────────────────
+# Derived, not declared. Every concept name lives in vocabulary.py, which the
+# screener reads from as well — see its module docstring for why the same tag
+# cannot simply be appended to one flat list per metric.
+#
+# This is the SERIES role only: the priority-ordered candidate list the
+# extractors scan. Gap-fills (applied per period, only where this list resolved
+# nothing) come from vocabulary.gap_fill_tags() and are applied further down,
+# in build_financials and again for the quarter columns.
 
-METRIC_TAGS: dict[str, list[str]] = {
-    # Income Statement
-    "revenue": [
-        "RevenueFromContractWithCustomerExcludingAssessedTax",
-        "RevenueFromContractWithCustomerIncludingAssessedTax",
-        "Revenues", "SalesRevenueNet", "SalesRevenueGoodsNet",
-        "SalesRevenueServicesNet", "NetSales",
-    ],
-    "cost_of_revenue": [
-        "CostOfRevenue",
-        "CostOfGoodsAndServicesSold",
-        "CostOfGoodsSold",
-        "CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization",  # AMR and similar mining/industrial
-    ],
-    "gross_profit": ["GrossProfit"],
-    # Split cost-of-revenue components: some filers (e.g. INTU pre-2018) tag
-    # CostOfGoodsSold and CostOfServices separately with no consolidated total.
-    "cost_of_goods_component":    ["CostOfGoodsSold"],
-    "cost_of_services_component": ["CostOfServices"],
-    "rd_expense": ["ResearchAndDevelopmentExpense"],
-    "sga_expense": ["SellingGeneralAndAdministrativeExpense"],
-    # G&A as a separate line (useful for REIT NOI derivation: NOI = EBITDA + G&A)
-    "general_admin_expense": [
-        "GeneralAndAdministrativeExpense",
-        # Some companies embed G&A in SGA — only use as fallback when G&A is not separately filed
-    ],
-    # Selling & marketing expense (filed separately from G&A by some companies, e.g. TMHC post-2021)
-    "selling_marketing_expense": [
-        "SellingAndMarketingExpense",
-        "SellingExpense",
-    ],
-    # Operating expense lines used for the gross-profit add-back fallback
-    # (GP = OI + S&M + R&D + G&A + amortization + restructuring; e.g. INTU post-2018)
-    "amortization_of_intangibles": ["AmortizationOfIntangibleAssets"],
-    "restructuring_charges": ["RestructuringCharges", "RestructuringCosts"],
-    "operating_income": [
-        "OperatingIncomeLoss",
-        # Fallback for companies (e.g. BRK) that don't separately file OperatingIncomeLoss
-        # but report pre-tax earnings — closest available proxy for conglomerates/insurers.
-        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
-        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
-        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesDomestic",
-    ],
-    "interest_expense": [
-        "InterestExpense",
-        "InterestExpenseDebt",
-        "InterestExpenseNonoperating",   # MCK FY2025+ and similar
-        "InterestAndDebtExpense",
-    ],
-    "income_tax": ["IncomeTaxExpenseBenefit"],
-    "net_income": ["NetIncomeLoss", "NetIncomeLossAvailableToCommonStockholdersBasic"],
+METRIC_TAGS: dict[str, list[str]] = vocabulary.metric_tags(vocabulary.ANALYZE)
 
-    # Pretax income had no entry here at all, so it was never read from
-    # companyfacts: a bound filer picked it up from the binding overlay and
-    # every unbound one showed an empty row. It is NOT operating income —
-    # VeriSign's FY2025 operating income is $1,121.0M against pretax income of
-    # $1,068.5M, the $52.5M difference being net interest on its senior notes.
-    # The check that the right concept is bound: $1,068.5M less the $242.8M tax
-    # provision is $825.7M, its net income to the dollar.
-    "pretax_income": [
-        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
-        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
-    ],
-
-    # Bank-specific income statement metrics
-    "interest_income":      ["InterestAndDividendIncomeOperating", "InterestAndFeeIncomeLoansAndLeases",
-                             "InterestIncomeOperating"],
-    "net_interest_income":  ["InterestIncomeExpenseNet", "InterestIncomeExpenseAfterProvisionForLosses"],
-    "noninterest_income":   ["NoninterestIncome"],
-    "noninterest_expense":  ["NoninterestExpense"],
-    "provision_for_losses": ["ProvisionForLoanAndLeaseLosses", "ProvisionForLoanLeaseAndOtherLosses",
-                             "ProvisionForCreditLosses"],
-    # Loan-loss realization (for normalized loss rate). Tag names vary across
-    # three eras — pre-CECL "AllowanceForLoanAndLeaseLosses…", the interim
-    # "FinancingReceivableAllowanceForCreditLosses…", and the current
-    # "FinancingReceivableExcludingAccruedInterest…" — so each list spans all
-    # three to get continuous history (extract_annual_series merges years
-    # across the list). Net charge-offs are taken directly from the
-    # "write-off after recovery" tags where present, else derived below from
-    # gross write-offs − recoveries.
-    "net_charge_offs_reported": [
-        "FinancingReceivableExcludingAccruedInterestAllowanceForCreditLossWriteoffAfterRecovery",
-        "FinancingReceivableAllowanceForCreditLossWriteoffAfterRecovery",
-        "AllowanceForLoanAndLeaseLossesWriteoffsNet"],
-    "loan_writeoffs":  [
-        "FinancingReceivableExcludingAccruedInterestAllowanceForCreditLossWriteoff",
-        "FinancingReceivableAllowanceForCreditLossesWriteOffs",
-        "AllowanceForLoanAndLeaseLossesWriteOffs"],
-    "loan_recoveries": [
-        "FinancingReceivableExcludingAccruedInterestAllowanceForCreditLossRecovery",
-        "FinancingReceivableAllowanceForCreditLossesRecovery",
-        "AllowanceForLoanAndLeaseLossRecoveryOfBadDebts"],
-
-    # Per Share (USD/shares unit)
-    "eps_diluted": ["EarningsPerShareDiluted", "EarningsPerShareBasicAndDiluted"],
-    "dividends_per_share": ["CommonStockDividendsPerShareDeclared", "CommonStockDividendsPerShareCashPaid"],
-
-    # Cash Flow
-    "operating_cash_flow": [
-        "NetCashProvidedByUsedInOperatingActivities",
-        "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations",  # DPZ 2014-2016 and similar
-    ],
-    "capex": [
-        "PaymentsToAcquirePropertyPlantAndEquipment",
-        "PaymentsToAcquireProductiveAssets",
-        "PaymentsToAcquireOtherPropertyPlantAndEquipment",
-        "PaymentsToAcquireMachineryAndEquipment",       # Seadrill (SDRL) and similar
-        "PaymentsToAcquireOilAndGasPropertyAndEquipment",
-        "PaymentsToExploreAndDevelopOilAndGasProperties",  # E&P drilling capex (CHRD, APA, and similar)
-        "PaymentsToAcquirePropertyPlantEquipmentAndIntangibleAssets",
-        "SegmentExpenditureAdditionToLongLivedAssets",
-        "PaymentsForCapitalImprovements",               # Noble Corporation (NE) and similar
-    ],
-    "depreciation": [
-        "DepreciationDepletionAndAmortization",
-        "DepreciationAndAmortization",
-        "Depreciation",
-        "CostOfGoodsAndServicesSoldDepreciationAndAmortization",  # NE (Noble) and similar drillers
-    ],
-    "stock_based_compensation": ["ShareBasedCompensation", "AllocatedShareBasedCompensationExpense",
-                                  "StockBasedCompensation", "EmployeeBenefitsAndShareBasedCompensation"],
-    "intangible_amortization": ["AmortizationOfIntangibleAssets",
-                                "AmortizationOfIntangibleAssetsExcludingGoodwill"],
-    # Unrealized investment gains / (losses) only — positive = gain, negative = loss.
-    # Realized gains are kept in net income (they represent actual cash transactions).
-    # Unrealized gains are stripped out because they are pure mark-to-market noise
-    # that distorts recurring earning power (especially post-ASC 321, 2018+).
-    "investment_gains": [
-        "UnrealizedGainLossOnInvestments",
-        "EquitySecuritiesFvNiUnrealizedGainLoss",         # most common post-ASC 321 tag
-        "TradingSecuritiesUnrealizedHoldingGainLoss",
-        "UnrealizedGainLossOnSecurities",
-    ],
-
-    # Balance Sheet – point-in-time
-    "total_assets": ["Assets"],
-    # Operating leases (ASC 842, on-balance-sheet from 2019). Kept as separate
-    # component tags rather than one list, because OperatingLeaseLiability is
-    # the TOTAL while Current/Noncurrent are its parts — merging them into one
-    # candidate list would silently pick whichever is larger. The true total is
-    # derived below.
-    "operating_lease_liability_total":      ["OperatingLeaseLiability"],
-    "operating_lease_liability_current":    ["OperatingLeaseLiabilityCurrent"],
-    "operating_lease_liability_noncurrent": ["OperatingLeaseLiabilityNoncurrent"],
-    "operating_lease_rou_asset":            ["OperatingLeaseRightOfUseAsset"],
-    # Loans held (denominator for net charge-off rate). Tag varies by era:
-    # net-of-allowance pre-CECL, then the CECL-era financing-receivable tag.
-    "bank_loans": ["LoansAndLeasesReceivableNetReportedAmount",
-                   "LoansAndLeasesReceivableNetOfDeferredIncome",
-                   "FinancingReceivableExcludingAccruedInterestAfterAllowanceForCreditLoss",
-                   "FinancingReceivableExcludingAccruedInterestBeforeAllowanceForCreditLoss"],
-    "current_assets": ["AssetsCurrent"],
-    "current_liabilities": ["LiabilitiesCurrent"],
-    "total_liabilities": ["Liabilities"],
-    "equity": [
-        "StockholdersEquity",
-        "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
-        # Limited partnerships / MLPs report partners' capital, not stockholders'
-        # equity (e.g. PAGP – Plains GP Holdings LP). Plain (parent) tag first,
-        # then the including-NCI total, then LLC members' equity.
-        "PartnersCapital",
-        "PartnersCapitalIncludingPortionAttributableToNoncontrollingInterest",
-        "MembersEquity",
-        "MembersEquityIncludingPortionAttributableToNoncontrollingInterest",
-    ],
-    "cash": [
-        "CashAndCashEquivalentsAtCarryingValue",
-        "CashCashEquivalentsAndShortTermInvestments",
-        # ASC 230 / post-2017 standard tag; also used by BRK after 2017
-        "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
-    ],
-    "short_term_investments": [
-        "ShortTermInvestments", "MarketableSecuritiesCurrent",
-        "AvailableForSaleSecuritiesDebtSecuritiesCurrent",
-        "AvailableForSaleSecuritiesCurrent",
-        "DebtSecuritiesAvailableForSaleExcludingAccruedInterestCurrent",  # INTU post-FY2023
-    ],
-    # Marketable equity portfolio. Only surfaced as a row where a company
-    # template asks for it (Berkshire), but extracted generally so the QUARTERLY
-    # value exists for any filer whose UNTA binding deducts it — an annual UNTA
-    # that nets out the portfolio beside a quarterly one that doesn't would be
-    # two different definitions in one row. ASU 2016-01 moved these off
-    # available-for-sale accounting, hence both concepts.
-    "equity_securities": [
-        "EquitySecuritiesFvNi",
-        "AvailableForSaleSecuritiesEquitySecurities",
-    ],
-    "long_term_debt": [
-        "LongTermDebtNoncurrent",
-        "LongTermDebtAndCapitalLeaseObligations",       # DPZ securitization + leases (noncurrent)
-        "LongTermDebtAndFinanceLeaseObligations",
-        "DebtAndFinanceLeaseObligationsNoncurrent",
-        "LongTermNotesPayable",                         # ORCL (annual 10-K noncurrent)
-        "LongTermNotesAndLoans",                        # ORCL (quarterly 10-Q noncurrent)
-        "LongTermDebt",                                 # generic, may be partial (e.g. DPZ ~$14M only)
-        "FinanceLeaseLiabilityNoncurrent",              # last: lease-financed cos (e.g. LIVE post-2022 sale-leasebacks)
-    ],
-    "current_debt": [
-        "LongTermDebtAndCapitalLeaseObligationsCurrent",  # DPZ current portion of securitization
-        "LongTermDebtCurrent",
-        "DebtCurrent",
-        "NotesPayableCurrent",                          # ORCL quarterly current debt
-        "ShortTermBorrowings",
-        "CurrentPortionOfLongTermDebt",
-        "LongTermDebtMaturitiesRepaymentsOfPrincipalInNextTwelveMonths",
-        "CommercialPaper",
-        "ShortTermDebt",
-        "FinanceLeaseLiabilityCurrent",                 # last: lease-financed cos (e.g. LIVE)
-    ],
-    "goodwill": ["Goodwill"],
-    "intangibles": ["FiniteLivedIntangibleAssetsNet", "IntangibleAssetsNetExcludingGoodwill"],
-    "inventory": ["InventoryNet"],
-    # Net productive fixed assets. The single most widespread gap in the whole
-    # mapping before this existed: the coverage audit flagged it for 91 of 118
-    # S&P 500 names, at up to 85% of total assets. For an asset-heavy filer it
-    # is the asset the business actually runs on, and nothing consumed it.
-    #
-    # The second tag is the same concept under its post-ASC-842 caption, which
-    # folds finance-lease right-of-use assets into the line. Companies switch
-    # cleanly: T, LUMN, UNP and CVS all report BOTH in their transition year
-    # and the two agree to 0.00% ($130.13B for T in 2019, $57.40B for UNP in
-    # 2023), so first-tag-wins joins the eras without a step.
-    #
-    # Deliberately NOT including RealEstateInvestmentPropertyNet: that is a
-    # REIT's operating property and already has its own `real_estate_assets`
-    # row. Folding it in here would put two different concepts in one row and,
-    # for a filer reporting both (Prologis reports $0.2B of corporate PP&E
-    # beside $80B of real estate), would splice the series mid-history.
-    "ppe_net": [
-        "PropertyPlantAndEquipmentNet",
-        "PropertyPlantAndEquipmentAndFinanceLeaseRightOfUseAssetAfterAccumulatedDepreciationAndAmortization",
-    ],
-
-    # Shares
-    "shares_outstanding_end": ["CommonStockSharesOutstanding", "EntityCommonStockSharesOutstanding"],
-    "shares_diluted_wtd": [
-        "WeightedAverageNumberOfDilutedSharesOutstanding",
-        "WeightedAverageNumberOfShareOutstandingBasicAndDiluted",
-        "WeightedAverageNumberOfSharesOutstandingBasic",
-    ],
-
-    # Capital Returns
-    # PaymentsOfOrdinaryDividends covers filers (e.g. ACN from FY2023) that
-    # switched away from PaymentsOfDividendsCommonStock. Excludes
-    # PaymentsOfDividendsMinorityInterest (dividends to subsidiary minority
-    # holders, not the company's own shareholders).
-    "dividends_paid": ["PaymentsOfDividends", "PaymentsOfDividendsCommonStock",
-                       "PaymentsOfOrdinaryDividends"],
-    "buybacks_value": [
-        "PaymentsForRepurchaseOfCommonStock",
-        "StockRepurchasedAndRetiredDuringPeriodValue",
-        "StockRepurchasedDuringPeriodValue",
-    ],
-    "treasury_stock": ["TreasuryStockCommonValue", "TreasuryStockValue"],
-    "shares_repurchased": [
-        "StockRepurchasedAndRetiredDuringPeriodShares",
-        "StockRepurchasedDuringPeriodShares",
-        "TreasuryStockSharesAcquired",
-    ],
-    "treasury_stock_shares": ["TreasuryStockCommonShares", "TreasuryStockShares"],
-
-    # Buyback program remaining (best-effort; not all companies report via XBRL)
-    "buyback_remaining": [
-        "StockRepurchaseProgramRemainingAuthorizedRepurchaseAmount1",
-        "StockRepurchaseProgramRemainingAuthorizedRepurchaseAmount",
-    ],
-
-    # ── REIT-specific metrics ─────────────────────────────────────────────────
-    # Gains / losses on real estate dispositions — subtracted in FFO derivation
-    "gains_on_real_estate": [
-        "GainLossOnSaleOfProperties",
-        "GainsLossesOnSalesOfInvestmentRealEstate",
-        "GainLossOnDispositionOfRealEstateAssets",
-        "GainOnSaleOfProperties",
-        "GainLossOnSaleOfPropertiesBeforeApplicableIncomeTaxes",  # SPG and similar
-    ],
-    # Real property depreciation — added back in FFO (may differ from total D&A).
-    # Only REIT-specific tags here; general D&A fallback is applied in build_financials
-    # but only when other REIT signals (real_estate_assets, straight_line_rent) are present.
-    "real_estate_depreciation": [
-        "DepreciationOfRealEstate",          # standard REIT tag (most REITs file this)
-        "RealEstateDepreciationAndAmortization",
-    ],
-    # Straight-line rent adjustment — stripped out in AFFO derivation
-    "straight_line_rent": [
-        "StraightLineRent",
-        "StraightLineRentAdjustments",
-    ],
-    # Net real estate assets on balance sheet
-    "real_estate_assets": [
-        "RealEstateInvestmentPropertyNet",
-        "RealEstateAndAccumulatedDepreciation",  # alternative tag
-    ],
-    # Recurring (maintenance/tenant improvement) capex — used in AFFO
-    "recurring_capex": [
-        "PaymentsForTenantImprovements",
-        "PaymentsForLeasingCosts",
-    ],
-
-    # ── BDC / Investment Company metrics ─────────────────────────────────────
-    # Net Investment Income (flow – income statement equivalent for BDCs)
-    "net_investment_income": [
-        "NetInvestmentIncome",
-        "InvestmentIncomeOperatingAfterExpenseAndTax",
-    ],
-    # Gross Investment Income (top-line "revenue" equivalent for BDCs)
-    "gross_investment_income": [
-        "GrossInvestmentIncomeOperating",
-        "InvestmentIncomeInterestAndDividend",
-        "InvestmentIncomeInterest",
-    ],
-    # NAV per share (point-in-time, filed directly in XBRL)
-    "nav_per_share": [
-        "NetAssetValuePerShare",
-    ],
-    # NII per share (flow – per-share NII as reported in financial highlights)
-    "nii_per_share": [
-        "InvestmentCompanyInvestmentIncomeLossPerShare",
-        "InvestmentCompanyInvestmentIncomeLossFromOperationsPerShare",
-    ],
-
-    # ── Insurance (P&C / life) metrics ───────────────────────────────────────
-    # Net premiums earned — the insurer's top-line "revenue" for ratio math
-    "premiums_earned": [
-        "PremiumsEarnedNet",
-        "PremiumsEarnedNetPropertyAndCasualty",
-        "SupplementaryInsuranceInformationPremiumRevenue",
-    ],
-    # Net premiums written (leading indicator of earned premium growth)
-    "premiums_written": [
-        "PremiumsWrittenNet",
-        "SupplementaryInsuranceInformationPremiumsWritten",
-    ],
-    # Losses & loss-adjustment expenses incurred (numerator of the loss ratio)
-    "losses_incurred": [
-        "PolicyholderBenefitsAndClaimsIncurredNet",
-        "LiabilityForUnpaidClaimsAndClaimsAdjustmentExpenseIncurredClaims1",
-        "SupplementaryInsuranceInformationBenefitsClaimsLossesAndSettlementExpense",
-    ],
-    # Total benefits, losses & expenses (numerator of the combined ratio)
-    "benefits_losses_expenses": ["BenefitsLossesAndExpenses"],
-    # Loss & LAE reserves (largest float component)
-    "claims_reserve": [
-        "LiabilityForClaimsAndClaimsAdjustmentExpense",
-        "LiabilityForUnpaidClaimsAndClaimsAdjustmentExpenseNet",
-        "SupplementaryInsuranceInformationLiabilityForFuturePolicyBenefitsLossesClaimsAndLossExpenseReserves",
-    ],
-    # Unearned premium reserve (float component)
-    "unearned_premiums": [
-        "UnearnedPremiums",
-        "SupplementaryInsuranceInformationUnearnedPremiums",
-    ],
-    # Premiums receivable (offsets float — money not yet collected)
-    "premiums_receivable": ["PremiumsReceivableAtCarryingValue"],
-    # Deferred policy acquisition costs (offsets float)
-    "deferred_acquisition_costs": [
-        "DeferredPolicyAcquisitionCosts",
-        "SupplementaryInsuranceInformationDeferredPolicyAcquisitionCosts",
-    ],
-    # Reinsurance recoverables (offsets float)
-    "reinsurance_recoverable": [
-        "ReinsuranceRecoverablesOnPaidAndUnpaidLosses",
-        "ReinsuranceRecoverableForUnpaidClaimsAndClaimsAdjustments",
-    ],
-}
+# {metric: tags} applied only where METRIC_TAGS resolved nothing for a period.
+GAP_FILL_TAGS: dict[str, list[str]] = vocabulary.gap_fill_tags(vocabulary.ANALYZE)
 
 
 # ─── XBRL extraction ─────────────────────────────────────────────────────────
@@ -2646,7 +2294,9 @@ def _cover_page_shares(cik: str, accession: str) -> Optional[float]:
             statement_store._get(f"{base}/R1.htm"))
         found: set = set()
         for row in rep.get("rows", []):
-            if (row.get("element") or "").endswith(":EntityCommonStockSharesOutstanding"):
+            if (row.get("element") or "").endswith(
+                    ":" + vocabulary.tags("shares_outstanding_end",
+                                          vocabulary.SERIES, ns=vocabulary.DEI)[0]):
                 found.update(float(v) for v in (row.get("by_col") or []) if v)
         return found.pop() if len(found) == 1 else None
     except Exception:                # noqa: BLE001 - an unreadable cover is a gap
@@ -2923,40 +2573,10 @@ def build_financials(facts: dict, metric_tags: dict = None,
     global mapping (see company_templates.apply_add_tags)."""
     metric_tags = metric_tags if metric_tags is not None else METRIC_TAGS
     raw: dict[str, dict[str, float]] = {}
-    point_in_time_metrics = {
-        "total_assets",
-        "bank_loans",
-        "operating_lease_liability_total",
-        "operating_lease_liability_current",
-        "operating_lease_liability_noncurrent",
-        "operating_lease_rou_asset",
-        "current_assets",
-        "current_liabilities",
-        "total_liabilities",
-        "equity",
-        "cash",
-        "short_term_investments",
-        "long_term_debt",
-        "current_debt",
-        "goodwill",
-        "intangibles",
-        "inventory",
-        "ppe_net",
-        "shares_outstanding_end",
-        "buyback_remaining",
-        "treasury_stock",
-        "treasury_stock_shares",
-        # BDC point-in-time
-        "nav_per_share",
-        # REIT point-in-time
-        "real_estate_assets",
-        # Insurance point-in-time (balance-sheet float components)
-        "claims_reserve",
-        "unearned_premiums",
-        "premiums_receivable",
-        "deferred_acquisition_costs",
-        "reinsurance_recoverable",
-    }
+    # Whether a concept is a duration or a point-in-time fact is a property of
+    # the concept, so it is declared once in the vocabulary rather than kept as
+    # a set here and a second, slightly different set in the quarterly pass.
+    point_in_time_metrics = vocabulary.instants()
     if extra_point_in_time:
         point_in_time_metrics |= set(extra_point_in_time)
     for key, tags in metric_tags.items():
@@ -2969,56 +2589,47 @@ def build_financials(facts: dict, metric_tags: dict = None,
         if series:
             raw[key] = normalize_to_fiscal_years(series)
 
-    # Net income fallback: ProfitLoss. A filer with no noncontrolling interests
-    # has nothing to distinguish consolidated profit from the parent's share,
-    # and some stop tagging NetIncomeLoss altogether. VeriSign did exactly that
-    # from FY2013 — companyfacts carries NetIncomeLoss for FY2007-FY2012 only,
-    # has never carried NetIncomeLossAvailableToCommonStockholdersBasic, and
-    # holds ProfitLoss unbroken FY2007-FY2025. Net income, pretax income and
-    # EPS were blank for thirteen years while revenue and operating income
-    # filled normally.
+    # Vocabulary gap-fills. A gap-fill concept measures the same thing as its
+    # metric's candidate list but is not interchangeable with it, so it is
+    # applied per year and ONLY where the candidate list came back empty —
+    # never as another entry in the list itself. Two of the three show why:
     #
-    # A gap-fill, NOT another entry in the tag list. extract_annual_series
-    # keeps the largest absolute value across tags, so listing ProfitLoss there
-    # would let the consolidated figure outrank the parent-attributable one for
-    # every filer that DOES have minority interests, quietly changing what the
-    # row means — Brandywine's FY2025 would move from -178,247 to -178,867
-    # thousand. Applied per year, only where nothing was found.
-    _profit_loss = extract_annual_series(facts, ["ProfitLoss"])
-    if _profit_loss:
-        _ni_filled = dict(raw.get("net_income") or {})
-        for _d, _v in normalize_to_fiscal_years(_profit_loss).items():
-            if _ni_filled.get(_d) is None:
-                _ni_filled[_d] = _v
-        if _ni_filled:
-            raw["net_income"] = _ni_filled
-
-    # Long-term debt fallback: senior notes. A filer whose only borrowing is a
-    # note issue may tag just that and never a consolidated debt concept.
-    # VeriSign is the case — $1,788,200 thousand under SeniorLongTermNotes and
-    # SeniorNotes at FY2025, nothing under any of the eight tags tried, so its
-    # debt, net cash and enterprise value were all blank. The screener already
-    # reads SeniorNotes among its debt components; only this path did not.
+    #   net_income     <- ProfitLoss. A filer with no noncontrolling interests
+    #                     has nothing separating consolidated profit from the
+    #                     parent's share, and some stop tagging NetIncomeLoss
+    #                     altogether; VeriSign did from FY2013, so net income,
+    #                     pretax income and EPS were blank for thirteen years
+    #                     while revenue and operating income filled normally.
+    #                     As a list entry it would instead outrank
+    #                     NetIncomeLoss under the largest-absolute-value rule
+    #                     for every filer that DOES have minority interests —
+    #                     BDN FY2025 would move -178,247 -> -178,867 thousand.
     #
-    # A gap-fill for the same reason as net income above: senior notes are a
-    # COMPONENT of debt, and where a filer tags both a component and a total,
-    # the point-in-time extractor's largest-value rule could let the component
-    # stand in for the total, or push a figure that already includes the
-    # current portion into a row that current debt is then added to. Applied
-    # per year, only where nothing was found.
+    #   long_term_debt <- SeniorLongTermNotes / SeniorNotes. VeriSign's only
+    #                     borrowing is a note issue, $1,788,200 thousand at
+    #                     FY2025 under those two concepts and nothing under any
+    #                     consolidated debt tag, so its debt, net cash and
+    #                     enterprise value were blank. As a list entry a
+    #                     component could stand in for a total, or push a
+    #                     figure that already includes the current portion into
+    #                     a row current debt is then added to.
     #
-    # DebtInstrumentFairValue is deliberately not used. VeriSign carries it at
-    # $1,750,000 thousand against the $1,788,200 thousand carrying amount, and
-    # a fair value is a different measure, not a substitute.
-    _senior = extract_point_in_time_series(
-        facts, ["SeniorLongTermNotes", "SeniorNotes"])
-    if _senior:
-        _ltd_filled = dict(raw.get("long_term_debt") or {})
-        for _d, _v in normalize_to_fiscal_years(_senior).items():
-            if _ltd_filled.get(_d) is None:
-                _ltd_filled[_d] = _v
-        if _ltd_filled:
-            raw["long_term_debt"] = _ltd_filled
+    # The roles, and the reasoning, live in vocabulary.py; this loop only
+    # applies them, which is what keeps the analyze page and the screener from
+    # disagreeing about whether a company has earnings or debt at all.
+    for _metric, _fill_tags in GAP_FILL_TAGS.items():
+        _extract = (extract_point_in_time_series
+                    if vocabulary.VOCAB[_metric].kind == vocabulary.INSTANT
+                    else extract_annual_series)
+        _found = _extract(facts, _fill_tags)
+        if not _found:
+            continue
+        _filled = dict(raw.get(_metric) or {})
+        for _d, _v in normalize_to_fiscal_years(_found).items():
+            if _filled.get(_d) is None:
+                _filled[_d] = _v
+        if _filled:
+            raw[_metric] = _filled
 
     # Interest expense fallback: some filers (e.g. CHTR from FY2014) stop
     # tagging a dedicated InterestExpense and only report a combined
@@ -3029,7 +2640,7 @@ def build_financials(facts: dict, metric_tags: dict = None,
     # direct InterestExpense value.
     _int_exp_existing = raw.get("interest_expense", {})
     _int_net_signed = extract_annual_series(
-        facts, ["InterestIncomeExpenseNet", "InterestIncomeExpenseNonoperatingNet"])
+        facts, vocabulary.tags("interest_expense", vocabulary.SIGNED))
     if _int_net_signed:
         _int_net_signed = normalize_to_fiscal_years(_int_net_signed)
         _filled = dict(_int_exp_existing)
@@ -4950,9 +4561,11 @@ def analyze():
     # after fiscal year-end) where available.  It is more current and authoritative
     # than the balance-sheet-date CommonStockSharesOutstanding.  We key it by the
     # `fy` field so it lands in the right fiscal year regardless of the filing date.
+    _cover_shares_concept = vocabulary.tags(
+        "shares_outstanding_end", vocabulary.SERIES, ns=vocabulary.DEI)[0]
     _entity_shares_tag = (
-        facts.get("facts", {}).get("us-gaap", {}).get("EntityCommonStockSharesOutstanding")
-        or facts.get("facts", {}).get("dei", {}).get("EntityCommonStockSharesOutstanding")
+        facts.get("facts", {}).get("us-gaap", {}).get(_cover_shares_concept)
+        or facts.get("facts", {}).get("dei", {}).get(_cover_shares_concept)
     )
     if _entity_shares_tag:
         for _e in _entity_shares_tag.get("units", {}).get("shares", []):
@@ -5092,61 +4705,17 @@ def analyze():
         # (3) Fall back: construct a Dec-31 anchor from the display year
         _last_annual_date = f"{_lat_y}-12-31"
 
-    # Metrics to extract for quarterly view
-    _quarterly_flow_keys = {
-        "revenue", "gross_profit", "cost_of_revenue", "operating_income", "net_income",
-        "operating_cash_flow", "capex", "depreciation", "stock_based_compensation",
-        "income_tax", "interest_expense", "investment_gains",
-        "dividends_paid", "buybacks_value", "dividends_per_share",
-        # BDC flow metrics
-        "net_investment_income", "gross_investment_income", "nii_per_share",
-        # Bank flow metrics
-        "interest_income", "net_interest_income", "noninterest_income",
-        "noninterest_expense", "provision_for_losses", "ppnr",
-        # REIT flow metrics
-        "gains_on_real_estate", "real_estate_depreciation", "straight_line_rent", "recurring_capex",
-        "general_admin_expense", "selling_marketing_expense",
-        # Opex lines for the gross-profit add-back fallback (INTU and similar)
-        "sga_expense", "rd_expense", "amortization_of_intangibles", "restructuring_charges",
-        # Insurance flow metrics
-        "premiums_earned", "premiums_written", "losses_incurred", "benefits_losses_expenses",
-    }
-    _quarterly_bs_keys = {
-        "total_assets", "current_assets", "current_liabilities", "equity",
-        "cash", "short_term_investments", "long_term_debt", "current_debt",
-        "total_liabilities", "goodwill", "intangibles", "inventory", "shares_outstanding_end",
-        "treasury_stock", "treasury_stock_shares", "ppe_net",
-        # Operating leases (ASC 842)
-        "operating_lease_liability_total", "operating_lease_liability_current",
-        "operating_lease_liability_noncurrent", "operating_lease_rou_asset",
-        # BDC point-in-time
-        "nav_per_share",
-        # REIT point-in-time
-        "real_estate_assets",
-        # Insurance point-in-time (float components)
-        "claims_reserve", "unearned_premiums", "premiums_receivable",
-        "deferred_acquisition_costs", "reinsurance_recoverable",
-        # Marketable equity portfolio — needed quarterly wherever UNTA deducts it
-        "equity_securities",
-    }
-    _point_in_time_metrics = {
-        "total_assets", "current_assets", "current_liabilities", "total_liabilities",
-        "equity", "cash", "short_term_investments", "long_term_debt", "current_debt",
-        "goodwill", "intangibles", "inventory", "shares_outstanding_end", "buyback_remaining",
-        "treasury_stock", "treasury_stock_shares", "ppe_net",
-        # Operating leases (ASC 842)
-        "operating_lease_liability_total", "operating_lease_liability_current",
-        "operating_lease_liability_noncurrent", "operating_lease_rou_asset",
-        # BDC point-in-time
-        "nav_per_share",
-        # REIT point-in-time
-        "real_estate_assets",
-        # Insurance point-in-time (float components)
-        "claims_reserve", "unearned_premiums", "premiums_receivable",
-        "deferred_acquisition_costs", "reinsurance_recoverable",
-        # Marketable equity portfolio — needed quarterly wherever UNTA deducts it
-        "equity_securities",
-    }
+    # Which metrics get quarter columns, and which of them are balance-sheet
+    # instants, both come from the vocabulary. These were three hand-kept sets
+    # before, and they had already drifted apart: `equity_securities` appeared
+    # among the quarterly instants but not the annual ones, so the same
+    # balance-sheet position was read first-tag-wins in the quarter columns and
+    # largest-absolute-value in the annual ones. A quarterly column and an
+    # annual column that disagree about what a row MEANS is the failure this
+    # whole vocabulary exists to prevent, and it is not visible in the output.
+    _quarterly_flow_keys = vocabulary.quarterly(vocabulary.FLOW)
+    _quarterly_bs_keys   = vocabulary.quarterly(vocabulary.INSTANT)
+    _point_in_time_metrics = vocabulary.instants()
 
     # quarter_end_dates: {"Q1": "YYYY-MM-DD", ...}  for display labels
     # quarter_filing_links: {"Q1": "https://...", ...}  for header links
@@ -5231,19 +4800,26 @@ def analyze():
                 for qk, v in q_vals.items():
                     existing[qk] = v
 
-        # The senior-notes fallback again, for the quarter columns. This pass
-        # reads the same tag list as the annual one, so fixing that alone left
-        # VeriSign's quarterly debt blank for exactly the reason its annual
-        # debt had been — and quarterly total debt is assembled from this row,
-        # so net cash went with it. Only where nothing resolved, same as above.
-        _q_senior = extract_post_annual_quarters(
-            facts, ["SeniorLongTermNotes", "SeniorNotes"], _last_annual_date,
-            True, quarter_dates=_canonical_q_dates)
-        if _q_senior:
-            _ltd_q = financials.setdefault("long_term_debt", {})
-            for _qk, _v in _q_senior.items():
-                if _ltd_q.get(_qk) is None:
-                    _ltd_q[_qk] = _v
+        # The same gap-fills the annual pass applies, for the quarter columns.
+        # This pass reads the same candidate lists, so it fails for exactly the
+        # reasons the annual pass does and needs exactly the same fills — the
+        # senior-notes case had to be fixed here separately once already,
+        # because quarterly total debt is assembled from this row and net cash
+        # went blank with it. Driving both loops from one vocabulary is what
+        # stops the next gap-fill from being applied to one and not the other.
+        for _metric, _fill_tags in GAP_FILL_TAGS.items():
+            if _metric not in _quarterly_flow_keys | _quarterly_bs_keys:
+                continue
+            _q_fill = extract_post_annual_quarters(
+                facts, _fill_tags, _last_annual_date,
+                _metric in _point_in_time_metrics,
+                quarter_dates=_canonical_q_dates)
+            if not _q_fill:
+                continue
+            _existing_q = financials.setdefault(_metric, {})
+            for _qk, _v in _q_fill.items():
+                if _existing_q.get(_qk) is None:
+                    _existing_q[_qk] = _v
 
         # As-reported quarterly overlay. Runs AFTER the companyfacts pass so
         # the filing's own statements win where both have a figure, matching
@@ -5260,7 +4836,7 @@ def analyze():
         # negative-for-expense net-interest figure in their 10-Qs too.
         _q_int_exp_existing = {k for k in financials.get("interest_expense", {})}
         _q_int_net = extract_post_annual_quarters(
-            facts, ["InterestIncomeExpenseNet", "InterestIncomeExpenseNonoperatingNet"],
+            facts, vocabulary.tags("interest_expense", vocabulary.SIGNED),
             _last_annual_date, False, quarter_dates=_canonical_q_dates)
         if _q_int_net:
             _ie = financials.setdefault("interest_expense", {})
@@ -5306,15 +4882,17 @@ def analyze():
             for _qk, (_, _val) in _qk_best.items():
                 _so_series[_qk] = _val   # cover-page quarterly wins
 
-        # Fallback for companies that don't file CommonStockSharesOutstanding or
-        # EntityCommonStockSharesOutstanding (e.g. META): use the quarterly
-        # WeightedAverageNumberOfSharesOutstandingBasic as a proxy.
+        # Fallback for companies that file neither share-count concept (e.g.
+        # META): use the quarterly weighted average as a proxy. It is a PROXY
+        # role in the vocabulary, not a gap-fill — a weighted average is a
+        # different measure from a period-end count, so nothing applies it
+        # automatically and it is named here, for the quarter columns only.
         _so_series = financials.setdefault("shares_outstanding_end", {})
         _missing_qks = [qk for qk in quarter_end_dates if not _so_series.get(qk)]
         if _missing_qks:
+            _wtd_proxy = vocabulary.tags("shares_outstanding_end", vocabulary.PROXY)[0]
             _wtd_avg_tag = (
-                facts.get("facts", {}).get("us-gaap", {})
-                    .get("WeightedAverageNumberOfSharesOutstandingBasic")
+                facts.get("facts", {}).get("us-gaap", {}).get(_wtd_proxy)
             )
             if _wtd_avg_tag:
                 _qdate_parsed2 = {

@@ -47,8 +47,15 @@ def mapped_tags(ticker: str = None) -> set[str]:
     for tags in app.METRIC_TAGS.values():
         for t in (tags or []):
             out.add(t)
-    # Tags consumed by targeted fallbacks rather than METRIC_TAGS lists.
-    out |= {"InterestIncomeExpenseNet", "InterestIncomeExpenseNonoperatingNet"}
+    # Tags consumed by targeted fallbacks rather than by a candidate list —
+    # gap-fills, sign-normalized substitutes and proxies. Taken from the shared
+    # vocabulary rather than listed here, because a hand-kept list of them goes
+    # stale silently and the audit then reports a tag the app already reads as
+    # an uncovered gap.
+    import vocabulary
+    for metric in vocabulary.VOCAB:
+        for role in (vocabulary.GAP_FILL, vocabulary.SIGNED, vocabulary.PROXY):
+            out |= set(vocabulary.tags(metric, role, vocabulary.ANALYZE))
 
     if ticker:
         import company_templates
