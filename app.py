@@ -2957,6 +2957,30 @@ def build_financials(facts: dict, metric_tags: dict = None,
         if series:
             raw[key] = normalize_to_fiscal_years(series)
 
+    # Net income fallback: ProfitLoss. A filer with no noncontrolling interests
+    # has nothing to distinguish consolidated profit from the parent's share,
+    # and some stop tagging NetIncomeLoss altogether. VeriSign did exactly that
+    # from FY2013 — companyfacts carries NetIncomeLoss for FY2007-FY2012 only,
+    # has never carried NetIncomeLossAvailableToCommonStockholdersBasic, and
+    # holds ProfitLoss unbroken FY2007-FY2025. Net income, pretax income and
+    # EPS were blank for thirteen years while revenue and operating income
+    # filled normally.
+    #
+    # A gap-fill, NOT another entry in the tag list. extract_annual_series
+    # keeps the largest absolute value across tags, so listing ProfitLoss there
+    # would let the consolidated figure outrank the parent-attributable one for
+    # every filer that DOES have minority interests, quietly changing what the
+    # row means — Brandywine's FY2025 would move from -178,247 to -178,867
+    # thousand. Applied per year, only where nothing was found.
+    _profit_loss = extract_annual_series(facts, ["ProfitLoss"])
+    if _profit_loss:
+        _ni_filled = dict(raw.get("net_income") or {})
+        for _d, _v in normalize_to_fiscal_years(_profit_loss).items():
+            if _ni_filled.get(_d) is None:
+                _ni_filled[_d] = _v
+        if _ni_filled:
+            raw["net_income"] = _ni_filled
+
     # Interest expense fallback: some filers (e.g. CHTR from FY2014) stop
     # tagging a dedicated InterestExpense and only report a combined
     # "net interest income/expense" figure — signed negative-for-expense,
