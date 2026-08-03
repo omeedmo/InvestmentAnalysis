@@ -630,8 +630,33 @@ VOCAB: dict[str, Metric] = {
     ], quarterly=True),
 
     "goodwill":    M(INSTANT, ["Goodwill"], quarterly=True),
-    "intangibles": M(INSTANT, ["FiniteLivedIntangibleAssetsNet",
-                               "IntangibleAssetsNetExcludingGoodwill"], quarterly=True),
+    # IntangibleAssetsNetExcludingGoodwill is the whole of it where a filer
+    # tags it, and largest-wins keeps that. The other two are for filers that
+    # tag only the parts. Indefinite-lived franchise rights matter more than
+    # their obscure name suggests: Charter carries $67,471M of them against
+    # $483M of finite-lived intangibles, so without this concept its Intangible
+    # Assets row showed under one percent of what it holds, on a $154B balance
+    # sheet — a wrong number rather than a missing one. It is also the reason
+    # the row was blank for quarters: Charter reports the finite-lived table
+    # annually and not in its 10-Qs, while franchise rights are tagged in every
+    # one of them.
+    #
+    # Order is load-bearing here, because this resolves first-match-wins rather
+    # than largest-wins. Appending franchise rights after the finite-lived line
+    # fixed only the quarters and left the annual columns alone — Charter has no
+    # finite-lived facts in its 10-Qs, so the quarters fell through to franchise
+    # rights and read $67,471M beside annual columns still reading $483M. One
+    # row meaning two different things depending on the column is worse than the
+    # understatement it was meant to fix.
+    #
+    # So: the whole-of-it concept first, then the dominant part, then the
+    # remainder. Not summed — adding concepts together needs a filer that tags
+    # parts-but-never-a-total and never double counts, which is the check the
+    # debt components carry. First-match here understates Charter by the $483M
+    # of finite-lived intangibles it also holds, 0.7%, and cannot double count.
+    "intangibles": M(INSTANT, ["IntangibleAssetsNetExcludingGoodwill",
+                               "IndefiniteLivedFranchiseRights",
+                               "FiniteLivedIntangibleAssetsNet"], quarterly=True),
     "inventory":   M(INSTANT, ["InventoryNet"], quarterly=True, row=False,
         note="Feeds the working capital row."),
 
