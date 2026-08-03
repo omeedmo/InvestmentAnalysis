@@ -4687,6 +4687,57 @@ def analyze():
         if _fcf_f:
             financials["fcf"] = _fcf_f
 
+        # And the rows that hang off FCF. Refreshing FCF alone left them
+        # dividing the value it used to have: build_financials derives Adj. FCF
+        # and its margin and ROE from FCF, and the per-share rebuild runs
+        # before the plugin hook above, so all of them still reflected the
+        # pre-overlay series. Lumen gained a complete FCF row and kept an empty
+        # FCF-per-share and Adj. FCF beside it.
+        #
+        # Filled only where absent, like FCF itself, so a supplied value wins.
+        _sbc_f = financials.get("stock_based_compensation", {})
+        _rev_f = financials.get("revenue", {})
+        _eq_f  = financials.get("equity", {})
+        # Same share base the per-share rebuild uses: diluted weighted average
+        # where the filer reports one, else the period-end count.
+        _sb_f  = financials.get("shares_diluted_wtd") or financials.get("shares_outstanding_end") or {}
+
+        def _fill(metric: str, fn):
+            series = dict(financials.get(metric) or {})
+            for _d, _v in financials["fcf"].items():
+                if str(_d).startswith("Q") or _v is None or series.get(_d) is not None:
+                    continue
+                _r = fn(_v, str(_d)[:4])
+                if _r is not None:
+                    series[_d] = _r
+            if series:
+                financials[metric] = series
+
+        if _sb_f:
+            _fill("fcf_per_share",
+                  lambda v, y: v / fy_get(_sb_f, y) if fy_get(_sb_f, y) else None)
+        if _sbc_f:
+            _fill("adj_fcf",
+                  lambda v, y: v - abs(fy_get(_sbc_f, y))
+                  if fy_get(_sbc_f, y) is not None else None)
+            _adj = financials.get("adj_fcf") or {}
+            if _adj and _rev_f:
+                _m = dict(financials.get("adj_fcf_margin") or {})
+                for _d, _v in _adj.items():
+                    _r = fy_get(_rev_f, str(_d)[:4])
+                    if not str(_d).startswith("Q") and _m.get(_d) is None and _r:
+                        _m[_d] = _v / _r
+                if _m:
+                    financials["adj_fcf_margin"] = _m
+            if _adj and _eq_f:
+                _r2 = dict(financials.get("adj_fcf_roe") or {})
+                for _d, _v in _adj.items():
+                    _e = fy_get(_eq_f, str(_d)[:4])
+                    if not str(_d).startswith("Q") and _r2.get(_d) is None and _e and _e > 0:
+                        _r2[_d] = _v / _e
+                if _r2:
+                    financials["adj_fcf_roe"] = _r2
+
     # Recompute net_cash after any BRK debt/cash injections
     _tc = financials.get("total_cash", {})
     _td = financials.get("total_debt", {})
