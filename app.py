@@ -4763,14 +4763,21 @@ def analyze():
                                   ("net_margin",       "net_income"),
                                   ("ebitda_margin",    "ebitda"),
                                   ("fcf_margin",       "fcf")):
-            if _metric in _applied:
-                continue                     # supplied on purpose; not ours
+            # Supplied by the overlay means do not OVERWRITE what it wrote --
+            # not leave the years it had nothing for empty. Skipping the metric
+            # outright got that wrong: Lumen's FCF margin is a global-binding
+            # expression over as-filed values, and the overlay resolves capex
+            # for only four years, so it supplied three of fifteen and the
+            # other twelve stayed blank beside a complete FCF row.
+            _fill_only = _metric in _applied
             _num = financials.get(_num_key) or {}
             if not _num:
                 continue
             _out = dict(financials.get(_metric) or {})
             for _d, _v in _num.items():
                 if str(_d).startswith("Q") or _v is None:
+                    continue
+                if _fill_only and _out.get(_d) is not None:
                     continue
                 _r = fy_get(_rev_m, str(_d)[:4])
                 if _r:
