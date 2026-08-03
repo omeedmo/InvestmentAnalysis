@@ -58,6 +58,17 @@ DERIVED = {
     "revenue_per_share": (("revenue", "shares_diluted_wtd"), lambda r, s: r / s if s else None),
     "fcf_per_share":  (("fcf", "shares_diluted_wtd"),      lambda f, s: f / s if s else None),
     "book_value_per_share": (("equity", "shares_outstanding_end"), lambda e, s: e / s if s else None),
+    # The rest of the margin family and the SBC-adjusted rows. Absent from the
+    # first version of this file, which is the only reason it reported CLEAN
+    # while Lumen's FCF margin stood at three years of fifteen: a row the audit
+    # does not name is a row it cannot check, and the gap looks identical to
+    # having no gap.
+    "gross_margin":   (("gross_profit", "revenue"),        lambda g, r: g / r if r else None),
+    "ebitda_margin":  (("ebitda", "revenue"),              lambda e, r: e / r if r else None),
+    "fcf_margin":     (("fcf", "revenue"),                 lambda f, r: f / r if r else None),
+    "adj_fcf":        (("fcf", "stock_based_compensation"), lambda f, s: f - abs(s)),
+    "adj_fcf_margin": (("adj_fcf", "revenue"),             lambda a, r: a / r if r else None),
+    "adj_fcf_roe":    (("adj_fcf", "equity"),              lambda a, e: a / e if e and e > 0 else None),
 }
 
 TOL = 0.01          # 1%: past rounding, well short of a different definition
@@ -86,6 +97,19 @@ def audit(ticker: str, client) -> list:
         years = set(series[0])
         for s in series[1:]:
             years &= set(s)
+        src = "overlay" if metric in applied else "formula"
+
+        # Split the blanks two ways before reporting them, because they are
+        # different faults with different fixes. A row with nothing in it was
+        # derived too early and never revisited. A row with SOME years in it,
+        # blank in others where the inputs are present, is a row half-written
+        # by one source and never completed by the other -- Lumen's FCF margin
+        # is a binding expression the overlay could only resolve for four
+        # years, and the refresh that should have filled the rest skipped the
+        # metric entirely on the grounds that it was "supplied". Whether the
+        # remedy is fill-only or overwrite depends on which of these it is, so
+        # collapsing them into one bucket hides the answer.
+        blanks, mismatches = [], []
         for y in sorted(years):
             try:
                 want = fn(*[s[y] for s in series])
@@ -94,14 +118,18 @@ def audit(ticker: str, client) -> list:
             if want is None:
                 continue
             have = got.get(y)
-            src = "overlay" if metric in applied else "formula"
             if have is None:
-                out.append((ticker, metric, y, "STALE",
-                            f"inputs present, row empty (implied {want:,.0f})"
-                            if abs(want) > 1 else "inputs present, row empty"))
+                blanks.append((y, f"implied {want:,.4g}"))
             elif abs(want) > 1e-9 and abs(have - want) / max(abs(want), 1e-9) > TOL:
-                out.append((ticker, metric, y, "MISMATCH",
-                            f"row {have:,.4g} vs inputs {want:,.4g}  [{src}]"))
+                mismatches.append((y, f"row {have:,.4g} vs inputs {want:,.4g}  [{src}]"))
+
+        kind = "PARTIAL" if (blanks and got) else "STALE"
+        for y, why in blanks:
+            out.append((ticker, metric, y, kind,
+                        f"{why}; row has {len(got)} other year(s)" if kind == "PARTIAL"
+                        else f"{why}; row is empty throughout"))
+        for y, why in mismatches:
+            out.append((ticker, metric, y, "MISMATCH", why))
     return out
 
 
@@ -116,6 +144,7 @@ def main() -> int:
         findings += audit(tk, client)
 
     stale = [f for f in findings if f[3] == "STALE"]
+    part  = [f for f in findings if f[3] == "PARTIAL"]
     mism  = [f for f in findings if f[3] == "MISMATCH"]
 
     def report(title, rows):
@@ -128,12 +157,15 @@ def main() -> int:
             print(f"     {tk:7} {metric:22} {len(items):>2} yr  {yrs[:46]}")
             print(f"             {items[0][1]}")
 
-    report("derived row empty while every input has a value", stale)
+    report("derived row empty throughout while its inputs have values", stale)
+    print()
+    report("derived row filled for some years, blank for others its inputs cover", part)
     print()
     report("derived row disagrees with its inputs", mism)
 
-    print(f"\n{'CLEAN' if not stale else 'STALE DERIVATIONS FOUND'}")
-    return 1 if stale else 0
+    bad = stale + part
+    print(f"\n{'CLEAN' if not bad else 'INCOMPLETE DERIVATIONS FOUND'}")
+    return 1 if bad else 0
 
 
 if __name__ == "__main__":
