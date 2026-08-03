@@ -4738,6 +4738,46 @@ def analyze():
                 if _r2:
                     financials["adj_fcf_roe"] = _r2
 
+    # Margins, against the rows now shown above them.
+    #
+    # These are derived in build_financials from the pre-overlay numerator and
+    # revenue, and nothing revisited them once the overlay replaced either. The
+    # result is not a blank but a disagreement: Simon's FY2012 net margin read
+    # 29.3% while the net income and revenue printed directly above it work out
+    # to 33.6%. A ratio that does not equal the two rows it sits under is worse
+    # than a missing one, because nothing on the page suggests checking it.
+    #
+    # This OVERWRITES, unlike the fill-only refreshes above, because a stale
+    # value is the thing being corrected. What it must not touch is a margin
+    # supplied deliberately: the global bindings define net_margin as an
+    # expression over as-filed values, and Berkshire's template replaces the
+    # headline margin with one over operating earnings, since its reported net
+    # margin swings from 1.6% to 32.5% purely on investment gains. Anything the
+    # overlay applied is therefore left exactly as it is, and only the rows
+    # still carrying the build_financials formula are recomputed.
+    _applied = set((scorecard_meta or {}).get("applied") or {})
+    _rev_m = financials.get("revenue", {})
+    if _rev_m:
+        for _metric, _num_key in (("gross_margin",     "gross_profit"),
+                                  ("operating_margin", "operating_income"),
+                                  ("net_margin",       "net_income"),
+                                  ("ebitda_margin",    "ebitda"),
+                                  ("fcf_margin",       "fcf")):
+            if _metric in _applied:
+                continue                     # supplied on purpose; not ours
+            _num = financials.get(_num_key) or {}
+            if not _num:
+                continue
+            _out = dict(financials.get(_metric) or {})
+            for _d, _v in _num.items():
+                if str(_d).startswith("Q") or _v is None:
+                    continue
+                _r = fy_get(_rev_m, str(_d)[:4])
+                if _r:
+                    _out[_d] = _v / _r
+            if _out:
+                financials[_metric] = _out
+
     # Recompute net_cash after any BRK debt/cash injections
     _tc = financials.get("total_cash", {})
     _td = financials.get("total_debt", {})
