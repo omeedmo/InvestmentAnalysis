@@ -1,0 +1,47 @@
+{
+  "ticker": "CVS",
+  "cik": 64803,
+  "plugin": "CVS",
+  "generated_by": "session-authored from 10-K MD&A segment tables, verified by agreement across overlapping filings",
+  "summary": "Health insurer, pharmacy benefit manager and retail pharmacy in one filer. The three measures below are the ones CVS manages the business on and XBRL does not carry: the medical benefit ratio for the Health Care Benefits segment, and pharmacy volume for Pharmacy & Consumer Wellness.",
+  "metrics": [
+    {
+      "key": "mbr",
+      "label": "Medical Benefit Ratio (reported)",
+      "expr": "mbr_reported",
+      "type": "%",
+      "basis": "reported",
+      "why": "The ratio CVS itself publishes for the Health Care Benefits segment, and the one its results are discussed on. Distinct from the Loss Ratio row above, which is a consolidated GAAP construction.",
+      "evidence": "Health Care Benefits segment table, MD&A: 91.2% / 92.5% / 86.2% for FY2025 / FY2024 / FY2023.",
+      "confidence": "high"
+    },
+    {
+      "key": "pharmacy_claims",
+      "label": "Pharmacy Claims Processed (reported)",
+      "expr": "pharmacy_claims_reported",
+      "type": "#",
+      "basis": "reported",
+      "why": "Pharmacy & Consumer Wellness volume, the denominator behind that segment's economics.",
+      "evidence": "Pharmacy & Consumer Wellness table, MD&A: 1,900.7m / 1,917.6m / 2,344.3m for FY2025 / FY2024 / FY2023.",
+      "confidence": "high"
+    },
+    {
+      "key": "prescriptions",
+      "label": "Prescriptions Filled (reported)",
+      "expr": "prescriptions_reported",
+      "type": "#",
+      "basis": "reported",
+      "why": "The same volume on a 90-day-adjusted basis, which is how CVS reports script growth.",
+      "evidence": "Pharmacy & Consumer Wellness table, MD&A: 1,808.8m / 1,715.5m / 1,649.1m for FY2025 / FY2024 / FY2023.",
+      "confidence": "high"
+    }
+  ],
+  "annotations": {
+    "loss_ratio": "A consolidated GAAP construction, not the ratio CVS reports: PolicyholderBenefitsAndClaimsIncurredNet over PremiumsEarnedNet, both across the whole company. For Q2 FY2026 it comes to 89.7% where CVS reported a medical benefit ratio of 87.4%. Neither is wrong; they answer different questions. The MBR row below carries the company's own figure, which is scoped to the Health Care Benefits segment and uses CVS's definition of health care costs."
+  },
+  "caveats": [
+    "None of these three is XBRL-tagged, so all come from MD&A tables. There is no filed value to reconcile against, so each year is verified instead by agreement across filings: every 10-K prints three years, consecutive filings overlap on two, and a year is accepted only where a filing reporting it agrees with a year already established. The oldest filing in the window seeds the series and is taken on its own.",
+    "The MBR row cannot be anchored on its own name. \"Medical benefit ratio\" appears five times in the FY2025 10-K — forward-looking statements, risk factors, and twice in the commentary defining it — and never immediately before the figures, because the row label wraps. The anchor is the tail of its parenthetical, \"premium revenues)\", followed by three percentages.",
+    "Annual only. The 10-Q layout has not been checked, so quarter cells stay blank rather than being filled from a pattern whose column order is unconfirmed — the mistake that put a quarterly figure in an annual column elsewhere in this app."
+  ]
+}
