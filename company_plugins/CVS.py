@@ -119,3 +119,56 @@ def apply_annual_filings(filings: list, financials: dict, ctx: dict) -> None:
         if series:
             financials[f"{name}_reported"] = {
                 key_of.get(y, f"{y}-12-31"): v for y, v in series.items()}
+
+
+def apply_quarterly(financials: dict, quarter_end_dates: dict,
+                    quarter_filing_links: dict, ctx: dict) -> None:
+    """
+    The same three rows for the quarter columns, from the 10-Q MD&A.
+
+    A 10-Q prints four columns where the 10-K prints three: this quarter, the
+    same quarter a year ago, then the two year-to-date figures. The patterns
+    capture three groups and the first is the three-month figure in both forms,
+    so no separate quarterly regex is needed -- Q2 FY2026 reads 87.4% against
+    the 89.9% / 86.0% / 88.6% beside it, which is the ratio CVS reported.
+
+    The counts carry their own check and it is worth taking, because a column
+    misread is exactly the failure this app has hit before. Quarterly claims
+    and prescriptions must sum to the year-to-date column printed alongside
+    them, so where the earlier quarter is already known the two are added and
+    compared. A year-to-date figure mistaken for a quarter fails it by roughly
+    a factor of the quarter number. MBR gets no such check -- a ratio does not
+    add -- so it rests on the column position alone, which is why the anchor is
+    pinned to the label's own parenthetical rather than a loose search.
+    """
+    get_text_url = ctx.get("get_text_url")
+    if not get_text_url:
+        return
+
+    for qk in sorted(quarter_end_dates):
+        url = quarter_filing_links.get(qk)
+        if not url:
+            continue
+        try:
+            flat = _flat(get_text_url(url))
+        except Exception:                     # noqa: BLE001 - a fetch failure is a gap
+            continue
+        for name, pat, scale in (("mbr", MBR, 0.01),
+                                 ("pharmacy_claims", CLAIMS, 1e6),
+                                 ("prescriptions", SCRIPTS, 1e6)):
+            m = pat.search(flat)
+            if not m:
+                continue
+            try:
+                vals = [float(g.replace(",", "")) * scale for g in m.groups()]
+            except ValueError:
+                continue
+            series = financials.setdefault(f"{name}_reported", {})
+            if name != "mbr" and len(vals) >= 3:
+                # vals[2] is the year-to-date column. Quarters before this one
+                # must account for the difference, or the columns were misread.
+                prior = [series[k] for k in series
+                         if str(k).startswith("Q") and k < qk]
+                if prior and abs(sum(prior) + vals[0] - vals[2]) > vals[2] * 0.005:
+                    continue
+            series[qk] = vals[0]
