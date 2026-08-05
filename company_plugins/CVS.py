@@ -40,7 +40,13 @@ import re
 
 _PCT = r"([\d.]+)\s*%"
 # Anchored on the tail of the wrapped label, not the label itself -- see above.
-MBR = re.compile(r"premium revenues\)\s*" + _PCT + r"\s*" + _PCT + r"\s*" + _PCT)
+# The third column is OPTIONAL. A 10-K prints three fiscal years and a Q2 or
+# Q3 10-Q prints four (quarter, prior-year quarter, then the two year-to-date
+# columns), but a Q1 10-Q prints only two -- for Q1 the quarter IS the year to
+# date, so there is nothing to restate. Requiring three silently skipped every
+# Q1: "MBR (Health care costs as a % of premium revenues) 84.6 % 87.3 %".
+MBR = re.compile(r"premium revenues\)\s*" + _PCT + r"\s*" + _PCT
+                 + r"(?:\s*" + _PCT + r")?")
 
 _NUM = r"([\d,]+\.?\d*)"
 # (\(\d+\)\s*)? skips the footnote marker that sits between label and figures.
@@ -67,8 +73,11 @@ def _read(text: str) -> dict:
         if not m:
             continue
         try:
+            # A group can be None where the pattern's last column is optional;
+            # the index is the year offset, so absent columns are dropped
+            # rather than renumbered.
             out[name] = {i: float(g.replace(",", "")) * scale
-                         for i, g in enumerate(m.groups())}
+                         for i, g in enumerate(m.groups()) if g is not None}
         except ValueError:
             continue
     return out
@@ -160,11 +169,14 @@ def apply_quarterly(financials: dict, quarter_end_dates: dict,
             if not m:
                 continue
             try:
-                vals = [float(g.replace(",", "")) * scale for g in m.groups()]
+                vals = [None if g is None else float(g.replace(",", "")) * scale
+                        for g in m.groups()]
             except ValueError:
                 continue
+            if not vals or vals[0] is None:
+                continue
             series = financials.setdefault(f"{name}_reported", {})
-            if name != "mbr" and len(vals) >= 3:
+            if name != "mbr" and len(vals) >= 3 and vals[2] is not None:
                 # vals[2] is the year-to-date column. Quarters before this one
                 # must account for the difference, or the columns were misread.
                 prior = [series[k] for k in series
