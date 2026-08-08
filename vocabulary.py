@@ -524,6 +524,15 @@ VOCAB: dict[str, Metric] = {
         "AvailableForSaleSecuritiesDebtSecuritiesCurrent",
         "AvailableForSaleSecuritiesCurrent",
         "DebtSecuritiesAvailableForSaleExcludingAccruedInterestCurrent",  # INTU post-FY2023
+        # Last, so it only fires where none of the above resolved. The other
+        # five are available-for-sale classifications; a filer that holds its
+        # short-term paper to maturity tags this instead and matches none of
+        # them. Warrior Met (HCC) prints a plain "Short-term investments" line
+        # -- $20.2M at Q2 FY2026, $53.3M at FY2025 -- under this concept, and
+        # the row read empty in every period. The name contains neither
+        # "ShortTerm" nor "Investment", which is why searching for those missed
+        # it and the gap looked like a company that simply held none.
+        "HeldToMaturitySecuritiesCurrent",
     ], quarterly=True),
 
     # Marketable equity portfolio. Only surfaced as a row where a company
