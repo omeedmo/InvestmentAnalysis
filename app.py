@@ -997,9 +997,10 @@ def get_top_shareholders(submissions: dict, months: int = 12, max_filings: int =
 
 
 # ─── Institutional (13F) holders — curated value-investor roster ──────────────
-# Sourced from ValueSider's ~92 tracked value-investing 13F filers (2026-07).
+# Sourced from ValueSider's ~92 tracked value-investing 13F filers (2026-07),
+# plus funds whose portfolio is public but not on a 13F (see the "series" key).
 # This is a fixed, small universe (unlike EDGAR full-text search over ~6,000
-# filers), so each fund's latest-quarter 13F is fetched and cached ONCE per
+# filers), so each fund's latest-quarter filing is fetched and cached ONCE per
 # quarter — shared across every stock's analyze — instead of re-searching for
 # each stock. A stock lookup after the first population is a pure in-memory
 # scan of the cached holdings data, no SEC calls at all.
@@ -1097,6 +1098,18 @@ GURUS: list[dict] = [
     {"guru": "Michael Burry", "fund": "Scion Asset Management", "manager": "Scion Asset Management, LLC", "cik": 1649339},
     {"guru": "David Katz", "fund": "Matrix Advisors Value Fund", "manager": "Matrix Asset Advisors Inc/NY", "cik": 1016287},
     {"guru": "Phil Town", "fund": "Rule One Fund", "manager": "Rule One Partners, LLC", "cik": 2040263},
+    # Pabrai's second vehicle. Unlike the rest of the roster it does NOT file a
+    # 13F: it's a registered fund (a series of the Professionally Managed
+    # Portfolios trust), and neither the fund nor its adviser (Dhandho Funds
+    # LLC) has ever filed one — most of the portfolio is foreign-listed and so
+    # isn't a §13(f) security, keeping it under the $100M reporting threshold.
+    # Its full portfolio is public on Form N-PORT instead, filed by the trust
+    # per series, so this entry carries the SEC series ID and is fetched via
+    # _fetch_fund_latest_nport() rather than the 13F path. "cik" is the trust's
+    # (the N-PORT filer); it's unique within the roster, so it still works as
+    # the per-fund cache/label key.
+    {"guru": "Mohnish Pabrai", "fund": "Pabrai Wagons ETF", "manager": "Dhandho Funds LLC",
+     "cik": 811030, "series": "S000098509"},
 ]
 
 
@@ -1251,6 +1264,117 @@ def _fetch_fund_13f_holdings(cik: int, accn_nodash: str) -> Optional[dict]:
     return {"holdings": holdings, "portfolio_value": portfolio_val}
 
 
+def _fetch_series_nport_filings(series_id: str, limit: int = 5) -> list:
+    """[(accn_nodash, filing_date)] for a fund series' most recent N-PORT
+    filings, newest first. A trust files one N-PORT per series per quarter and
+    the submissions API is keyed by registrant CIK only, so EDGAR's browse
+    endpoint — the one place a series ID is a valid query key — is what narrows
+    the trust's filings down to this single fund. type=NPORT-P is a prefix
+    match, so amendments (NPORT-P/A) come back too."""
+    url = ("https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany"
+           f"&CIK={series_id}&type=NPORT-P&dateb=&owner=include"
+           f"&count={limit}&output=atom")
+    for attempt in range(2):
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=20)
+            if r.status_code == 429:
+                time.sleep(0.5 * (attempt + 1))
+                continue
+            if r.status_code != 200:
+                return []
+            text = r.text
+            break
+        except Exception:
+            if attempt == 1:
+                return []
+            time.sleep(0.4)
+    else:
+        return []
+
+    out = []
+    for entry in re.split(r"</entry>", text):
+        accn = _xml_tag(entry, "accession-number")
+        if not accn:
+            continue
+        out.append((accn.replace("-", ""), _xml_tag(entry, "filing-date") or ""))
+    return out[:limit]
+
+
+def _fetch_fund_latest_nport(cik: int, series_id: str) -> Optional[dict]:
+    """Latest N-PORT portfolio for one fund series, in the same shape as
+    _fetch_fund_13f_holdings() plus the period/date/link a 13F fetch resolves
+    separately — an N-PORT carries its holdings AND its reporting period in one
+    document, so there's no cover-page/info-table split to resolve.
+
+    N-PORT covers the whole portfolio, not just §13(f) securities, so a fund
+    sourced this way reports its foreign lines too; that's a fuller picture
+    than a 13F, not a different one, and the holdings still match by CUSIP
+    (where the security has one) or issuer name like any other fund's."""
+    for accn, fdate in _fetch_series_nport_filings(series_id):
+        url = f"https://www.sec.gov/Archives/edgar/data/{cik}/{accn}/primary_doc.xml"
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=25)
+            if r.status_code == 429:
+                time.sleep(0.5)
+                continue
+            if r.status_code != 200:
+                continue
+            text = r.text
+        except Exception:
+            continue
+        # The browse endpoint already filtered by series, but the document is
+        # the authority on which fund it actually reports — a mismatch means
+        # the wrong portfolio, which is worse than no data at all.
+        if _xml_tag(text, "seriesId") != series_id:
+            continue
+        period = _xml_tag(text, "repPdDate") or ""
+        if not period:
+            continue
+
+        holdings = []
+        portfolio_val = 0.0
+        for block in re.split(r"</(?:\w+:)?invstOrSec>", text):
+            nm = _xml_tag(block, "name")
+            val_raw = _xml_tag(block, "valUSD")
+            if not nm or not val_raw:
+                continue
+            try:
+                val = float(val_raw)
+            except ValueError:
+                continue
+            if val <= 0:
+                continue
+            # <balance> is a share count only for units NS; for bonds and the
+            # like it's a principal amount, which isn't a share figure.
+            sh = 0.0
+            if (_xml_tag(block, "units") or "").upper() == "NS":
+                try:
+                    sh = float(_xml_tag(block, "balance") or 0)
+                except ValueError:
+                    sh = 0.0
+            cusip = (_xml_tag(block, "cusip") or "").strip().upper()
+            if cusip in ("", "N/A", "000000000"):
+                # Foreign lines often have no CUSIP, only an ISIN — and a US
+                # ISIN is just "US" + the CUSIP + a check digit.
+                m = re.search(r'<isin\s+value="([^"]+)"', block)
+                isin = (m.group(1).strip().upper() if m else "")
+                cusip = isin[2:11] if isin.startswith("US") and len(isin) == 12 else ""
+            portfolio_val += val
+            holdings.append({"name": nm.upper(), "cusip": cusip or None,
+                             "value": val, "shares": sh})
+        if not holdings:
+            continue
+        return {"holdings": holdings, "portfolio_value": portfolio_val,
+                "period": period, "date": fdate, "form": "NPORT-P",
+                "link": f"https://www.sec.gov/Archives/edgar/data/{cik}/{accn}/"}
+    return None
+
+
+def _guru_nport_series() -> dict:
+    """CIK → SEC series ID, for roster funds sourced from N-PORT (see GURUS)."""
+    return {g["cik"]: g["series"] for g in GURUS if g.get("series")}
+
+
 def _unique_guru_ciks() -> list:
     seen, out = set(), []
     for g in GURUS:
@@ -1270,6 +1394,7 @@ def get_guru_universe(refresh: bool = False) -> dict:
     """
     target_q = _latest_13f_quarter()
     ciks = _unique_guru_ciks()
+    nport_series = _guru_nport_series()
 
     if refresh:
         for c in ciks:
@@ -1284,8 +1409,12 @@ def get_guru_universe(refresh: bool = False) -> dict:
         cached = _load_guru_fund(c)
         # Fresh if it already reflects the target quarter, OR it's the most
         # recent filing we could find for a fund that hasn't filed the target
-        # quarter yet (avoids hammering slow/late filers every request).
-        if cached and (cached.get("period", "") >= target_q or cached.get("_no_newer")):
+        # quarter yet (avoids hammering slow/late filers every request). That
+        # second case is re-checked once the target quarter rolls over — a late
+        # filer's cache must not pin itself to an old quarter forever, and an
+        # N-PORT fund is late by construction (60-day deadline vs the 13F's 45).
+        if cached and (cached.get("period", "") >= target_q
+                       or cached.get("_no_newer_as_of") == target_q):
             funds[c] = cached
         else:
             to_fetch.append(c)
@@ -1293,16 +1422,22 @@ def get_guru_universe(refresh: bool = False) -> dict:
     failures = 0
     if to_fetch:
         def _job(cik):
-            meta = _fetch_fund_latest_13f_meta(cik)
-            if meta is None:
-                return cik, None
-            accn, fdate, period = meta
-            data = _fetch_fund_13f_holdings(cik, accn)
-            if data is None:
-                return cik, None
-            data.update({"period": period, "date": fdate,
-                        "link": f"https://www.sec.gov/Archives/edgar/data/{cik}/{accn}/",
-                        "_no_newer": period < target_q})
+            series = nport_series.get(cik)
+            if series:
+                data = _fetch_fund_latest_nport(cik, series)
+                if data is None:
+                    return cik, None
+            else:
+                meta = _fetch_fund_latest_13f_meta(cik)
+                if meta is None:
+                    return cik, None
+                accn, fdate, period = meta
+                data = _fetch_fund_13f_holdings(cik, accn)
+                if data is None:
+                    return cik, None
+                data.update({"period": period, "date": fdate, "form": "13F-HR",
+                            "link": f"https://www.sec.gov/Archives/edgar/data/{cik}/{accn}/"})
+            data["_no_newer_as_of"] = target_q if data["period"] < target_q else ""
             return cik, data
         with ThreadPoolExecutor(max_workers=6) as ex:
             for cik, data in ex.map(_job, to_fetch):
@@ -1443,6 +1578,7 @@ def get_institutional_holders(submissions: dict, shares_out: Optional[float] = N
             "manager": manager,
             "cik": cik,
             "date": data.get("date", ""),
+            "form": data.get("form", "13F-HR"),
             "value": val,
             "shares": sh,
             "portfolio_value": pv,
@@ -1470,7 +1606,7 @@ def get_institutional_holders(submissions: dict, shares_out: Optional[float] = N
 
 
 # ─── Value Investors Holding universe (screener) ─────────────────────────────
-# Compile the union of every stock currently held by any of the ~92 tracked
+# Compile the union of every stock currently held by any of the ~93 tracked
 # value-investor funds, so the screener can rank them by P/FCF / EV/EBIT like
 # any other universe. 13F info tables identify securities by CUSIP, not ticker,
 # so each CUSIP is resolved to a ticker via SEC EDGAR full-text search (no
@@ -4019,7 +4155,7 @@ def _cached_company_name(cik: str) -> str:
 
 @app.route("/api/holders")
 def holders():
-    """Institutional 13F holders of the stock, scanned from a curated ~92-fund
+    """Institutional 13F holders of the stock, scanned from a curated ~93-fund
     value-investor roster (see GURUS). The roster's 13F data is fetched and
     cached ONCE per quarter, shared across every stock — this endpoint mostly
     does zero SEC calls once that shared cache is warm."""
