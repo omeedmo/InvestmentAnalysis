@@ -3,36 +3,36 @@
   "ticker": "CRMT",
   "cik": 799850,
   "sector": null,
-  "note": "One override, for debt. CarMart's total debt read as SeniorNotes alone ($263,681 thousand at FY2026) because that is the only debt concept the shared vocabulary's gap-fill reaches for this filer -- but SeniorNotes is only one of three lines it carries, and the concept vocabulary itself is not the place to fix this: us-gaap:SeniorNotes is already an ANALYZE-side gap-fill for VeriSign, and roughly 40 other SeniorNotes filers (mostly REITs -- SL Green, Digital Realty, Welltower, Host Hotels) already carry data under the debt component tags this filer also uses, so widening either role in the shared vocabulary risked changing their totals along with CarMart's. This binding reads the same rendered balance sheet lines but keeps the fix scoped to this one filer.\n\nThe filer's debt has two eras. Through FY2025 the notes-payable line was tagged us-gaap:NotesPayable alone and there was no senior/secured split. Starting with the FY2026 10-K it prints two lines instead of one -- 'Senior Secured Notes Payable, net' (a new us-gaap:SeniorNotes) and 'Non-recourse notes payable, net' (the old line, retagged us-gaap:OtherNotesPayable) -- so FY2026 total debt is the sum of both, not SeniorNotes alone: $263,681 + $458,685 = $722,366 thousand, not $263,681 thousand. The revolving line of credit is a third, separate line the shared vocabulary does not reach at all for this filer; it also switched tags, from us-gaap:LineOfCredit (through the FY2023 10-K) to the extension crmt:LongTermLineOfCreditNetOfDebtIssuanceCosts (from the FY2024 10-K).\n\nScoped to FY2022 onward, where us-gaap:NotesPayable data is clean and continuous in companyfacts; FY2021 and earlier show 0 or near-zero under every debt concept this filer has ever tagged, which reads as the company having genuinely little debt on the balance sheet those years rather than a tagging gap, and is left alone.",
+  "note": "One override, for debt. CarMart's total debt read as SeniorNotes alone ($263,681 thousand at FY2026) because that is the only debt concept the shared vocabulary's gap-fill reaches for this filer -- but SeniorNotes is only one of three lines it carries, and the concept vocabulary itself is not the place to fix this: us-gaap:SeniorNotes is already an ANALYZE-side gap-fill for VeriSign, and roughly 40 other SeniorNotes filers (mostly REITs -- SL Green, Digital Realty, Welltower, Host Hotels) already carry data under the debt component tags this filer also uses, so widening either role in the shared vocabulary risked changing their totals along with CarMart's. This binding reads the same rendered balance sheet lines but keeps the fix scoped to this one filer.\n\nThe filer's debt has two eras. Through the Q1 FY2026 10-Q (period 2025-07-31) the notes-payable line was tagged us-gaap:NotesPayable alone. Starting with the Q2 FY2026 10-Q (period 2025-10-31) it prints two lines instead of one -- 'Senior Secured Notes Payable, net' (a new us-gaap:SeniorNotes) and 'Non-recourse notes payable, net' (the old line, retagged us-gaap:OtherNotesPayable) -- so total debt from that quarter on is the sum of both, not SeniorNotes alone: $263,681 + $458,685 = $722,366 thousand at FY2026, not $263,681 thousand. The revolving line of credit is a third, separate line the shared vocabulary does not reach at all for this filer; it also switched tags, from us-gaap:LineOfCredit to the extension crmt:LongTermLineOfCreditNetOfDebtIssuanceCosts, sometime between the FY2023 and FY2024 10-Ks.\n\nThe two new-era elements (SeniorNotes, OtherNotesPayable) carry no year boundary: they are absent from companyfacts and every filed statement before the Q2 FY2026 10-Q, so nothing needs guarding against. us-gaap:NotesPayable and us-gaap:LineOfCredit DO carry a 'from': both resolve much further back (LineOfCredit has genuine balance-sheet data to 2014) and without a floor they would resolve for years the notes-payable component never covered, silently presenting a revolver-only balance as if it were the whole of CarMart's debt -- zero_if_absent exists to tolerate a genuinely absent leg, not to launder a leg that was simply never asked for. 2022 is where companyfacts' us-gaap:NotesPayable data begins cleanly; FY2021 and earlier are left alone.\n\nThe 'from' bound is deliberately written as a resolve()-level year on the individual bind entries, not as the derived long_term_debt row's own top-level 'from' (see UPBD's binding for that pattern) -- compute_derived() does not read a metric's own from/to at all, only app.py's overlay-clearing exemption does, so a top-level bound alone would have been decorative. It is also deliberately calendar-safe rather than fiscal-safe: resolve() keys annual years by fiscal year (the 10-K's own fy field) while resolve_quarters() keys quarters by the calendar year of the period end date, which for an April fiscal year-end disagree by up to eight months -- a boundary written to be exactly correct for the FY2026 10-K silently missed the 10-Qs reporting the same restructuring under a calendar year of 2025. 2022 sits far enough from every actual transition in this filer's history that both readings of 'year' agree on it.",
   "metrics": [
     {
       "metric": "long_term_debt_other_notes",
       "label": "Non-recourse notes payable, net",
       "section": "Balance sheet",
       "bind": [
-        { "element": "us-gaap:NotesPayable", "statement": "Balance Sheet", "from": 2022, "to": 2025 },
-        { "element": "us-gaap:OtherNotesPayable", "statement": "Balance Sheet", "from": 2026 }
+        { "element": "us-gaap:NotesPayable", "statement": "Balance Sheet", "from": 2022 },
+        { "element": "us-gaap:OtherNotesPayable", "statement": "Balance Sheet" }
       ],
-      "note": "One line, two tag names across the FY2026 restructuring. $458,685 thousand at FY2026, $572,010 thousand at FY2025."
+      "note": "One line, two tag names across the FY2026 restructuring. $458,685 thousand at FY2026, $572,010 thousand at FY2025. OtherNotesPayable carries no floor -- it is absent from every period before the split, so none is needed."
     },
     {
       "metric": "long_term_debt_senior_secured_notes",
       "label": "Senior Secured Notes Payable, net",
       "section": "Balance sheet",
       "bind": [
-        { "element": "us-gaap:SeniorNotes", "statement": "Balance Sheet", "from": 2026 }
+        { "element": "us-gaap:SeniorNotes", "statement": "Balance Sheet" }
       ],
-      "note": "New line, split out of the notes-payable balance starting FY2026. $263,681 thousand at FY2026."
+      "note": "New line, split out of the notes-payable balance starting the Q2 FY2026 10-Q. $263,681 thousand at FY2026. Does not exist in companyfacts or any filed statement before that quarter."
     },
     {
       "metric": "long_term_debt_revolver",
       "label": "Revolving line of credit, net",
       "section": "Balance sheet",
       "bind": [
-        { "element": "us-gaap:LineOfCredit", "statement": "Balance Sheet", "from": 2022, "to": 2023 },
-        { "element": "crmt:LongTermLineOfCreditNetOfDebtIssuanceCosts", "statement": "Balance Sheet", "from": 2024 }
+        { "element": "us-gaap:LineOfCredit", "statement": "Balance Sheet", "from": 2022 },
+        { "element": "crmt:LongTermLineOfCreditNetOfDebtIssuanceCosts", "statement": "Balance Sheet" }
       ],
-      "note": "Zero at FY2026 -- the facility is undrawn, not absent. $204,769 thousand at FY2025."
+      "note": "Zero at FY2026 -- the facility is undrawn, not absent. $204,769 thousand at FY2025. LineOfCredit has real balances back to 2014, which is exactly why it needs the floor: without one, years the notes-payable leg never covered would read as revolver-only debt rather than no data."
     },
     {
       "metric": "long_term_debt",
@@ -45,7 +45,7 @@
         "long_term_debt_revolver"
       ],
       "from": 2022,
-      "note": "Summed, because CarMart tags no consolidated total: these three lines are the whole of it. zero_if_absent because the senior-secured split does not exist before FY2026 and the revolver reads zero some years -- either being absent from the sum would understate a year that is otherwise fully covered."
+      "note": "Summed, because CarMart tags no consolidated total: these three lines are the whole of it. zero_if_absent because the senior-secured split does not exist before FY2026 and the revolver reads zero some years -- either being absent from the sum would understate a year that is otherwise fully covered. The 'from' here only marks this row as scoped for app.py's overlay-clearing exemption (compute_derived ignores it); the actual floor against pre-2022 partial totals is the 'from' on the NotesPayable and LineOfCredit bind entries above."
     }
   ]
 }
