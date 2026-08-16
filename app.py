@@ -4270,6 +4270,17 @@ def apply_scorecard_overlay(ticker: str, cik: str, submissions: dict,
                 if len(key) == 10 and key[4] == "-":
                     fiscal_end.setdefault(key[:4], key[4:])
 
+    # Metrics whose binding declares a year scope. A derived metric normally
+    # owns its whole row (see below), but one written with "from" or "to" is
+    # saying the opposite -- that it covers part of the history and the rest
+    # should stand. Upbound is the case: it carries its borrowing in two
+    # extension elements from FY2017, and a scoped sum of those is meant to
+    # start exactly where us-gaap:LongTermDebt stops, not to erase the six
+    # years that concept legitimately covers.
+    _scoped = {spec["metric"]
+               for spec in scorecard.load_bindings(binding.get("sector"), tk)
+               if spec.get("metric") and (spec.get("from") or spec.get("to"))}
+
     applied: dict[str, int] = {}
     sources: dict[str, dict] = {}
     for metric, data in sc["metrics"].items():
@@ -4300,7 +4311,9 @@ def apply_scorecard_overlay(ticker: str, cik: str, submissions: dict,
         # a row that silently changes meaning partway across is worse than a
         # row with gaps. Directly-bound lines are left alone, since there the
         # definition is the same reported line either way.
-        if n and data.get("derived"):
+        # ...unless the binding scoped it, in which case the uncovered years
+        # are the ones it deliberately left to whatever already resolves them.
+        if n and data.get("derived") and metric not in _scoped:
             covered = {y for y in data["years"] if _SCORECARD_ANNUAL_RE.match(y)}
             for key in [k for k in series if len(k) == 10 and k[:4] not in covered]:
                 del series[key]

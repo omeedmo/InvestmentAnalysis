@@ -1,0 +1,47 @@
+{
+  "tier": "company",
+  "ticker": "UPBD",
+  "cik": 933036,
+  "sector": null,
+  "note": "One override, for debt. Upbound carries its entire borrowing in two lines the concept passes cannot see: upbd:SecuredDebtNet and upbd:SeniorNotesNet, both in its own extension namespace. The companyfacts API publishes only dei, srt and us-gaap, so neither exists there, and adding them to the shared vocabulary would achieve nothing -- there is no fact to read. The rendered balance sheet does carry extension elements, which is what this binding reads. The only us-gaap debt concept Upbound ever tagged is LongTermDebt, last used in 2016; every year after it the row went empty while the company carried $1.5B, and total debt, net cash and enterprise value went with it. Everything else about this filer resolves from the global tier and is deliberately left alone.",
+  "metrics": [
+    {
+      "metric": "long_term_debt_secured",
+      "label": "Senior debt, net",
+      "section": "Balance sheet",
+      "bind": [
+        {
+          "element": "upbd:SecuredDebtNet",
+          "statement": "Balance Sheet",
+          "from": 2017
+        }
+      ],
+      "note": "The term-loan facility. $1,126,030 thousand at FY2025."
+    },
+    {
+      "metric": "long_term_debt_notes",
+      "label": "Senior notes, net",
+      "section": "Balance sheet",
+      "bind": [
+        {
+          "element": "upbd:SeniorNotesNet",
+          "statement": "Balance Sheet",
+          "from": 2017
+        }
+      ],
+      "note": "The unsecured note issue. $443,854 thousand at FY2025."
+    },
+    {
+      "metric": "long_term_debt",
+      "label": "Long-Term Debt",
+      "section": "Balance sheet",
+      "expr": "long_term_debt_secured + long_term_debt_notes",
+      "zero_if_absent": [
+        "long_term_debt_secured",
+        "long_term_debt_notes"
+      ],
+      "from": 2017,
+      "note": "Summed, because Upbound tags no total: the two lines above are the whole of it, and either alone reports a fraction. Scoped from FY2017 so it starts exactly where us-gaap:LongTermDebt stops -- that concept is legitimately Upbound's own figure through FY2016 and is left to resolve normally there. The scope is also what stops the overlay clearing those earlier years: a derived binding metric otherwise owns its whole row, which is right for a redefinition like UNTA and wrong for a metric declaring it covers only part of the history. zero_if_absent because a year with only one of the two lines is still that year's debt. Operating lease liabilities are deliberately excluded, matching the app-wide decision to keep them off total debt and enterprise value."
+    }
+  ]
+}
