@@ -2346,6 +2346,7 @@ METRIC_TAGS: dict[str, list[str]] = vocabulary.metric_tags(vocabulary.ANALYZE)
 
 # {metric: tags} applied only where METRIC_TAGS resolved nothing for a period.
 GAP_FILL_TAGS: dict[str, list[str]] = vocabulary.gap_fill_tags(vocabulary.ANALYZE)
+COMPONENT_TAGS: dict[str, list[str]] = vocabulary.component_tags(vocabulary.ANALYZE)
 
 
 # ─── XBRL extraction ─────────────────────────────────────────────────────────
@@ -2765,6 +2766,35 @@ def build_financials(facts: dict, metric_tags: dict = None) -> dict[str, dict[st
                 _filled[_d] = _v
         if _filled:
             raw[_metric] = _filled
+
+    # Components: SUMMED, and only for periods still empty after the series
+    # list and the gap-fills above. A component is a part rather than an
+    # alternative spelling, so first-match reports a fraction as the whole --
+    # Collegium tags no total debt concept at all and carries its noncurrent
+    # borrowings as LongTermLoansPayable plus ConvertibleLongTermNotesPayable,
+    # $542,112k and $238,213k against an $809m balance sheet. Taking either
+    # alone is a wrong number where a blank was at least honest.
+    #
+    # Per period, not per series: a filer that tags a total in most years and
+    # only parts in one gets the sum for that year and keeps its own total
+    # everywhere else.
+    for _metric, _comp_tags in COMPONENT_TAGS.items():
+        _extract = (extract_point_in_time_series
+                    if vocabulary.VOCAB[_metric].kind == vocabulary.INSTANT
+                    else extract_annual_series)
+        _parts = [normalize_to_fiscal_years(_extract(facts, [_t])) for _t in _comp_tags]
+        _parts = [p for p in _parts if p]
+        if not _parts:
+            continue
+        _summed = dict(raw.get(_metric) or {})
+        for _d in set().union(*[set(p) for p in _parts]):
+            if _summed.get(_d) is not None:
+                continue
+            _vals = [p[_d] for p in _parts if p.get(_d) is not None]
+            if _vals:
+                _summed[_d] = sum(_vals)
+        if _summed:
+            raw[_metric] = _summed
 
     # Interest expense fallback: some filers (e.g. CHTR from FY2014) stop
     # tagging a dedicated InterestExpense and only report a combined

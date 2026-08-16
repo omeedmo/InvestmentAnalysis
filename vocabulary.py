@@ -621,6 +621,14 @@ VOCAB: dict[str, Metric] = {
         P("LongTermLineOfCredit"),
         P("CommercialPaper"),
         P("LoansPayable"),
+        # Analyze-side components, summed only where no total resolved. Both
+        # are unambiguously noncurrent -- Collegium prints "Term notes payable,
+        # net of current portion" and "Convertible senior notes" beneath its
+        # current portion -- so summing them cannot pull in the current debt
+        # the analyze page adds separately, which is the risk that kept the
+        # other components screen-only.
+        P("LongTermLoansPayable", (ANALYZE, SCREEN)),
+        P("ConvertibleLongTermNotesPayable", (ANALYZE, SCREEN)),
     ], quarterly=True),
 
     "current_debt": M(INSTANT, [
@@ -634,6 +642,7 @@ VOCAB: dict[str, Metric] = {
         A("CommercialPaper"),
         A("ShortTermDebt"),
         A("FinanceLeaseLiabilityCurrent"),              # last: lease-financed cos (e.g. LIVE)
+        "LoansPayableCurrent",                          # COLL current portion of term notes
         IFRSC("CurrentPortionOfNoncurrentBorrowings"),
         IFRSC("ShorttermBorrowings"),
     ], quarterly=True),
@@ -1123,6 +1132,28 @@ def gap_fill_tags(surface: str = ANALYZE) -> dict[str, list[str]]:
         if m.source not in (CONCEPTS, TEMPLATE):
             continue
         t = tags(k, GAP_FILL, surface)
+        if t:
+            out[k] = t
+    return out
+
+
+def component_tags(surface: str = ANALYZE) -> dict[str, list[str]]:
+    """{metric: element names SUMMED where the series list and the gap-fills
+    both resolved nothing for a period}. Metrics with no components omitted.
+
+    Distinct from gap_fill_tags, which takes the first concept that resolves.
+    A component is a PART: a filer that tags parts and never a total needs them
+    added, and taking one alone reports a fraction as the whole. Collegium is
+    the case -- its noncurrent debt exists only as LongTermLoansPayable
+    $542,112k plus ConvertibleLongTermNotesPayable $238,213k, with no total
+    concept anywhere, so first-match would report $542m of an $809m balance
+    sheet.
+    """
+    out = {}
+    for k, m in VOCAB.items():
+        if m.source not in (CONCEPTS, TEMPLATE):
+            continue
+        t = tags(k, COMPONENT, surface)
         if t:
             out[k] = t
     return out
