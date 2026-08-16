@@ -4698,6 +4698,47 @@ def analyze():
             if _td_f:
                 financials["total_debt"] = _td_f
 
+    # ROIC and its pre-tax twin, against the same corrected balance sheet.
+    # Both are computed in build_financials from whatever the concept passes
+    # returned and, unlike UNTA, had no post-overlay recompute at all -- so for
+    # a filer whose operating income, equity, debt or cash arrives from a
+    # binding they disagreed with the inputs printed beside them for fourteen
+    # or fifteen years at a stretch: Lumen showed 3.879% where its own rows give
+    # 2.878%, Berkshire 9.891% against 6.873%.
+    #
+    # Same formula and same guards as build_financials: invested capital is
+    # equity plus debt less cash, a year with non-positive capital is left out
+    # rather than shown negative, and the tax rate falls back to 21% and is
+    # capped at 50%. Both are recomputed together because they share that
+    # capital base -- fixing one and leaving the other would put a corrected
+    # row directly above a stale one, which reads worse than two stale rows.
+    #
+    # Skipped where the overlay supplied the row, so a binding that defines its
+    # own return measure keeps it.
+    _roic_applied = set((scorecard_meta or {}).get("applied") or {})
+    _r_oi = financials.get("operating_income", {})
+    if _r_oi:
+        _r_eq = financials.get("equity", {})
+        _r_td = financials.get("total_debt", {})
+        _r_tc = financials.get("total_cash", {})
+        _r_et = financials.get("effective_tax_rate", {})
+        _roic_n, _pre_n = {}, {}
+        for _d in _r_oi:
+            if str(_d).startswith("Q") or _r_oi[_d] is None:
+                continue
+            _y = str(_d)[:4]
+            _ic = ((fy_get(_r_eq, _y) or 0) + (fy_get(_r_td, _y) or 0)
+                   - (fy_get(_r_tc, _y) or 0))
+            if not _ic or _ic <= 0:
+                continue
+            _t = fy_get(_r_et, _y)
+            _roic_n[_d] = _r_oi[_d] * (1 - min(_t or 0.21, 0.5)) / _ic
+            _pre_n[_d]  = _r_oi[_d] / _ic
+        if _roic_n and "roic" not in _roic_applied:
+            financials["roic"] = _roic_n
+        if _pre_n and "pretax_roic" not in _roic_applied:
+            financials["pretax_roic"] = _pre_n
+
     _binding_unta_inputs = set((scorecard_meta or {}).get("unta_inputs") or ())
 
     # UNTA and the ratios built on it are computed far above, from the
