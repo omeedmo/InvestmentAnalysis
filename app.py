@@ -4672,6 +4672,32 @@ def analyze():
                                                  reserved=_authored)
     except Exception:
         scorecard_meta = None       # never let this path break the response
+    # Recompute total_debt now that its two inputs are final. build_financials
+    # adds long-term and current debt near the top, from whatever the concept
+    # passes returned, and a filer whose debt arrives from a binding gets it
+    # only afterwards. Upbound is the case: it carries its whole borrowing in
+    # two extension elements no concept pass can see, so the binding supplies
+    # $1,569,884k of long-term debt and total debt still read 0 beside it, with
+    # net cash reading positive for a company $1.5B in debt.
+    #
+    # Skipped where the overlay supplied total_debt itself, so a filer that
+    # binds the total directly keeps it rather than having it recomputed from
+    # parts that may not add to the same thing.
+    if "total_debt" not in set((scorecard_meta or {}).get("applied") or {}):
+        _ltd_f = financials.get("long_term_debt", {})
+        _ctd_f = financials.get("current_debt", {})
+        if _ltd_f or _ctd_f:
+            _td_f = dict(financials.get("total_debt") or {})
+            for _d in set(_ltd_f) | set(_ctd_f):
+                if str(_d).startswith("Q"):
+                    continue
+                _l = fy_get(_ltd_f, str(_d)[:4])
+                _c = fy_get(_ctd_f, str(_d)[:4])
+                if _l is not None or _c is not None:
+                    _td_f[_d] = (_l or 0) + (_c or 0)
+            if _td_f:
+                financials["total_debt"] = _td_f
+
     _binding_unta_inputs = set((scorecard_meta or {}).get("unta_inputs") or ())
 
     # UNTA and the ratios built on it are computed far above, from the
@@ -4963,32 +4989,6 @@ def analyze():
                     _out[_d] = _v / _r
             if _out:
                 financials[_metric] = _out
-
-    # Recompute total_debt now that its two inputs are final. build_financials
-    # adds long-term and current debt near the top, from whatever the concept
-    # passes returned, and a filer whose debt arrives from a binding gets it
-    # only afterwards. Upbound is the case: it carries its whole borrowing in
-    # two extension elements no concept pass can see, so the binding supplies
-    # $1,569,884k of long-term debt and total debt still read 0 beside it, with
-    # net cash reading positive for a company $1.5B in debt.
-    #
-    # Skipped where the overlay supplied total_debt itself, so a filer that
-    # binds the total directly keeps it rather than having it recomputed from
-    # parts that may not add to the same thing.
-    if "total_debt" not in set((scorecard_meta or {}).get("applied") or {}):
-        _ltd_f = financials.get("long_term_debt", {})
-        _ctd_f = financials.get("current_debt", {})
-        if _ltd_f or _ctd_f:
-            _td_f = dict(financials.get("total_debt") or {})
-            for _d in set(_ltd_f) | set(_ctd_f):
-                if str(_d).startswith("Q"):
-                    continue
-                _l = fy_get(_ltd_f, str(_d)[:4])
-                _c = fy_get(_ctd_f, str(_d)[:4])
-                if _l is not None or _c is not None:
-                    _td_f[_d] = (_l or 0) + (_c or 0)
-            if _td_f:
-                financials["total_debt"] = _td_f
 
     # Recompute net_cash after any BRK debt/cash injections
     _tc = financials.get("total_cash", {})
