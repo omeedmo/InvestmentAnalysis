@@ -497,25 +497,61 @@ def _cf_fetch_one(cik: str, latest_fy: int) -> Optional[dict]:
     return reduced
 
 
+def _cache_fresh(name: str, ttl_s: float) -> bool:
+    """True if this cache file exists and is younger than `ttl_s`."""
+    path = os.path.join(CACHE_DIR, name)
+    try:
+        return os.path.exists(path) and time.time() - os.path.getmtime(path) < ttl_s
+    except OSError:
+        return False
+
+
+def _split_by_cache(items: list, cache_name, ttl_s: float) -> tuple:
+    """(already cached, needs fetching), preserving order.
+
+    Both budgeted scans below walk a list of CIKs, fetch the ones they have no
+    answer for, and stop when they run out of time. Splitting FIRST is what
+    makes that safe. Walking one interleaved list and breaking on the budget
+    abandons every remaining entry -- including the cached ones, which cost
+    nothing and always have an answer -- so an item's fate depended on where it
+    happened to sit relative to the cut-off rather than on what it is.
+
+    That is not a slow path, it is a wrong one, and it degrades in opposite
+    directions on either side: a 20-F filer already known to be a 20-F filer
+    stayed in the results (Global Ship Lease, cached as 20-F for 30 days and
+    excluded or not depending on which universe was screened), while a filer
+    whose companyfacts were already on disk was never recovered and dropped out
+    of the screen entirely. Neither says anything in the output.
+    """
+    cached, todo = [], []
+    for it in items:
+        (cached if _cache_fresh(cache_name(it), ttl_s) else todo).append(it)
+    return cached, todo
+
+
 def companyfacts_fallback(ciks: list, latest_fy: int,
                           time_budget_s: float = 45.0) -> dict[str, dict]:
     """
     {cik: {metric: val}} for CIKs the frames API couldn't cover. Time-budgeted
-    and resumable — cached CIKs cost nothing, so coverage grows across runs
-    even if a single run can't finish the whole list.
+    and resumable: every cached CIK is answered, and the budget is spent only on
+    the ones that need a request, so coverage grows across runs.
     """
     out: dict[str, dict] = {}
+    cached, todo = _split_by_cache(ciks, lambda c: f"cf_{c}.json", 7 * 86400)
+
+    for c in cached:                     # free: reads disk, never the network
+        data = _cf_fetch_one(c, latest_fy)
+        if data:
+            out[c] = data
+
     start = time.time()
-    for c in ciks:
-        cached = os.path.join(CACHE_DIR, f"cf_{c}.json")
-        is_cached = os.path.exists(cached) and time.time() - os.path.getmtime(cached) < 7 * 86400
-        if not is_cached and time.time() - start > time_budget_s:
+    for c in todo:
+        if time.time() - start > time_budget_s:
             break
         data = _cf_fetch_one(c, latest_fy)
         if data:
             out[c] = data
-        if not is_cached:
-            time.sleep(0.12)   # stay under SEC's ~10 req/s guidance
+        time.sleep(0.12)   # stay under SEC's ~10 req/s guidance
     return out
 
 
@@ -765,22 +801,34 @@ def _is_20f_filer_fetch(cik: str) -> bool:
     return is_20f
 
 
-def filter_20f_ciks(ciks: list, time_budget_s: float = 30.0) -> set:
-    """Subset of `ciks` that are Form 20-F (foreign private issuer) filers.
-    Time-budgeted and resumable like the companyfacts fallback — cached CIKs
-    cost nothing, so coverage grows across runs on a cold cache."""
+def filter_20f_ciks(ciks: list, time_budget_s: float = 30.0) -> tuple:
+    """(CIKs that are Form 20-F filers, CIKs the budget left unchecked).
+
+    Time-budgeted and resumable like the companyfacts fallback, and split the
+    same way: every cached CIK is answered before any request is made, so a
+    filer already known to be a foreign private issuer is excluded no matter
+    where it sits in the list.
+
+    The unchecked list is returned rather than dropped. A name that survives
+    the exclusion because nobody has looked it up yet is indistinguishable in
+    the output from one that was looked up and passed, and the caller reports
+    the count so the difference is visible.
+    """
     out: set = set()
-    start = time.time()
-    for c in ciks:
-        cached = os.path.join(CACHE_DIR, f"20f_{c}.json")
-        is_cached = os.path.exists(cached) and time.time() - os.path.getmtime(cached) < 30 * 86400
-        if not is_cached and time.time() - start > time_budget_s:
-            break
+    cached, todo = _split_by_cache(ciks, lambda c: f"20f_{c}.json", 30 * 86400)
+
+    for c in cached:                     # free: reads disk, never the network
         if _is_20f_filer_fetch(c):
             out.add(c)
-        if not is_cached:
-            time.sleep(0.1)
-    return out
+
+    start = time.time()
+    for i, c in enumerate(todo):
+        if time.time() - start > time_budget_s:
+            return out, todo[i:]
+        if _is_20f_filer_fetch(c):
+            out.add(c)
+        time.sleep(0.1)
+    return out, []
 
 
 def _is_non_common(tk: str) -> bool:
@@ -1001,8 +1049,10 @@ def screen(universe: str, tickers: list[str],
     # above) that P/FCF & EV/EBIT can be noisier or ADR-ratio-skewed than for
     # domestic 10-K filers. Time-budgeted/resumable like the sector CIK sets.
     removed_20f = 0
+    unchecked_20f = 0
     if remove_20f and best_per_cik:
-        f20 = filter_20f_ciks(list(best_per_cik.keys()))
+        f20, unchecked = filter_20f_ciks(list(best_per_cik.keys()))
+        unchecked_20f = len(unchecked)
         if f20:
             kept = {c: tk for c, tk in best_per_cik.items() if c not in f20}
             removed_20f = len(best_per_cik) - len(kept)
@@ -1082,6 +1132,11 @@ def screen(universe: str, tickers: list[str],
             "missing":    no_price,
             "excluded_sectors": removed_sectors,
             "excluded_20f": removed_20f,
+            # Names the 20-F lookup ran out of time for. They are still in the
+            # results, and there is nothing in a row to say so — a filer that
+            # was checked and passed looks exactly like one nobody has looked
+            # up yet. Shrinks to zero as the cache fills across runs.
+            "unchecked_20f": unchecked_20f,
             "cf_recovered": cf_recovered,
             # How many of the evaluated names declare a dividend at all,
             # so a min-yield cutoff is read against the payers it can
