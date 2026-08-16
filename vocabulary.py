@@ -1071,6 +1071,11 @@ VOCAB: dict[str, Metric] = {
     "recourse_debt_share": B(RATIO,
         "BRK recourse debt / total debt — computed in the binding spec."),
     "intangibles_insurance_other":           B(INSTANT, "BRK segment intangibles."),
+    # Upbound's two extension-tagged borrowings, summed into long_term_debt by
+    # its binding. Intermediates, so no row of their own -- the sum is what the
+    # balance sheet shows.
+    "long_term_debt_secured": B(INSTANT, "UPBD term-loan facility (upbd:SecuredDebtNet)."),
+    "long_term_debt_notes":   B(INSTANT, "UPBD senior notes (upbd:SeniorNotesNet)."),
     "intangibles_railroad_utilities_energy": B(INSTANT, "BRK segment intangibles."),
     "ppe_insurance_and_other":               B(INSTANT, "BRK segment PP&E."),
     "ppe_railroad_utilities_energy":         B(INSTANT, "BRK segment PP&E."),
