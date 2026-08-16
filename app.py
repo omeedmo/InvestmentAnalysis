@@ -5109,6 +5109,31 @@ def analyze():
                 if _existing_q.get(_qk) is None:
                     _existing_q[_qk] = _v
 
+        # The same component sum as the annual pass. Adding it there alone left
+        # Collegium's quarters carrying only the current portion -- $55,000k at
+        # Q2 against ~$809m of borrowings -- so net cash read POSITIVE $74m for
+        # a company that is heavily levered. The annual fix made that worse
+        # rather than better, because the year above it was by then correct and
+        # the quarter beside it was not.
+        for _metric, _comp_tags in COMPONENT_TAGS.items():
+            if _metric not in _quarterly_flow_keys | _quarterly_bs_keys:
+                continue
+            _is_bs = _metric in _point_in_time_metrics
+            _q_parts = [extract_post_annual_quarters(
+                            facts, [_t], _last_annual_date, _is_bs,
+                            quarter_dates=_canonical_q_dates)
+                        for _t in _comp_tags]
+            _q_parts = [p for p in _q_parts if p]
+            if not _q_parts:
+                continue
+            _existing_q = financials.setdefault(_metric, {})
+            for _qk in set().union(*[set(p) for p in _q_parts]):
+                if _existing_q.get(_qk) is not None:
+                    continue
+                _vals = [p[_qk] for p in _q_parts if p.get(_qk) is not None]
+                if _vals:
+                    _existing_q[_qk] = sum(_vals)
+
         # As-reported quarterly overlay. Runs AFTER the companyfacts pass so
         # the filing's own statements win where both have a figure, matching
         # how the annual overlay relates to the annual companyfacts pass.
