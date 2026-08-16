@@ -58,6 +58,23 @@ DERIVED = {
     "revenue_per_share": (("revenue", "shares_diluted_wtd"), lambda r, s: r / s if s else None),
     "fcf_per_share":  (("fcf", "shares_diluted_wtd"),      lambda f, s: f / s if s else None),
     "book_value_per_share": (("equity", "shares_outstanding_end"), lambda e, s: e / s if s else None),
+    # The post-overlay derivations. These are rebuilt after the overlay writes,
+    # in a fixed order that nothing enforces, which is how UNTA came to be
+    # computed against a total_debt of zero: the debt recompute was added later
+    # and placed after the UNTA block that consumes it. Upbound read
+    # -262,540,000 where its inputs give +1,307,344,000, the sign inverted, and
+    # nothing flagged it because unta was not on this list.
+    "unta": (("equity", "total_debt", "total_cash", "goodwill", "intangibles"),
+             lambda e, d, c, g, i: e + d - c - g - i),
+    # Guarded in app.py: a ratio over negative tangible capital is misleading,
+    # so those years are deliberately absent rather than negative. Returning
+    # None here matches, so the guard does not read as a stale row.
+    "economic_goodwill": (("nopat", "unta"),
+                          lambda n, u: n / u if u and u > 0 else None),
+    "roic": (("operating_income", "effective_tax_rate",
+              "equity", "total_debt", "total_cash"),
+             lambda oi, t, e, d, c: (oi * (1 - min(t or 0.21, 0.5)) / (e + d - c))
+             if (e + d - c) > 0 else None),
     # The rest of the margin family and the SBC-adjusted rows. Absent from the
     # first version of this file, which is the only reason it reported CLEAN
     # while Lumen's FCF margin stood at three years of fifteen: a row the audit
@@ -119,7 +136,14 @@ def audit(ticker: str, client) -> list:
                 continue
             have = got.get(y)
             if have is None:
-                blanks.append((y, f"implied {want:,.4g}"))
+                # A row the overlay supplies covers the years its binding
+                # covers, and no others -- for a derived binding metric that is
+                # the clearing working as designed, not a stale row. Berkshire
+                # binds its own UNTA and 2014 falls outside it. Judging a
+                # supplied row against the app's formula is the same category
+                # error the margin refresh had to avoid.
+                if src != "overlay":
+                    blanks.append((y, f"implied {want:,.4g}"))
             elif abs(want) > 1e-9 and abs(have - want) / max(abs(want), 1e-9) > TOL:
                 mismatches.append((y, f"row {have:,.4g} vs inputs {want:,.4g}  [{src}]"))
 
