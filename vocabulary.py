@@ -447,7 +447,17 @@ VOCAB: dict[str, Metric] = {
 
     "stock_based_compensation": M(FLOW, [
         "ShareBasedCompensation", "AllocatedShareBasedCompensationExpense",
-        "StockBasedCompensation", "EmployeeBenefitsAndShareBasedCompensation",
+        "StockBasedCompensation",
+        # EmployeeBenefitsAndShareBasedCompensation was here and is not this
+        # measure: US Bancorp tags $10.4B and Coca-Cola Consolidated $1.15B
+        # under it, both clearly total employee benefits cost (salaries plus
+        # benefits plus SBC), not equity comp alone. extract_annual_series
+        # keeps the largest value per year across the whole candidate list --
+        # right for a total-vs-subset pair like revenue, wrong here, since
+        # this is a different measure that happens to share a duration. It
+        # silently outranked the real ShareBasedCompensation figure for any
+        # filer tagging both: CRMT's SBC read $119.5M/$118.4M/$119.9M for
+        # FY2023-2025 against a true $5.3M/$4.2M/$4.7M under ShareBasedCompensation.
     ], quarterly=True),
 
     "intangible_amortization": M(FLOW, [
@@ -1076,6 +1086,15 @@ VOCAB: dict[str, Metric] = {
     # balance sheet shows.
     "long_term_debt_secured": B(INSTANT, "UPBD term-loan facility (upbd:SecuredDebtNet)."),
     "long_term_debt_notes":   B(INSTANT, "UPBD senior notes (upbd:SeniorNotesNet)."),
+    # CarMart's three borrowings, summed into long_term_debt by its binding.
+    # A blanket vocabulary fix was ruled out: us-gaap:SeniorNotes is already an
+    # ANALYZE gap-fill for VeriSign, and ~40 other SeniorNotes filers (mostly
+    # REITs -- SL Green, Digital Realty, Welltower) already carry data under
+    # the other debt components, so widening either role globally risked
+    # silently changing their totals too. Scoped here instead.
+    "long_term_debt_other_notes":         B(INSTANT, "CRMT non-recourse notes payable (us-gaap:NotesPayable through FY2025, retagged us-gaap:OtherNotesPayable from FY2026)."),
+    "long_term_debt_senior_secured_notes": B(INSTANT, "CRMT senior secured notes, split out from the notes-payable line starting FY2026 (us-gaap:SeniorNotes)."),
+    "long_term_debt_revolver":            B(INSTANT, "CRMT revolving line of credit (us-gaap:LineOfCredit through FY2023, crmt:LongTermLineOfCreditNetOfDebtIssuanceCosts from FY2024)."),
     "intangibles_railroad_utilities_energy": B(INSTANT, "BRK segment intangibles."),
     "ppe_insurance_and_other":               B(INSTANT, "BRK segment PP&E."),
     "ppe_railroad_utilities_energy":         B(INSTANT, "BRK segment PP&E."),
