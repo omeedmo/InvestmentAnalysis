@@ -1096,6 +1096,15 @@ VOCAB: dict[str, Metric] = {
     "long_term_debt_senior_secured_notes": B(INSTANT, "CRMT senior secured notes, split out from the notes-payable line starting FY2026 (us-gaap:SeniorNotes)."),
     "long_term_debt_revolver":            B(INSTANT, "CRMT revolving line of credit (us-gaap:LineOfCredit through FY2023, crmt:LongTermLineOfCreditNetOfDebtIssuanceCosts from FY2024)."),
     "intangibles_railroad_utilities_energy": B(INSTANT, "BRK segment intangibles."),
+    # PVH's two intangible lines, summed into intangibles by its binding. Its
+    # 10-Qs have never tagged a combined total -- only the 10-K does -- so the
+    # quarterly row was blank for the filer's entire XBRL history, not one gap.
+    # Not fixed in the shared vocabulary: summing IndefiniteLivedTrademarks and
+    # OtherIntangibleAssetsNet ties out exactly for PVH but overstated another
+    # filer's reported total by ~7% in a spot check, so it is not safe as a
+    # general component pair.
+    "intangibles_trademarks": B(INSTANT, "PVH indefinite-lived trademarks (us-gaap:IndefiniteLivedTrademarks) -- the interim-only half of its intangibles line."),
+    "intangibles_other":      B(INSTANT, "PVH other intangibles, net (us-gaap:OtherIntangibleAssetsNet) -- the interim-only half of its intangibles line."),
     "ppe_insurance_and_other":               B(INSTANT, "BRK segment PP&E."),
     "ppe_railroad_utilities_energy":         B(INSTANT, "BRK segment PP&E."),
     "tangible_equity": B(INSTANT,

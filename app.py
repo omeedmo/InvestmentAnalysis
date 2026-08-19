@@ -424,7 +424,8 @@ def _older_submission_pages(submissions: dict) -> list[dict]:
 
 
 def all_filing_infos_from_submissions(submissions: dict, forms: set[str],
-                                      max_count: int = 25) -> list[dict]:
+                                      max_count: int = 25,
+                                      fy_labels: Optional[dict] = None) -> list[dict]:
     """Return a list of all matching filings (most-recent first), up to max_count."""
     recent = submissions.get("filings", {}).get("recent", {})
     cik_no_zero  = str(int(submissions.get("cik", "0")))
@@ -455,9 +456,18 @@ def all_filing_infos_from_submissions(submissions: dict, forms: set[str],
           primary_doc  = primary_docs[idx] if idx < len(primary_docs) else ""
           filing_date  = filing_dates[idx] if idx < len(filing_dates) else ""
           report_date  = report_dates[idx] if idx < len(report_dates) else ""
-          # Fiscal year = year of the report period end date
+          # Fiscal year = year of the report period end date, EXCEPT where the
+          # filer's own labelling says otherwise. Those disagree exactly when a
+          # year end crosses the calendar boundary: PVH's fiscal 2025 ends
+          # 2026-02-01, so the calendar year is 2026 and the fiscal year is
+          # 2025, and the financial series is keyed by the latter. Leaving this
+          # on the calendar year put the scorecard overlay and the column
+          # headers' filing links one year off the rows they belong to -- a
+          # binding written against such a filer wrote into a year that existed
+          # nowhere else on the page and took the quarter columns with it.
           if report_date:
-              fy_year = report_date[:4]
+              _label = _fiscal_year_for(report_date, fy_labels) if fy_labels else None
+              fy_year = str(_label) if _label is not None else report_date[:4]
           elif filing_date:
               # Heuristic: 10-K filed Jan-Jun covers the prior fiscal year
               fy_year = str(int(filing_date[:4]) - 1) if filing_date[5:7] <= "06" else filing_date[:4]
@@ -2581,6 +2591,189 @@ def extract_post_annual_quarters(
     return result
 
 
+# Balance-sheet instants, so the latest one in a filing is that filing's own
+# year end. A duration would work too, but an instant cannot be a partial-year
+# stub and cannot be a segment column, which keeps the probe honest. Taken from
+# the vocabulary rather than written out here: these are concept names like any
+# other, and a second place naming concepts is the drift the vocabulary exists
+# to end. Four metrics, because no single one is universal -- a bank files no
+# AssetsCurrent, and a filer can caption equity four different ways.
+_FY_PROBE_METRICS = ("total_assets", "total_liabilities", "equity", "cash")
+_FY_PROBE_TAGS = tuple(dict.fromkeys(
+    tag for _m in _FY_PROBE_METRICS for tag in (METRIC_TAGS.get(_m) or [])))
+
+
+def _fiscal_year_labels(facts: dict) -> dict[str, int]:
+    """
+    {period_end_date: the fiscal year the filer itself gave it}
+
+    companyfacts stamps every fact in a filing with that FILING's `fy`, not the
+    fiscal year of the fact's own period. For the filing's current period the
+    two are the same, and for the prior-year comparatives printed beside it they
+    are not — the comparative carries the newer filing's label.
+
+    That is invisible while a fiscal year ends inside its own calendar year,
+    which is why it went unnoticed. It stops being invisible when a year end
+    crosses the boundary. PVH's fiscal 2025 ends 2026-02-01 and is remapped a
+    year back to 2025 to match the label; the fiscal 2024 comparative printed in
+    that same 10-K ends 2025-02-02 and, carrying fy=2025, is not remapped at
+    all. Both then sit in year 2025, normalize_to_fiscal_years keeps the later
+    date string, and the OLDER year wins: PVH's newest annual column showed
+    FY2024's $8.65B revenue against the $8.95B its FY2025 10-K reports, with the
+    real year gone from the page entirely.
+
+    So the label is read from the one fact per filing whose `fy` is certain —
+    the latest period end in it — and every other fact is looked up by its own
+    end date. Comparative end dates ARE earlier filings' year ends, so the map
+    covers them exactly, with no rule about which months belong to which year.
+
+    Such a rule would not work anyway. Walmart and Domino's both end in January
+    and disagree: Walmart's FY2026 ends 2026-01-31 (offset 0) while Domino's
+    fiscal 2025 ends 2026-01-04 (offset -1), and Domino's alone alternates,
+    ending in December most years and slipping into January on a 53-week one.
+    One offset per filer is wrong for Domino's; one offset per month is wrong
+    for Walmart. Only the filer's own labelling settles it.
+
+    Memoised on the facts dict, which is fetched fresh per request, so it cannot
+    go stale behind a filing.
+    """
+    cached = facts.get("_fy_labels")
+    if cached is not None:
+        return cached
+
+    gaap = facts.get("facts", {}).get("us-gaap", {})
+    latest: dict[str, tuple[str, int]] = {}          # accession -> (end, fy)
+    candidates: set = set()                          # every year-end date seen
+    for tag in _FY_PROBE_TAGS:
+        concept = gaap.get(tag)
+        if not concept:
+            continue
+        for entries in concept.get("units", {}).values():
+            for e in entries:
+                if e.get("form") not in {"10-K", "10-K/A", "20-F", "20-F/A"}:
+                    continue
+                if e.get("fp") != "FY":
+                    continue
+                accn, end, fy = e.get("accn"), e.get("end"), e.get("fy")
+                if not (accn and end and fy):
+                    continue
+                candidates.add(end)
+                cur = latest.get(accn)
+                if cur is None or end > cur[0]:
+                    latest[accn] = (end, fy)
+
+    raw = {end: fy for end, fy in latest.values()}
+
+    # `fy` is not even self-consistent across one filer's own filings, so it is
+    # used as a vote rather than an answer. Walmart's flips from one convention
+    # to the other at FY2015 (2014-01-31 labelled 2013, 2015-01-31 labelled
+    # 2015, with no fiscal year in between); Kroger jumps 2022 -> 2024 across
+    # consecutive years; Domino's stamps 2023 on two different year ends,
+    # 2023-01-01 and 2023-12-31. Taken literally each of those either loses a
+    # year or collides two into one.
+    #
+    # Fiscal years are consecutive by definition, so the labels are rebuilt from
+    # the one thing the dates themselves establish -- how many years apart two
+    # year ends are -- anchored on whichever offset the filer's own `fy` values
+    # agree on most often. Spacing rather than position in the list, so a filer
+    # missing a 10-K from the middle of its history (Best Buy has no FY2013 on
+    # file) does not have everything after the gap shifted by one.
+    ends = sorted(raw)
+    if not ends:
+        facts["_fy_labels"] = {}
+        return {}
+    ref_dt = datetime.strptime(ends[-1], "%Y-%m-%d")
+
+    def _years_from_ref(end_date: str) -> int:
+        return int(round(
+            (datetime.strptime(end_date, "%Y-%m-%d") - ref_dt).days / 365.25))
+
+    base = Counter(raw[e] - _years_from_ref(e) for e in ends).most_common(1)[0][0]
+
+    # The anchor is settled; now say which dates are year ends, over every date
+    # the probe saw rather than only the newest one per filing. Taking just the
+    # newest lost Walmart's 2012-01-31 to a stray 2012-12-31 fact filed
+    # alongside it, and a year end missing from the map is treated as not being
+    # one -- FY2012's $446.95B fell back to the `fy` field and landed on 2011,
+    # displacing the $421.85B Walmart actually reported there.
+    #
+    # A year end is a date sitting a whole number of years from the anchor. That
+    # alone would also admit an ASC 842 adoption balance at 2019-01-01, one day
+    # past a 2018-12-31 year end and so within tolerance of it, which is why the
+    # closer fit wins when two dates claim one year: 2018-12-31 is exact and
+    # keeps the year, and the adoption date is left to the `fy` field, out of an
+    # FY2018 column that had no operating lease on the balance sheet at all.
+    best: dict[int, tuple[float, str]] = {}
+    for end_date in candidates:
+        try:
+            days = (datetime.strptime(end_date, "%Y-%m-%d") - ref_dt).days
+        except ValueError:
+            continue
+        years = int(round(days / 365.25))
+        residual = abs(days - years * 365.25)
+        if residual > _FY_END_TOLERANCE_DAYS:
+            continue                       # an interim or adoption date, not a year end
+        label = base + years
+        cur = best.get(label)
+        if cur is None or residual < cur[0]:
+            best[label] = (residual, end_date)
+
+    labels = {end_date: label for label, (_, end_date) in best.items()}
+    facts["_fy_labels"] = labels
+    return labels
+
+
+# A 52/53-week year end drifts a few days against the calendar, so an
+# anniversary is "the same date" within about a week. Ten days leaves room for
+# that drift without reaching a quarter end, the nearest of which is ~91 away.
+_FY_END_TOLERANCE_DAYS = 10
+
+
+def _fiscal_year_for(end: str, labels: dict[str, int]) -> Optional[int]:
+    """
+    The fiscal year `end` belongs to, or None to leave the date to `fy`.
+
+    The map already holds every year end the probe found, comparatives printed
+    inside older filings included, so a lookup is the whole answer and there is
+    nothing to extrapolate. A miss means the date is not one of this filer's
+    year ends -- an interim balance sheet date, a buyback authorisation struck
+    weeks after the year closed, an ASC 842 adoption balance -- and None leaves
+    it exactly where it has always been.
+
+    That leaves a real but SEPARATE fault untouched: those interim instants are
+    still read as if they were year ends, which is why Nike's FY2014 cash shows
+    the November interim's $2,273m against the $2,220m it reported at
+    2014-05-31. Fixing it means dropping non-year-end instants, which also drops
+    the buyback authorisations and cover-page share counts that legitimately
+    carry such dates -- a different change, with its own blast radius, and not
+    one to smuggle in behind a labelling fix.
+    """
+    return labels.get(end) if labels else None
+
+
+def _relabel_fiscal_end(end: str, entry: dict, labels: dict[str, int]) -> str:
+    """
+    Move a period-end date onto its fiscal year, preserving the month and day.
+
+    DPZ fiscal 2025 ends 2026-01-04 and belongs in the 2025 column, so the key
+    becomes "2025-01-04" and every downstream year-prefix lookup still works.
+
+    Falls back to the filing's own `fy` wherever the labels cannot answer --
+    including when the probe learned nothing at all, for a filer with no us-gaap
+    balance sheet in companyfacts. That is the behaviour this replaced: wrong
+    for comparatives at a straddling year end, right everywhere else.
+    """
+    label = _fiscal_year_for(end, labels)
+    if label is None:
+        fy_field = entry.get("fy")
+        if fy_field and (int(end[:4]) - fy_field == 1):
+            return f"{fy_field}{end[4:]}"
+        return end
+    if label != int(end[:4]):
+        return f"{label}{end[4:]}"
+    return end
+
+
 def extract_annual_series(facts: dict, tags: list[str]) -> dict[str, float]:
     """
     Return {end_date: value} scanning ALL candidate tags and keeping the
@@ -2591,6 +2784,7 @@ def extract_annual_series(facts: dict, tags: list[str]) -> dict[str, float]:
     """
     gaap = facts.get("facts", {}).get("us-gaap", {})
     dei  = facts.get("facts", {}).get("dei",    {})
+    _fy_labels = _fiscal_year_labels(facts)
 
     merged: dict[str, float] = {}
 
@@ -2621,9 +2815,7 @@ def extract_annual_series(facts: dict, tags: list[str]) -> dict[str, float]:
                 # This preserves the month-day so downstream year-prefix lookups still work.
                 # Only fires when end_year is exactly fy+1 to avoid touching comparison-period
                 # rows (e.g. fy=2026, end="2024-02-29" has a gap of 2, not 1).
-                fy_field = e.get("fy")
-                if fy_field and (int(end[:4]) - fy_field == 1):
-                    end = f"{fy_field}{end[4:]}"
+                end = _relabel_fiscal_end(end, e, _fy_labels)
                 # Keep largest absolute value across all tags for this date
                 if end not in merged or abs(val) > abs(merged[end]):
                     merged[end] = val
@@ -2641,6 +2833,7 @@ def extract_point_in_time_series(facts: dict, tags: list[str]) -> dict[str, floa
     """
     gaap = facts.get("facts", {}).get("us-gaap", {})
     dei = facts.get("facts", {}).get("dei", {})
+    _fy_labels = _fiscal_year_labels(facts)
 
     # First-tag-wins per date: earlier tags in the list take priority.
     # This prevents catch-all tags (e.g. CashCashEquivalentsRestrictedCash...)
@@ -2665,9 +2858,7 @@ def extract_point_in_time_series(facts: dict, tags: list[str]) -> dict[str, floa
                 val = e.get("val")
                 if val is None or not end:
                     continue
-                fy_field = e.get("fy")
-                if fy_field and (int(end[:4]) - fy_field == 1):
-                    end = f"{fy_field}{end[4:]}"
+                end = _relabel_fiscal_end(end, e, _fy_labels)
                 if end not in tag_data or abs(val) > abs(tag_data[end]):
                     tag_data[end] = val
             break
@@ -4251,12 +4442,14 @@ def apply_scorecard_overlay(ticker: str, cik: str, submissions: dict,
         return None
 
     filings = all_filing_infos_from_submissions(
-        submissions, {"10-K", "10-K/A", "20-F"}, max_count=18)
+        submissions, {"10-K", "10-K/A", "20-F"}, max_count=18,
+        fy_labels=_fiscal_year_labels(facts))
     if not filings:
         return None
 
     sc = scorecard.build(cik, filings, sector=binding.get("sector"),
-                         ticker=tk, facts=facts)
+                         ticker=tk, facts=facts,
+                         fy_labels=_fiscal_year_labels(facts))
 
     # The app keys annual series by period-end date ("2013-12-31"), not by bare
     # year. Writing bare years would leave BOTH keys in the series and the
@@ -4498,8 +4691,13 @@ def api_scorecard():
     except Exception as e:
         return jsonify({"error": f"SEC submissions fetch failed: {e}"}), 502
 
+    try:
+        _sc_facts = fetch_company_facts(cik)
+    except Exception:
+        _sc_facts = None
     filings = all_filing_infos_from_submissions(
-        submissions, {"10-K", "10-K/A", "20-F"}, max_count=18)
+        submissions, {"10-K", "10-K/A", "20-F"}, max_count=18,
+        fy_labels=_fiscal_year_labels(_sc_facts) if _sc_facts else None)
     if not filings:
         return jsonify({"error": f"No annual filings found for {ticker}"}), 404
 
@@ -4507,13 +4705,11 @@ def api_scorecard():
         scorecard.BINDING_DIR, "companies", f"{ticker.replace('.', '-')}.json")) or {}
     sector = binding.get("sector")
 
-    try:
-        facts = fetch_company_facts(cik)
-    except Exception:
-        facts = None
+    facts = _sc_facts
 
     sc = scorecard.build(cik, filings, sector=sector,
-                         ticker=ticker.replace(".", "-"), facts=facts)
+                         ticker=ticker.replace(".", "-"), facts=facts,
+                         fy_labels=_fiscal_year_labels(facts) if facts else None)
 
     # Comparability facts already authored against the filings, keyed per year.
     ctemplate = company_templates.load_template(ticker)
@@ -4587,10 +4783,13 @@ def analyze():
         return jsonify({"error": "No XBRL financial data found for this company"}), 404
 
     # Build list of all 10-K filings (used for filing links and BRK share extraction)
+    _fy_labels_route = _fiscal_year_labels(facts)
     all_10k_filings = all_filing_infos_from_submissions(
-        submissions, {"10-K", "10-K/A", "20-F", "20-F/A"}, max_count=25)
+        submissions, {"10-K", "10-K/A", "20-F", "20-F/A"}, max_count=25,
+        fy_labels=_fy_labels_route)
     all_10q_filings = all_filing_infos_from_submissions(
-        submissions, {"10-Q", "10-Q/A"}, max_count=20)
+        submissions, {"10-Q", "10-Q/A"}, max_count=20,
+        fy_labels=_fy_labels_route)
     latest_10k = all_10k_filings[0] if all_10k_filings else None
     latest_10q = all_10q_filings[0] if all_10q_filings else None
 

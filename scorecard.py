@@ -59,9 +59,26 @@ def _rank(statement_name: str) -> int:
     return 9
 
 
-def _period_year(period: str) -> Optional[int]:
+def _period_year(period: str, fy_labels: Optional[dict] = None) -> Optional[int]:
+    """
+    The fiscal year a rendered column header belongs to.
+
+    The header carries a calendar date ("Feb. 01, 2026"), and for most filers
+    the calendar year is the fiscal year. For one whose year end crosses the
+    boundary it is not: PVH's fiscal 2025 ends 2026-02-01. The financial series
+    is keyed by fiscal year, so reading the calendar year here put every bound
+    value one column to the right of the row it belonged to -- and, for the
+    newest year, into a column that existed nowhere else on the page, which
+    took the quarter headers down with it.
+    """
     m = re.match(r"^[A-Z][a-z]{2}\.? \d{1,2}, (\d{4})$", period)
-    return int(m.group(1)) if m else None
+    if not m:
+        return None
+    if fy_labels:
+        iso = ss._period_to_iso(period)
+        if iso and iso in fy_labels:
+            return fy_labels[iso]
+    return int(m.group(1))
 
 
 # ── Fact base ────────────────────────────────────────────────────────────────
@@ -117,7 +134,8 @@ def _facts_index(facts: Optional[dict]) -> dict:
 
 
 def build_factbase(cik: str, filings: list, years: int = 15,
-                   verify: bool = True, facts: Optional[dict] = None) -> dict:
+                   verify: bool = True, facts: Optional[dict] = None,
+                   fy_labels: Optional[dict] = None) -> dict:
     """
     {fiscal_year: {(element, dimension): fact}} across a filer's history.
 
@@ -198,7 +216,7 @@ def build_factbase(cik: str, filings: list, years: int = 15,
                     continue
                 key = (row["element"], row.get("dimension"))
                 for period, value in row["values"].items():
-                    year = _period_year(period)
+                    year = _period_year(period, fy_labels)
                     if year is None or year < cutoff - 1:
                         continue
                     if row.get("opening_balance"):
@@ -463,9 +481,11 @@ def compute_derived(resolved: dict, bindings: list) -> dict:
 
 def build(cik: str, filings: list, sector: Optional[str] = None,
           ticker: Optional[str] = None, years: int = 15,
-          facts: Optional[dict] = None) -> dict:
+          facts: Optional[dict] = None,
+          fy_labels: Optional[dict] = None) -> dict:
     """Fact base -> bindings -> resolved scorecard, with provenance intact."""
-    fb = build_factbase(cik, filings, years=years, facts=facts)
+    fb = build_factbase(cik, filings, years=years, facts=facts,
+                        fy_labels=fy_labels)
     bindings = load_bindings(sector, ticker)
     resolved = resolve(fb, bindings)
     resolved = compute_derived(resolved, bindings)

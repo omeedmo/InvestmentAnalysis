@@ -1,0 +1,34 @@
+{
+  "tier": "company",
+  "ticker": "PVH",
+  "cik": 78239,
+  "sector": null,
+  "note": "One override, for intangibles. PVH's 10-K balance sheet tags a single combined line, us-gaap:IntangibleAssetsNetExcludingGoodwill, which the shared vocabulary reads directly -- so the annual row has always been correct. Its 10-Qs have never tagged that combined concept at all, in any quarter back to the earliest XBRL filings (2010): they print two separate lines instead, 'Tradenames' (us-gaap:IndefiniteLivedTrademarks) and 'Other Intangibles, net' (us-gaap:OtherIntangibleAssetsNet), and the combined total simply does not exist as a fact anywhere in the interim filings. The quarterly row was blank for this filer's entire history, not one gap.\n\nSumming the two ties out exactly against the reported annual total for 14 of the 15 fiscal year-ends checked -- to the dollar, e.g. $2,684,100,000 + $412,100,000 = $3,096,200,000 against a reported $3,096,200,000 at FY2025. The one exception is FY2011 (period 2012-01-29), where the sum understates the reported total by $86,038,000 (2.5% -- 2,472,378,000 dollars summed against 2,558,378,000 reported), evidently some reclassification specific to that year's earliest XBRL tagging that these two lines do not capture. Scoped from 2013 on both legs to exclude it, since the scorecard overlay overwrites an existing correct value with whatever the binding computes rather than only filling gaps, and 2013 is unambiguously after the mismatch under either the annual pass's fiscal-year reading or the quarterly pass's calendar-year reading of the same bound entries (see the CRMT binding's note for why that distinction matters here).\n\nNot fixed by widening the shared vocabulary's intangibles list: unlike the debt-component checks elsewhere in this binding directory, a spot check across filers using both us-gaap:IndefiniteLivedTrademarks and us-gaap:OtherIntangibleAssetsNet found the sum does NOT generally tie out -- one other filer's combined total was overstated by roughly 7%. Summing is correct for PVH specifically, not as a rule, so it stays scoped here.",
+  "metrics": [
+    {
+      "metric": "intangibles_trademarks",
+      "label": "Tradenames",
+      "section": "Balance sheet",
+      "bind": [
+        { "element": "us-gaap:IndefiniteLivedTrademarks", "statement": "Balance Sheet", "from": 2013 }
+      ],
+      "note": "$2,673,700,000 at Q1 FY2027 (period 2026-05-03)."
+    },
+    {
+      "metric": "intangibles_other",
+      "label": "Other Intangibles, net",
+      "section": "Balance sheet",
+      "bind": [
+        { "element": "us-gaap:OtherIntangibleAssetsNet", "statement": "Balance Sheet", "from": 2013 }
+      ],
+      "note": "$415,800,000 at Q1 FY2027 (period 2026-05-03)."
+    },
+    {
+      "metric": "intangibles",
+      "label": "Intangible Assets",
+      "section": "Balance sheet",
+      "expr": "intangibles_trademarks + intangibles_other",
+      "note": "Deliberately no zero_if_absent: the two legs have always been tagged together in every filing checked, so a period with only one of them is a signal something is wrong, not a partial total to fill in as zero."
+    }
+  ]
+}
