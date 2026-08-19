@@ -2703,7 +2703,7 @@ def _fiscal_year_labels(facts: dict) -> dict[str, int]:
     # closer fit wins when two dates claim one year: 2018-12-31 is exact and
     # keeps the year, and the adoption date is left to the `fy` field, out of an
     # FY2018 column that had no operating lease on the balance sheet at all.
-    best: dict[int, tuple[float, str]] = {}
+    best: dict[int, tuple[int, float, str]] = {}
     for end_date in candidates:
         try:
             days = (datetime.strptime(end_date, "%Y-%m-%d") - ref_dt).days
@@ -2711,14 +2711,24 @@ def _fiscal_year_labels(facts: dict) -> dict[str, int]:
             continue
         years = int(round(days / 365.25))
         residual = abs(days - years * 365.25)
-        if residual > _FY_END_TOLERANCE_DAYS:
+        # A date that is some filing's OWN newest period is a year end by
+        # construction. It neither has to fit the even yearly spacing assumed
+        # here nor loses to a date that fits it better, because a filer can
+        # MOVE its year end and leave that spacing behind. Best Buy shifted from
+        # early March to early February, so FY2012's real 2012-03-03 sits a
+        # month off the lattice: gated on spacing it was thrown out, and ranked
+        # on spacing it lost the year to a 2012-01-28 interim. Either way FY2012
+        # showed $1,401m of cash against the $1,199m Best Buy filed.
+        primary = end_date in raw
+        if not primary and residual > _FY_END_TOLERANCE_DAYS:
             continue                       # an interim or adoption date, not a year end
+        rank = (0 if primary else 1, residual)
         label = base + years
         cur = best.get(label)
-        if cur is None or residual < cur[0]:
-            best[label] = (residual, end_date)
+        if cur is None or rank < (cur[0], cur[1]):
+            best[label] = (rank[0], rank[1], end_date)
 
-    labels = {end_date: label for label, (_, end_date) in best.items()}
+    labels = {end_date: label for label, (_, _, end_date) in best.items()}
     facts["_fy_labels"] = labels
     return labels
 
@@ -2842,7 +2852,9 @@ def extract_point_in_time_series(facts: dict, tags: list[str]) -> dict[str, floa
     per_tag: list[dict[str, float]] = []
 
     for tag in tags:
-        concept = gaap.get(tag) or dei.get(tag)
+        concept = gaap.get(tag)
+        _is_gaap = concept is not None
+        concept = concept or dei.get(tag)
         if not concept:
             continue
         units = concept.get("units", {})
@@ -2862,6 +2874,27 @@ def extract_point_in_time_series(facts: dict, tags: list[str]) -> dict[str, floa
                 if end not in tag_data or abs(val) > abs(tag_data[end]):
                     tag_data[end] = val
             break
+        # A 10-K's face carries more than its own year end. Nike's has the Aug
+        # and Nov 2014 balance sheet dates beside 2014-05-31, and since a year
+        # keeps its latest date, the November interim took the FY2014 column --
+        # $2,273m of cash against the $2,220m Nike reported. A duration is
+        # caught by its 10-14 month span check; an instant has no span to check,
+        # so nothing else saw it.
+        #
+        # Where a year has this concept AT the year end, that is the year's
+        # value and the other dates in it are interims. Where it has no year end
+        # -- a buyback authorisation struck weeks after the year closed is only
+        # ever stated off it -- the year is left exactly as it was, so the fix
+        # takes nothing legitimate with it.
+        #
+        # us-gaap only. On the dei cover page a date away from the year end is
+        # the point, not a defect: it states shares outstanding as at the filing
+        # date, and it is the only share count many filers give.
+        if _is_gaap and _fy_labels and tag_data:
+            _has_year_end = {d[:4] for d in tag_data if d in _fy_labels}
+            if _has_year_end:
+                tag_data = {d: v for d, v in tag_data.items()
+                            if d in _fy_labels or d[:4] not in _has_year_end}
         if tag_data:
             per_tag.append(tag_data)
 
@@ -2877,7 +2910,11 @@ def extract_point_in_time_series(facts: dict, tags: list[str]) -> dict[str, floa
 def normalize_to_fiscal_years(data: dict[str, float]) -> dict[str, float]:
     """
     Collapse to one entry per fiscal year (calendar year of end date).
-    When two dates share the same year, keeps the later one.
+
+    When two dates share the same year, keeps the later one. WHICH date belongs
+    to a balance-sheet year is settled earlier and per concept, in
+    extract_point_in_time_series: that needs to know whether the concept is
+    us-gaap or dei, and the distinction is gone by the time series are merged.
     """
     by_year: dict[str, tuple[str, float]] = {}
     for date_str, val in sorted(data.items()):
