@@ -733,7 +733,10 @@ VOCAB: dict[str, Metric] = {
         "WeightedAverageNumberOfDilutedSharesOutstanding",
         "WeightedAverageNumberOfShareOutstandingBasicAndDiluted",
         "WeightedAverageNumberOfSharesOutstandingBasic",
-    ], row=False, note="Denominator of every per-share row; not a line of its own."),
+    ], row=False, note="Denominator of every per-share row; not a line of its own. "
+        "A filer that tags this in millions with the unit still declared as "
+        "`shares` (MCD, from its FY2023 10-K) is caught per period against the "
+        "period-end count — see app._per_share_base."),
 
     # ── Capital returns ─────────────────────────────────────────────────────
     # PaymentsOfOrdinaryDividends covers filers (e.g. ACN from FY2023) that
