@@ -2930,6 +2930,62 @@ def fy_get(data: dict[str, float], year: str) -> Optional[float]:
     return None
 
 
+# A weighted-average diluted share count orders of magnitude below the same
+# period's period-end count is not a share count: it is the filer's own figure
+# left in the units its statements print — millions or thousands — with the
+# XBRL unit still declared as `shares`. McDonald's does exactly this from its
+# FY2023 10-K on, tagging FY2023 diluted shares as 732.3 rather than
+# 732,300,000, so every per-share row that divided by it came out a million
+# times too large: $34.8M of revenue per share.
+#
+# Through FY2022 MCD filed BOTH scalings of the same fact (741,300,000 in the
+# FY2022 10-K, 741.3 as the FY2023 10-K's comparative), and
+# extract_annual_series' largest-absolute-value rule picked the whole number,
+# which is why the older years looked right and hid the problem. From FY2023
+# the scaled figure is the only one filed and there is nothing bigger to
+# outrank it.
+#
+# Rather than guess the intended scale and multiply, fall back to the
+# period-end count for that period. That is a DIFFERENT measure — period-end
+# rather than weighted average — so this applies only where the diluted figure
+# cannot be a share count at all. A tenth of the period-end count is the line:
+# a real weighted average sits within a few percent of it, and above it in any
+# buyback year, while a units error is off by a factor of a thousand or more.
+# Each period is judged on its own, so a filer that switched conventions
+# mid-history keeps its correctly-tagged years.
+IMPLAUSIBLE_SHARE_COUNT_RATIO = 10
+
+
+def _per_share_base(diluted: dict, period_end: dict, match) -> dict:
+    """The denominator for per-share rows: weighted-average diluted shares,
+    with any period whose figure is implausibly small against that period's
+    period-end count replaced by the period-end count (see the note above).
+
+    `match(series, key)` resolves a `diluted` key against `period_end` — by
+    fiscal year for the date-keyed annual series, exactly for the Q-keyed
+    quarterly one. Falls back to the whole period-end series when there is no
+    diluted series at all, which is what every caller did before this existed.
+    """
+    if not diluted:
+        return period_end
+    base = {}
+    for k, v in diluted.items():
+        pe = match(period_end, k)
+        if v and pe and pe > 0 and v < pe / IMPLAUSIBLE_SHARE_COUNT_RATIO:
+            base[k] = pe
+        else:
+            base[k] = v
+    return base
+
+
+def _annual_share_match(series: dict, key: str) -> Optional[float]:
+    return fy_get(series, key[:4])
+
+
+def _quarter_share_match(series: dict, key: str) -> Optional[float]:
+    return series.get(key)
+
+
 # ─── Derived metrics ─────────────────────────────────────────────────────────
 
 def build_financials(facts: dict, metric_tags: dict = None) -> dict[str, dict[str, float]]:
@@ -3299,7 +3355,7 @@ def build_financials(facts: dict, metric_tags: dict = None) -> dict[str, dict[st
         raw["tangible_book_value_per_share"] = tbvps or None
 
     # Revenue per Share = Revenue / Diluted Shares
-    share_base_for_per_share = sd or so
+    share_base_for_per_share = _per_share_base(sd, so, _annual_share_match)
     if rev and share_base_for_per_share:
         rps = {}
         for d in rev:
@@ -5062,7 +5118,7 @@ def analyze():
     # build_financials() runs (which computed these with potentially empty shares).
     _so  = financials.get("shares_outstanding_end", {})
     _sd  = financials.get("shares_diluted_wtd", {})
-    _sb  = _sd or _so   # share base
+    _sb  = _per_share_base(_sd, _so, _annual_share_match)   # share base
     _rev = financials.get("revenue", {})
     _fcf = financials.get("fcf", {})
     _ni  = financials.get("net_income", {})
@@ -5182,7 +5238,9 @@ def analyze():
         _eq_f  = financials.get("equity", {})
         # Same share base the per-share rebuild uses: diluted weighted average
         # where the filer reports one, else the period-end count.
-        _sb_f  = financials.get("shares_diluted_wtd") or financials.get("shares_outstanding_end") or {}
+        _sb_f  = _per_share_base(financials.get("shares_diluted_wtd") or {},
+                                 financials.get("shares_outstanding_end") or {},
+                                 _annual_share_match)
 
         def _fill(metric: str, fn):
             series = dict(financials.get(metric) or {})
@@ -5909,9 +5967,10 @@ def analyze():
         # printed subtotal — see company_plugins/_reit_ffo.quarterly.
 
         # Quarterly per-share FFO / AFFO
-        _q_sb_reit = (
-            {k: v for k, v in financials.get("shares_diluted_wtd", {}).items() if k.startswith("Q")}
-            or {k: v for k, v in financials.get("shares_outstanding_end", {}).items() if k.startswith("Q")}
+        _q_sb_reit = _per_share_base(
+            {k: v for k, v in financials.get("shares_diluted_wtd", {}).items() if k.startswith("Q")},
+            {k: v for k, v in financials.get("shares_outstanding_end", {}).items() if k.startswith("Q")},
+            _quarter_share_match,
         )
         if _q_sb_reit:
             _q_ffo_vals  = {k: v for k, v in financials.get("ffo",  {}).items() if k.startswith("Q")}
@@ -5937,7 +5996,7 @@ def analyze():
         # Use diluted weighted-avg shares if available, else period-end shares
         _q_sd = {k: v for k, v in financials.get("shares_diluted_wtd", {}).items() if k.startswith("Q")}
         _q_so = {k: v for k, v in financials.get("shares_outstanding_end", {}).items() if k.startswith("Q")}
-        _q_sb = _q_sd or _q_so  # share base for per-share calcs
+        _q_sb = _per_share_base(_q_sd, _q_so, _quarter_share_match)  # share base for per-share calcs
 
         _q_rev = {k: v for k, v in financials.get("revenue", {}).items() if k.startswith("Q")}
         _q_fcf2 = {k: v for k, v in financials.get("fcf", {}).items() if k.startswith("Q")}
