@@ -46,6 +46,14 @@ break the line out in this form, and their balance-sheet figure is the
 Homebuilding segment alone (FY2018's $8,543.9M is Homebuilding, not the
 company), so those years stay blank rather than wearing a segment's
 number as the total.
+
+The pass is deliberately narrow, for speed as much as scope: only filings
+from the FY2021 10-K onward are consulted, and only while a year they
+could report is actually blank. An analysis runs inside a 30-second
+action budget in the deployed app, and every schedule read is an SEC
+fetch through statement_store's rate limiter -- reading eighteen
+filings' summaries to fill three years would spend most of that budget
+on sleeps.
 """
 from __future__ import annotations
 
@@ -174,10 +182,20 @@ def apply_annual_filings(filings: list, financials: dict, ctx: dict) -> None:
         return
     known = {k: v for k, v in series.items()
              if v is not None and not str(k).startswith("Q")}
+    # Nothing to do -- and therefore nothing to fetch -- unless a year the
+    # modern schedules could report is blank. Lennar's fiscal years end
+    # Nov 30, so a fillable blank is a missing year from 2021 on.
+    known_years = {str(k)[:4] for k in known}
+    latest_fy = max((int(y) for y in known_years if y.isdigit()), default=0)
+    if all(str(y) in known_years for y in range(2021, latest_fy + 1)):
+        return
     cands: dict = {}
     for f in filings:
         acc = f.get("accession")
-        if not acc:
+        # The FY2021 10-K (filed 2022-01-28) is the earliest filing whose
+        # schedule breaks the line out in this form; older ones do not,
+        # and fetching their summaries is pure cost.
+        if not acc or (f.get("filing_date") or "") < "2022-01-01":
             continue
         for iso, cand in _schedule_totals(acc).items():
             cands.setdefault(iso, []).append(cand)
