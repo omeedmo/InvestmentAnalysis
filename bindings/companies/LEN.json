@@ -1,0 +1,19 @@
+{
+  "tier": "company",
+  "ticker": "LEN",
+  "cik": 920760,
+  "sector": null,
+  "note": "One override, for debt. Lennar's total debt row carried four of fifteen years and no quarters at all, and the gap is structural rather than a missing tag: the whole of its borrowing is one balance-sheet line, 'Senior notes and other debts payable, net', tagged us-gaap:LongTermDebt -- but Lennar prints that line once per segment column, and companyfacts keeps only the undimensioned fact. Of its recent filings only the FY2019/FY2020 and FY2025 10-Ks tag a consolidated figure outside the segment axis; those are exactly the years that resolved ($9,573.7M, $7,421.6M, $5,875.0M, and FY2024's $4,189.2M from the FY2025 10-K's comparative column), and each one is correct -- FY2025's $5,875.0M is Homebuilding $4,084.7M plus Financial Services $1,790.3M. Everything else was blank.\n\nThe 10-Qs do report a consolidated total, as the srt:ConsolidationItemsAxis 'Operating Segments' column: $5,256.5M at Q1 FY2026 and $6,011.2M at Q2, the latter reconciling to Homebuilding $4,047.5M + Financial Services $1,963.7M + Multifamily and Lennar Other at zero. That column is a dimensional fact, so companyfacts does not carry it and only the filed statements can supply it. Hence the two candidates below: the undimensioned consolidated line where Lennar tags one, else the operating-segment total. First-match-wins means the 10-K's own consolidated figure always outranks the segment roll-up, and the roll-up is only reached where no consolidated line exists.\n\nNo 'from'/'to' bound is wanted here, which also keeps this binding clear of the fiscal-vs-calendar hazard CarMart's carries: resolve() keys annual years by fiscal year and resolve_quarters() by the calendar year of the period end, and for Lennar's November year-end a year boundary would read differently on the two paths. Both candidates name a specific column of a specific statement, so a year either has that column or has nothing -- there is no partial total to guard against.\n\nWhat this binding deliberately does NOT do is fill the remaining gaps from the segment columns. FY2021 through FY2024 and Q3 FY2026 print a Homebuilding debt line and no Financial Services one -- $4,652.3M, $4,047.3M, $2,816.5M, $2,258.3M and $4,297.3M respectively -- so the consolidated total for those periods is not on the face of any balance sheet, only in the notes, which build_factbase does not read (it takes FilingSummary's 'Statements' category alone). Binding Homebuilding alone would present a segment column as the company's total debt, understating FY2023 by the ~$1.5B of Financial Services warehouse borrowing it carries. Those periods stay blank, which is the honest reading of what was filed.",
+  "metrics": [
+    {
+      "metric": "long_term_debt",
+      "label": "Senior notes and other debts payable, net",
+      "section": "Balance sheet",
+      "bind": [
+        { "element": "us-gaap:LongTermDebt", "statement": "Balance Sheet" },
+        { "element": "us-gaap:LongTermDebt", "statement": "Balance Sheet", "dimension": "Operating Segments" }
+      ],
+      "note": "Lennar's entire borrowing is this one line; it files an unclassified balance sheet with no current portion split out, so total debt is this row alone and current_debt is legitimately absent rather than missing. The first candidate is the consolidated line as tagged in the FY2019, FY2020 and FY2025 10-Ks. The second is the 10-Qs' 'Operating Segments' total under srt:ConsolidationItemsAxis -- the consolidated column of a statement that tags no undimensioned figure -- and NOT a single segment: the segment members sit under us-gaap:StatementBusinessSegmentsAxis and render as 'Homebuilding', 'Lennar Financial Services', 'Operating Segments | Homebuilding' and so on, none of which this matches."
+    }
+  ]
+}
