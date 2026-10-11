@@ -1098,6 +1098,7 @@ VOCAB: dict[str, Metric] = {
     "long_term_debt_other_notes":         B(INSTANT, "CRMT non-recourse notes payable (us-gaap:NotesPayable through FY2025, retagged us-gaap:OtherNotesPayable from FY2026)."),
     "long_term_debt_senior_secured_notes": B(INSTANT, "CRMT senior secured notes, split out from the notes-payable line starting FY2026 (us-gaap:SeniorNotes)."),
     "long_term_debt_revolver":            B(INSTANT, "CRMT revolving line of credit (us-gaap:LineOfCredit through FY2023, crmt:LongTermLineOfCreditNetOfDebtIssuanceCosts from FY2024)."),
+    "long_term_debt_kbh_notes":           B(INSTANT, "KBH notes payable (us-gaap:NotesAndLoansPayable) — the combined current + noncurrent carrying amount on KB Home's unclassified balance sheet."),
     "intangibles_railroad_utilities_energy": B(INSTANT, "BRK segment intangibles."),
     # PVH's two intangible lines, summed into intangibles by its binding. Its
     # 10-Qs have never tagged a combined total -- only the 10-K does -- so the
