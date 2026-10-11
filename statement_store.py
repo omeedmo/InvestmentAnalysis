@@ -41,6 +41,13 @@ import requests
 SEC_ARCHIVE = "https://www.sec.gov/Archives/edgar/data/{cik}/{accession}"
 CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                          ".cache", "statements")
+# What the cache holds is a PARSE, not the filing, so a filing being immutable
+# is not enough to keep an entry valid: a fix to parse_report has to invalidate
+# everything parsed by the version before it, or the filings already on disk
+# keep serving the old reading. Carrying it in the filename means a rollback
+# finds its own entries still there. Bump this with any parse_report change
+# that alters the rows it produces.
+_PARSE_VERSION = 2
 
 HEADERS = {
     "User-Agent": "ValueAnchor/1.0 (omid.mola@gmail.com)",
@@ -65,6 +72,16 @@ _PER_SHARE = re.compile(r"Per\w*Share|PerUnit", re.I)
 _SHARE_COUNT = re.compile(
     r"SharesOutstanding|SharesIssued|WeightedAverageNumberOf|SharesAuthorized"
     r"|TreasuryStockShares|TreasuryStockCommonShares", re.I)
+
+
+# A dimension section header's drill-down link, e.g.
+#   defref_us-gaap_StatementBusinessSegmentsAxis=len_LennarFinancialServicesMember
+# Each pair is one axis and the member of it this section selects; a section
+# sitting under two axes carries both. This is the machine-readable half of the
+# header — the visible half is just the segment's name — and it is the only
+# signal present in the renderings that never print "[Member]".
+_AXIS_DEFREF = re.compile(
+    r"defref_([A-Za-z0-9_.\-]*?Axis)=([A-Za-z0-9_.\-]+)")
 
 
 # Recognises a financial statement by the name the filer gave it, for filings
@@ -232,6 +249,32 @@ def parse_report(html: str) -> Optional[dict]:
         if plain.endswith("[Member]") or "[Member]" in plain and not label_m:
             current_dim = plain.replace("[Member]", "").strip()
             continue
+        # The same section header, in the rendering style that prints the
+        # member's plain name instead of suffixing it "[Member]". Lennar's
+        # balance sheet says "Homebuilding" and "Operating Segments | Lennar
+        # Financial Services" — not one "[Member]" anywhere in the file — and
+        # puts the axis and member in the row's own drill-down link:
+        #
+        #   defref_us-gaap_StatementBusinessSegmentsAxis=len_LennarFinancial...
+        #
+        # Going by the suffix alone left every row of such a statement
+        # undimensioned, which costs more than the segment detail: the repeats
+        # then share one key, and build_factbase keeps the first it sees. Of
+        # the five us-gaap:LongTermDebt rows on Lennar's Q2 FY2026 balance
+        # sheet, Homebuilding's $4,047.5M is printed before the $6,011.2M
+        # operating-segment total, so a metric bound with no dimension — which
+        # _match_fact defines as meaning the consolidated figure — resolved to
+        # a segment column instead.
+        if not label_m and _AXIS_DEFREF.search(tr):
+            # The printed section name, so a binding names what a reader sees
+            # in the filing, as the "[Member]" path above already does. An
+            # unnamed section falls back to its member tokens rather than
+            # inheriting the previous section's name, which would attribute
+            # its rows to the wrong segment.
+            current_dim = plain.strip() or " | ".join(
+                m.rsplit("_", 1)[-1].removesuffix("Member")
+                for _, m in _AXIS_DEFREF.findall(tr))
+            continue
         if not label_m:
             continue
         element = label_m.group(1).replace("_", ":", 1)
@@ -301,7 +344,7 @@ def filing_statements(cik: str, accession: str,
     cik = str(int(cik))
     acc = accession.replace("-", "")
     os.makedirs(CACHE_DIR, exist_ok=True)
-    cache_path = os.path.join(CACHE_DIR, f"{cik}_{acc}.json")
+    cache_path = os.path.join(CACHE_DIR, f"{cik}_{acc}_v{_PARSE_VERSION}.json")
     if use_cache and os.path.exists(cache_path):
         try:
             with open(cache_path) as f:

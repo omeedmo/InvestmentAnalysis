@@ -21,9 +21,16 @@
           "statement": "Balance Sheet",
           "from": 2011,
           "to": 2019
+        },
+        {
+          "element": "us-gaap:FiniteLivedIntangibleAssetsNet",
+          "statement": "Balance Sheet",
+          "dimension": "Customer relationships",
+          "from": 2011,
+          "to": 2019
         }
       ],
-      "note": "The larger of the two intangible lines Lumen prints beneath goodwill. Tagged in the company's own ctl: namespace through FY2013 and with the us-gaap concept from FY2014; the two agree exactly in FY2014 ($4.89B on both), so the series joins without a step. Capped at FY2019 because from FY2020 the company stopped splitting this line out and prints only the combined total (see intangibles_total_reported) -- without the cap the two eras would both resolve in FY2019 and the sum below would double-count."
+      "note": "The larger of the two intangible lines Lumen prints beneath goodwill. Tagged in the company's own ctl: namespace through FY2013 and with the us-gaap concept from FY2014; the two agree exactly in FY2014 ($4.89B on both), so the series joins without a step. Capped at FY2019 because from FY2020 the company stopped splitting this line out and prints only the combined total (see intangibles_total_reported) -- without the cap the two eras would both resolve in FY2019 and the sum below would double-count.\n\nThe third candidate is the same line where Lumen prints it under an intangible-class dimension instead of on its own. The FY2015 through FY2017 10-Ks put it beneath a class axis -- rendered 'Customer relationships, net' in the FY2015 filing and 'Customer relationships' in the two after it -- while FY2014 and earlier and FY2018 onward tag it undimensioned. It resolved anyway until statement_store learned to read the no-'[Member]' section headers, because every row of those statements parsed as undimensioned and a binding asking for the consolidated figure got a dimensional one. FY2015 and FY2016 then had nothing, and the intangibles total they feed fell from $5,483M to $1,555M and $4,328M to $1,531M -- the other-intangibles leg alone. Bound by its exact name rather than a pattern: the 2015 slot holds both spellings, from the FY2015 10-K and the FY2016 10-K's comparative column, and dimension_pattern refuses a year where two facts match. 'Customer relationships' alone covers both years, the FY2016 comparative agreeing with the FY2015 filing at $3,928M. Appended last so the undimensioned candidates keep every year they already resolved."
     },
     {
       "metric": "intangibles_other",
