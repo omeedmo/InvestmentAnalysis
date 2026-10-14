@@ -1106,6 +1106,21 @@ function setupStickyHeader(){
     syncWidths();
     update();
   }
+  function syncX(){
+    // Shift the clone by exactly the wrap's scroll offset. A translate
+    // keeps the two in lockstep where scrollLeft cannot: the borderless
+    // floater and the bordered wrap have slightly different maximum
+    // scroll extents, so near the right edge a scrollLeft copy lags by
+    // a few pixels and the year labels drift off their columns.
+    const x = wrap.scrollLeft;
+    ftable.style.transform = 'translateX(' + (-x) + 'px)';
+    // The floater itself never scrolls (the table is shifted instead),
+    // so the cloned first column's sticky-left has nothing to stick
+    // against -- pin it back explicitly, mirroring the body table's
+    // pinned label column.
+    const first = ftable.querySelector('thead th:first-child');
+    if(first) first.style.transform = 'translateX(' + x + 'px)';
+  }
   function update(){
     const wr = wrap.getBoundingClientRect();
     const topH  = topbar ? topbar.getBoundingClientRect().height : 0;
@@ -1113,9 +1128,12 @@ function setupStickyHeader(){
     if(wr.top < topH && wr.bottom > topH + headH){
       floater.style.display = 'block';
       floater.style.top   = topH + 'px';
-      floater.style.left  = wr.left + 'px';
-      floater.style.width = wr.width + 'px';
-      floater.scrollLeft  = wrap.scrollLeft;      // keep horizontal position in sync
+      // Anchor to the wrap's content box, not its border box: the table
+      // starts inside the wrap's border, so anchoring outside it shifts
+      // every cloned column by the border width.
+      floater.style.left  = (wr.left + wrap.clientLeft) + 'px';
+      floater.style.width = wrap.clientWidth + 'px';
+      syncX();
     } else {
       floater.style.display = 'none';
     }
@@ -1124,7 +1142,7 @@ function setupStickyHeader(){
   _stickyRebuild = rebuild;
   window.addEventListener('scroll', update, true);   // capture: also fires for the wrap's own scroll
   window.addEventListener('resize', rebuild);
-  wrap.addEventListener('scroll', ()=>{ if(floater.style.display==='block') floater.scrollLeft = wrap.scrollLeft; });
+  wrap.addEventListener('scroll', ()=>{ if(floater.style.display==='block') syncX(); });
   rebuild();
 }
 
